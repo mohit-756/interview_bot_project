@@ -1,0 +1,23 @@
+# Ignore environment files
+.env
+.env.*
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore virtual environment
+venv/
+env/
+
+uploads/
+__pycache__/
+*.pdf
+
+app.db
+interview-frontend/dist/
+interview-frontend/.vite/
+interview_bot_project/
+.nested_git_backups/
+tmp_pycache/
+.vscode/
+.pytest_cache/
