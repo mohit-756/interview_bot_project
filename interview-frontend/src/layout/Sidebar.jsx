@@ -1,16 +1,15 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
-import { 
-  LayoutDashboard, 
-  Users, 
-  ClipboardList, 
-  Settings, 
-  LogOut, 
-  Briefcase,
-  User,
+import {
+  LayoutDashboard,
+  Users,
+  ClipboardList,
+  Settings,
+  LogOut,
   MessageSquare,
   BarChart3,
-  Video
+  Video,
+  LayoutGrid
 } from "lucide-react";
 import { useAuth } from "../context/useAuth";
 import { cn } from "../utils/utils";
@@ -22,6 +21,7 @@ export default function Sidebar() {
   const hrLinks = [
     { name: "Dashboard", path: "/hr", icon: LayoutDashboard },
     { name: "Candidates", path: "/hr/candidates", icon: Users },
+    { name: "Score Matrix", path: "/hr/matrix", icon: LayoutGrid },
     { name: "Interviews", path: "/hr/interviews", icon: ClipboardList },
     { name: "Analytics", path: "/hr/analytics", icon: BarChart3 },
     { name: "Settings", path: "/settings", icon: Settings },
