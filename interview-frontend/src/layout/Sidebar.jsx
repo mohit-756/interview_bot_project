@@ -22,11 +22,10 @@ export default function Sidebar() {
 
   const hrLinks = [
     { name: "Dashboard", path: "/hr", icon: LayoutDashboard },
-    { name: "JD Management", path: "/hr/jds", icon: FileText },
     { name: "Candidates", path: "/hr/candidates", icon: Users },
-    { name: "Compare Candidates", path: "/hr/compare", icon: Columns3 },
-    { name: "Score Matrix", path: "/hr/matrix", icon: LayoutGrid },
-    { name: "Interviews", path: "/hr/interviews", icon: ClipboardList },
+    { name: "JD Management", path: "/hr/jds", icon: FileText },
+    { name: "Candidate Score Matrix", path: "/hr/matrix", icon: LayoutGrid },
+    { name: "Interview Reviews", path: "/hr/interviews", icon: ClipboardList },
     { name: "Analytics", path: "/hr/analytics", icon: BarChart3 },
     { name: "Settings", path: "/settings", icon: Settings },
   ];

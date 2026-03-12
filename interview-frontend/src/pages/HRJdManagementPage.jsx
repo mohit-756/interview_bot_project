@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Search, Filter, Plus, ChevronLeft, ChevronRight, Eye, Edit2, Trash2, MoreVertical } from "lucide-react";
 import MetricCard from "../components/MetricCard";
 import StatusBadge from "../components/StatusBadge";
 import { hrApi } from "../services/api";
+import { cn } from "../utils/utils";
 
 function buildInitialForm() {
   return {
@@ -25,51 +28,58 @@ function weightsToString(value) {
 }
 
 export default function HRJdManagementPage() {
+  const navigate = useNavigate();
   const [jds, setJds] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [form, setForm] = useState(buildInitialForm());
+  const [showForm, setShowForm] = useState(false);
+  const [page, setPage] = useState(1);
+  const [openMenu, setOpenMenu] = useState(null);
+  const itemsPerPage = 10;
+
+  const departments = useMemo(() => {
+    return ["all", ...new Set(jds.map((jd) => jd.department || "Unspecified").filter(Boolean))];
+  }, [jds]);
 
   const filteredJds = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return jds;
-    return jds.filter((jd) => {
-      return [jd.title, jd.jd_text]
-        .some((value) => String(value || "").toLowerCase().includes(needle));
-    });
-  }, [jds, search]);
+    let result = jds;
 
-  const loadJds = useCallback(async (selectedJdId) => {
+    const needle = search.trim().toLowerCase();
+    if (needle) {
+      result = result.filter((jd) => {
+        return [jd.title, jd.jd_text, jd.id?.toString()]
+          .some((value) => String(value || "").toLowerCase().includes(needle));
+      });
+    }
+
+    if (statusFilter !== "all") {
+      result = result.filter((jd) => (jd.active ? "active" : "inactive") === statusFilter);
+    }
+
+    if (departmentFilter !== "all") {
+      result = result.filter((jd) => (jd.department || "Unspecified") === departmentFilter);
+    }
+
+    return result;
+  }, [jds, search, statusFilter, departmentFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredJds.length / itemsPerPage));
+  const paginatedJds = filteredJds.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+
+  const loadJds = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const response = await hrApi.listJds();
-      const rows = response?.jds || [];
-      setJds(rows);
-
-      const activeId = selectedJdId || rows[0]?.id || null;
-      if (activeId) {
-        const detail = await hrApi.getJd(activeId);
-        const jd = detail.jd;
-        setSelectedId(jd.id);
-        setForm({
-          id: jd.id,
-          title: jd.title || "",
-          jd_text: jd.jd_text || "",
-          weights_json: weightsToString(jd.weights_json),
-          qualify_score: jd.qualify_score ?? 65,
-          min_academic_percent: jd.min_academic_percent ?? 0,
-          total_questions: jd.total_questions ?? 8,
-          project_question_ratio: jd.project_question_ratio ?? 0.8,
-        });
-      } else {
-        setSelectedId(null);
-        setForm(buildInitialForm());
-      }
+      setJds(response?.jds || []);
     } catch (loadError) {
       setError(loadError.message);
     } finally {
@@ -81,8 +91,11 @@ export default function HRJdManagementPage() {
     loadJds();
   }, [loadJds]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, departmentFilter]);
+
   async function handleSelectJd(jdId) {
-    setLoading(true);
     setError("");
     setMessage("");
     try {
@@ -99,16 +112,17 @@ export default function HRJdManagementPage() {
         total_questions: jd.total_questions ?? 8,
         project_question_ratio: jd.project_question_ratio ?? 0.8,
       });
+      setShowForm(true);
+      setOpenMenu(null);
     } catch (selectError) {
       setError(selectError.message);
-    } finally {
-      setLoading(false);
     }
   }
 
   function resetForm() {
     setSelectedId(null);
     setForm(buildInitialForm());
+    setShowForm(false);
     setMessage("");
     setError("");
   }
@@ -142,12 +156,13 @@ export default function HRJdManagementPage() {
       if (selectedId) {
         await hrApi.updateJd(selectedId, payload);
         setMessage("JD updated successfully.");
-        await loadJds(selectedId);
+        await loadJds();
+        resetForm();
       } else {
-        const response = await hrApi.createJd(payload);
-        const newId = response?.jd?.id;
+        await hrApi.createJd(payload);
         setMessage("JD created successfully.");
-        await loadJds(newId);
+        await loadJds();
+        resetForm();
       }
     } catch (saveError) {
       setError(saveError.message);
@@ -156,8 +171,34 @@ export default function HRJdManagementPage() {
     }
   }
 
-  if (loading && !jds.length && !selectedId) {
-    return <p className="center muted">Loading JD management...</p>;
+  async function handleDeleteJd(jdId) {
+    if (!window.confirm("Are you sure you want to delete this JD?")) return;
+    setDeleting(jdId);
+    setError("");
+    try {
+      await hrApi.deleteJd(jdId);
+      await loadJds();
+      setMessage("JD deleted successfully.");
+      setOpenMenu(null);
+    } catch (deleteError) {
+      setError(deleteError.message);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  async function handleToggleStatus(jdId, currentActive) {
+    try {
+      await hrApi.updateJd(jdId, { active: !currentActive });
+      await loadJds();
+      setOpenMenu(null);
+    } catch (toggleError) {
+      setError(toggleError.message);
+    }
+  }
+
+  if (loading && !jds.length) {
+    return <p className="center muted py-12">Loading JD management...</p>;
   }
 
   return (
@@ -165,14 +206,15 @@ export default function HRJdManagementPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white font-display">JD Management</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Create and update the job descriptions used for screening and interview generation.</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Manage and configure job descriptions for screening and interviews.</p>
         </div>
         <button
           type="button"
-          onClick={resetForm}
-          className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-all shadow-lg shadow-blue-200 dark:shadow-none"
+          onClick={() => resetForm()}
+          className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-all shadow-lg shadow-blue-200 dark:shadow-none"
         >
-          Create New JD
+          <Plus size={20} />
+          <span>Add New JD</span>
         </button>
       </div>
 
@@ -186,54 +228,191 @@ export default function HRJdManagementPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <MetricCard title="Total JDs" value={jds.length} color="blue" />
         <MetricCard title="Average Qualify Score" value={jds.length ? `${Math.round(jds.reduce((sum, jd) => sum + Number(jd.qualify_score || 0), 0) / jds.length)}%` : "0%"} color="green" />
-        <MetricCard title="Total Questions Configured" value={jds.reduce((sum, jd) => sum + Number(jd.total_questions || 0), 0)} color="purple" />
+        <MetricCard title="Active JDs" value={jds.filter((jd) => jd.active).length} color="purple" />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-8">
-        <div className="xl:col-span-2 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-100 dark:border-slate-800">
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             <input
-              type="search"
-              placeholder="Search JDs..."
+              type="text"
+              placeholder="Search JDs by title or ID..."
+              className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium dark:text-white"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
             />
           </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {!filteredJds.length ? (
-              <div className="p-6 text-sm text-slate-500 dark:text-slate-400">No JDs found.</div>
-            ) : filteredJds.map((jd) => (
-              <button
-                key={jd.id}
-                type="button"
-                onClick={() => handleSelectJd(jd.id)}
-                className={`w-full text-left p-6 transition-all hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
-                  selectedId === jd.id ? "bg-blue-50/60 dark:bg-blue-900/10" : ""
-                }`}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">{jd.title}</p>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 line-clamp-3">{jd.jd_text}</p>
-                  </div>
-                  <StatusBadge status={{ label: `${jd.total_questions} Questions`, tone: "primary" }} />
-                </div>
-                <p className="text-xs text-slate-400 mt-3">
-                  Qualify score {jd.qualify_score}% | Academic floor {jd.min_academic_percent}%
-                </p>
-              </button>
+
+          <select
+            className="px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium dark:text-white"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            <option value="all">Status: All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+
+          <select
+            className="px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium dark:text-white"
+            value={departmentFilter}
+            onChange={(event) => setDepartmentFilter(event.target.value)}
+          >
+            <option value="all">Department: All</option>
+            {departments.slice(1).map((dept) => (
+              <option key={dept} value={dept}>
+                {dept}
+              </option>
             ))}
-          </div>
+          </select>
+        </div>
+        <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">
+          Showing {paginatedJds.length} of {filteredJds.length} JDs
+        </p>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50/50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-800">
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">JD ID</th>
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Title</th>
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Department</th>
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Experience</th>
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Status</th>
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Questions</th>
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Qualify Score</th>
+                <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+              {!paginatedJds.length ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">
+                    No JDs found. Create one to get started.
+                  </td>
+                </tr>
+              ) : paginatedJds.map((jd) => (
+                <tr key={jd.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-all group">
+                  <td className="px-6 py-4">
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400">{jd.id}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="font-bold text-slate-900 dark:text-white">{jd.title}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">{jd.jd_text}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm text-slate-600 dark:text-slate-300">{jd.department || "–"}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm text-slate-600 dark:text-slate-300">{jd.experience_required || "–"}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={cn(
+                      "inline-flex items-center px-3 py-1 rounded-full text-xs font-bold",
+                      jd.active ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                    )}>
+                      {jd.active ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{jd.total_questions}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{jd.qualify_score}%</p>
+                  </td>
+                  <td className="px-6 py-4 text-right relative">
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenu(openMenu === jd.id ? null : jd.id)}
+                      className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all"
+                    >
+                      <MoreVertical size={18} />
+                    </button>
+                    {openMenu === jd.id && (
+                      <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-10">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/hr/jds/${jd.id}`)}
+                          className="flex items-center space-x-3 w-full px-4 py-3 text-left text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 first:rounded-t-xl"
+                        >
+                          <Eye size={16} />
+                          <span className="text-sm font-medium">View</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectJd(jd.id)}
+                          className="flex items-center space-x-3 w-full px-4 py-3 text-left text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <Edit2 size={16} />
+                          <span className="text-sm font-medium">Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStatus(jd.id, jd.active)}
+                          className="flex items-center space-x-3 w-full px-4 py-3 text-left text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <span className={cn("inline-block w-4 h-4 rounded-full", jd.active ? "bg-emerald-500" : "bg-slate-400")} />
+                          <span className="text-sm font-medium">{jd.active ? "Deactivate" : "Activate"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteJd(jd.id)}
+                          disabled={deleting === jd.id}
+                          className="flex items-center space-x-3 w-full px-4 py-3 text-left text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 last:rounded-b-xl disabled:opacity-50"
+                        >
+                          <Trash2 size={16} />
+                          <span className="text-sm font-medium">{deleting === jd.id ? "Deleting..." : "Delete"}</span>
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        <div className="xl:col-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-8">
+        <div className="p-6 bg-slate-50/30 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <p className="text-sm font-medium text-slate-500">
+            Page <span className="text-slate-900 dark:text-white">{page}</span> of{" "}
+            <span className="text-slate-900 dark:text-white">{totalPages}</span>
+          </p>
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              disabled={page === 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-white dark:hover:bg-slate-900 disabled:opacity-30 transition-all"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <div className="flex items-center space-x-1 px-4">
+              <span className="text-sm font-black text-slate-900 dark:text-white">Page {page}</span>
+              <span className="text-sm text-slate-400">of {totalPages}</span>
+            </div>
+            <button
+              type="button"
+              disabled={page === totalPages}
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-white dark:hover:bg-slate-900 disabled:opacity-30 transition-all"
+            >
+              <ChevronRight size={20} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {showForm && (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-8">
           <div className="flex items-center justify-between gap-4 flex-wrap mb-6">
             <div>
               <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
                 {selectedId ? "Edit Job Description" : "Create Job Description"}
               </h2>
-              <p className="text-slate-500 dark:text-slate-400 mt-1">This form writes directly to the live `/api/hr/jds` endpoints.</p>
+              <p className="text-slate-500 dark:text-slate-400 mt-1">Configure the JD details and scoring weights.</p>
             </div>
             {selectedId ? (
               <StatusBadge status={{ label: `JD #${selectedId}`, tone: "secondary" }} />
@@ -329,7 +508,7 @@ export default function HRJdManagementPage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-50"
               >
                 {saving ? "Saving..." : selectedId ? "Update JD" : "Create JD"}
               </button>
@@ -338,12 +517,12 @@ export default function HRJdManagementPage() {
                 onClick={resetForm}
                 className="px-6 py-3 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800"
               >
-                Reset
+                Cancel
               </button>
             </div>
           </form>
         </div>
-      </div>
+      )}
     </div>
   );
 }
