@@ -1,592 +1,270 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { interviewApi } from "../services/api";
-
-function appendTranscript(baseText, chunk) {
-  const cleanChunk = (chunk || "").trim();
-  if (!cleanChunk) return baseText || "";
-  const cleanBase = (baseText || "").trim();
-  if (!cleanBase) return cleanChunk;
-  return `${cleanBase} ${cleanChunk}`.replace(/\s+/g, " ").trim();
-}
-
-function speechErrorMessage(errorCode) {
-  if (errorCode === "not-allowed" || errorCode === "service-not-allowed") {
-    return "Microphone permission denied. Allow access and retry.";
-  }
-  if (errorCode === "no-speech") {
-    return "No speech detected. Speak clearly and try again.";
-  }
-  if (errorCode === "network") {
-    return "Speech service network error. Check internet and retry.";
-  }
-  if (errorCode === "audio-capture") {
-    return "Microphone is unavailable. Check your device.";
-  }
-  return "Voice recognition failed. Please retry.";
-}
-
-function getSpeechConstructor() {
-  if (typeof window === "undefined") return null;
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
+import React, { useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  Mic,
+  MicOff,
+  Send,
+  MessageSquare,
+  CheckCircle2,
+  Activity
+} from "lucide-react";
+import { cn } from "../utils/utils";
 
 export default function Interview() {
   const { resultId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
-  const numericResultId = Number(resultId);
-  const routeResultId = Number.isFinite(numericResultId) && numericResultId > 0 ? numericResultId : 0;
-  const bootstrap = location.state?.bootstrap || null;
-  const token = String(resultId || "").trim();
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [answer, setAnswer] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(120); // 2 minutes per question
+  const [totalTimeLeft, setTotalTimeLeft] = useState(900); // 15 minutes total
+  const [transcripts, setTranscripts] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  const videoRef = useRef(null);
 
-  const previewRef = useRef(null);
-  const streamRef = useRef(null);
-  const recognitionRef = useRef(null);
-  const micStateRef = useRef("idle");
-  const finalTranscriptRef = useRef("");
-  const baseAnswerRef = useRef("");
-  const trackStateRef = useRef({ camActive: null, micActive: null });
-  const tabSwitchCountRef = useRef(0);
-  const autoSkipLockRef = useRef(false);
-
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-
-  const [sessionId, setSessionId] = useState(null);
-  const [currentQuestion, setCurrentQuestion] = useState(null);
-  const [questionNumber, setQuestionNumber] = useState(0);
-  const [maxQuestions, setMaxQuestions] = useState(0);
-  const [questionTimeLimit, setQuestionTimeLimit] = useState(0);
-  const [remainingSeconds, setRemainingSeconds] = useState(0);
-  const [remainingTotalSeconds, setRemainingTotalSeconds] = useState(0);
-  const [answerText, setAnswerText] = useState("");
-
-  const [speechSupported, setSpeechSupported] = useState(false);
-  const [micState, setMicState] = useState("idle");
-  const [speechInterimText, setSpeechInterimText] = useState("");
-  const [speechError, setSpeechError] = useState("");
-
-  const [cameraGranted, setCameraGranted] = useState(Boolean(location.state?.precheck?.cameraGranted));
-  const [micGranted, setMicGranted] = useState(Boolean(location.state?.precheck?.micGranted));
-  const [cameraActive, setCameraActive] = useState(false);
-  const [micActive, setMicActive] = useState(false);
-  const [tabSwitchCount, setTabSwitchCount] = useState(0);
-  const [eventLog, setEventLog] = useState([]);
-
-  const hasActiveQuestion = Boolean(sessionId && currentQuestion);
-  const speechBusy = micState === "starting" || micState === "stopping";
-  const speechListening = micState === "recording";
-  const speechDisabled = !hasActiveQuestion || submitting;
-
-  const timerClassName = useMemo(() => {
-    if (remainingSeconds <= 5) return "timer-chip danger";
-    if (remainingSeconds <= 15) return "timer-chip warn";
-    return "timer-chip";
-  }, [remainingSeconds]);
-
-  const addEvent = useCallback(
-    (eventType, detail, meta = {}) => {
-      const nowIso = new Date().toISOString();
-      const row = {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        eventType,
-        detail,
-        timestamp: nowIso,
-      };
-      setEventLog((prev) => [row, ...prev].slice(0, 12));
-
-      if (!token) return;
-      interviewApi.sendEvent(token, {
-        event_type: eventType,
-        detail,
-        meta,
-        timestamp: nowIso,
-      }).catch(() => undefined);
-    },
-    [token],
-  );
-
-  const applySessionPayload = useCallback(
-    (payload) => {
-      if (!payload?.session_id) {
-        throw new Error("Could not initialize interview session.");
-      }
-      setSessionId(payload.session_id);
-      setCurrentQuestion(payload.current_question || null);
-      setQuestionNumber(payload.question_number || 0);
-      setMaxQuestions(payload.max_questions || 0);
-      setQuestionTimeLimit(payload.time_limit_seconds || 0);
-      setRemainingSeconds(payload.time_limit_seconds || 0);
-      setRemainingTotalSeconds(payload.remaining_total_seconds || 0);
-      setAnswerText("");
-      setSpeechInterimText("");
-      baseAnswerRef.current = "";
-      finalTranscriptRef.current = "";
-      autoSkipLockRef.current = false;
-
-      if (!payload.current_question || payload.interview_completed) {
-        navigate(`/interview/${resultId}/completed?sessionId=${payload.session_id}`, { replace: true });
-      }
-    },
-    [navigate, resultId],
-  );
-
-  const bootstrapSession = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      if (bootstrap?.session_id) {
-        applySessionPayload(bootstrap);
-      } else {
-        const body = { consent_given: true };
-        if (routeResultId > 0) body.result_id = routeResultId;
-        const payload = await interviewApi.start(body);
-        applySessionPayload(payload);
-      }
-    } catch (initError) {
-      setError(initError.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [applySessionPayload, bootstrap, routeResultId]);
-
-  const stopMediaStream = useCallback(() => {
-    if (!streamRef.current) return;
-    streamRef.current.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (previewRef.current) {
-      previewRef.current.srcObject = null;
-    }
-  }, []);
-
-  const updateTrackState = useCallback(
-    (silent = false) => {
-      const stream = streamRef.current;
-      const videoTrack = stream?.getVideoTracks?.()[0];
-      const audioTrack = stream?.getAudioTracks?.()[0];
-      const camLive = Boolean(videoTrack && videoTrack.readyState === "live" && videoTrack.enabled);
-      const micLive = Boolean(audioTrack && audioTrack.readyState === "live" && audioTrack.enabled);
-
-      setCameraActive(camLive);
-      setMicActive(micLive);
-
-      if (!silent && trackStateRef.current.camActive === true && !camLive) {
-        addEvent("camera_off", "Camera stream became unavailable.");
-      }
-      if (!silent && trackStateRef.current.micActive === true && !micLive) {
-        addEvent("mic_off", "Microphone stream became unavailable.");
-      }
-      trackStateRef.current = { camActive: camLive, micActive: micLive };
-    },
-    [addEvent],
-  );
-
-  const initializeMedia = useCallback(async () => {
-    stopMediaStream();
-    setError("");
-    try {
-      const fullStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      streamRef.current = fullStream;
-      if (previewRef.current) {
-        previewRef.current.srcObject = fullStream;
-      }
-      setCameraGranted(true);
-      setMicGranted(true);
-      updateTrackState(true);
-
-      const videoTrack = fullStream.getVideoTracks()[0];
-      const audioTrack = fullStream.getAudioTracks()[0];
-      if (videoTrack) {
-        videoTrack.addEventListener("ended", () => {
-          setCameraActive(false);
-          addEvent("camera_off", "Camera stream stopped.");
-        });
-      }
-      if (audioTrack) {
-        audioTrack.addEventListener("ended", () => {
-          setMicActive(false);
-          addEvent("mic_off", "Microphone stream stopped.");
-        });
-      }
-      return;
-    } catch {
-      // Fall through to granular checks.
-    }
-
-    try {
-      const camOnly = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      streamRef.current = camOnly;
-      if (previewRef.current) {
-        previewRef.current.srcObject = camOnly;
-      }
-      setCameraGranted(true);
-      updateTrackState(true);
-      camOnly.getVideoTracks().forEach((track) =>
-        track.addEventListener("ended", () => {
-          setCameraActive(false);
-          addEvent("camera_off", "Camera stream stopped.");
-        }),
-      );
-    } catch {
-      setCameraGranted(false);
-      setCameraActive(false);
-    }
-
-    try {
-      const micOnly = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-      setMicGranted(true);
-      setMicActive(true);
-      micOnly.getAudioTracks().forEach((track) =>
-        track.addEventListener("ended", () => {
-          setMicActive(false);
-          addEvent("mic_off", "Microphone stream stopped.");
-        }),
-      );
-      micOnly.getTracks().forEach((track) => track.stop());
-    } catch {
-      setMicGranted(false);
-      setMicActive(false);
-    }
-  }, [addEvent, stopMediaStream, updateTrackState]);
-
-  const stopVoiceInput = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
-    if (micStateRef.current !== "recording") return;
-    micStateRef.current = "stopping";
-    setMicState("stopping");
-    try {
-      recognition.stop();
-    } catch {
-      micStateRef.current = "idle";
-      setMicState("idle");
-    }
-  }, []);
-
-  const startVoiceInput = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition || speechDisabled) return;
-    if (micStateRef.current !== "idle") return;
-
-    baseAnswerRef.current = answerText;
-    finalTranscriptRef.current = "";
-    setSpeechInterimText("");
-    setSpeechError("");
-    micStateRef.current = "starting";
-    setMicState("starting");
-    try {
-      recognition.start();
-    } catch {
-      micStateRef.current = "idle";
-      setMicState("idle");
-      setSpeechError("Could not start voice recognition.");
-    }
-  }, [answerText, speechDisabled]);
-
-  const waitForMicIdle = useCallback(() => {
-    return new Promise((resolve) => {
-      if (micStateRef.current === "idle") {
-        resolve();
-        return;
-      }
-      const startedAt = Date.now();
-      const intervalId = setInterval(() => {
-        if (micStateRef.current === "idle" || Date.now() - startedAt > 1500) {
-          clearInterval(intervalId);
-          resolve();
-        }
-      }, 50);
-    });
-  }, []);
-
-  const submitAnswer = useCallback(
-    async (skipped = false) => {
-      if (!sessionId || !currentQuestion || submitting) return;
-      setSubmitting(true);
-      setError("");
-      try {
-        if (micStateRef.current === "recording") {
-          stopVoiceInput();
-        }
-        await waitForMicIdle();
-
-        const elapsed = Math.max(0, questionTimeLimit - remainingSeconds);
-        const timeTaken = skipped ? questionTimeLimit : Math.max(1, Math.min(questionTimeLimit, elapsed));
-
-        const response = await interviewApi.submitAnswer({
-          session_id: sessionId,
-          question_id: currentQuestion.id,
-          answer_text: skipped ? "" : answerText.trim(),
-          skipped,
-          time_taken_sec: timeTaken,
-        });
-
-        if (response?.interview_completed || !response?.next_question) {
-          navigate(`/interview/${resultId}/completed?sessionId=${sessionId}`, { replace: true });
-          return;
-        }
-
-        setCurrentQuestion(response.next_question);
-        setQuestionNumber(response.question_number || questionNumber + 1);
-        setMaxQuestions(response.max_questions || maxQuestions);
-        setQuestionTimeLimit(response.time_limit_seconds || questionTimeLimit);
-        setRemainingSeconds(response.time_limit_seconds || questionTimeLimit);
-        setRemainingTotalSeconds(response.remaining_total_seconds || remainingTotalSeconds);
-        setAnswerText("");
-        setSpeechInterimText("");
-        baseAnswerRef.current = "";
-        finalTranscriptRef.current = "";
-        autoSkipLockRef.current = false;
-      } catch (submitError) {
-        setError(submitError.message);
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [
-      answerText,
-      currentQuestion,
-      maxQuestions,
-      navigate,
-      questionNumber,
-      questionTimeLimit,
-      remainingSeconds,
-      remainingTotalSeconds,
-      resultId,
-      sessionId,
-      stopVoiceInput,
-      submitting,
-      waitForMicIdle,
-    ],
-  );
+  const questions = [
+    "Tell me about a challenging project you've worked on recently. What was your role and how did you handle difficulties?",
+    "How do you stay updated with the latest trends and technologies in full-stack development?",
+    "Describe your experience with React and state management libraries like Redux or Zustand.",
+    "How do you approach testing in your development workflow?",
+    "Why do you want to join our team as a Full Stack Developer?"
+  ];
 
   useEffect(() => {
-    void bootstrapSession();
-    void initializeMedia();
+    const videoElement = videoRef.current;
+    let mediaStream = null;
 
-    const SpeechCtor = getSpeechConstructor();
-    if (!SpeechCtor) {
-      setSpeechSupported(false);
-      return () => {
-        stopMediaStream();
-      };
-    }
-    setSpeechSupported(true);
-    const recognition = new SpeechCtor();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      micStateRef.current = "recording";
-      setMicState("recording");
-      setSpeechError("");
-      addEvent("recording_started", "Voice recording started.");
-    };
-
-    recognition.onresult = (event) => {
-      let interim = "";
-      let finalChunk = "";
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const transcript = event.results[i][0]?.transcript || "";
-        if (event.results[i].isFinal) {
-          finalChunk = appendTranscript(finalChunk, transcript);
-        } else {
-          interim = appendTranscript(interim, transcript);
+    // Start camera
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        mediaStream = stream;
+        if (videoElement) {
+          videoElement.srcObject = stream;
         }
-      }
+      })
+      .catch(err => console.error("Media error:", err));
 
-      if (finalChunk) {
-        finalTranscriptRef.current = appendTranscript(finalTranscriptRef.current, finalChunk);
-      }
-      const withFinal = appendTranscript(baseAnswerRef.current, finalTranscriptRef.current);
-      const fullText = appendTranscript(withFinal, interim);
-      setSpeechInterimText(interim);
-      setAnswerText(fullText);
-    };
-
-    recognition.onerror = (event) => {
-      const code = event?.error || "unknown";
-      setSpeechError(speechErrorMessage(code));
-      if (code === "not-allowed" || code === "service-not-allowed") {
-        setMicGranted(false);
-        addEvent("mic_off", "Microphone permission denied.", { error: code });
-      } else if (code === "audio-capture") {
-        setMicActive(false);
-        addEvent("mic_off", "Microphone capture failed.", { error: code });
-      } else {
-        addEvent("recording_error", speechErrorMessage(code), { error: code });
-      }
-    };
-
-    recognition.onend = () => {
-      const prevState = micStateRef.current;
-      micStateRef.current = "idle";
-      setMicState("idle");
-      setSpeechInterimText("");
-      if (prevState === "recording" || prevState === "stopping") {
-        addEvent("recording_stopped", "Voice recording stopped.");
-      }
-    };
-
-    recognitionRef.current = recognition;
-    return () => {
-      try {
-        recognition.stop();
-      } catch {
-        // no-op
-      }
-      recognitionRef.current = null;
-      stopMediaStream();
-    };
-  }, [addEvent, bootstrapSession, initializeMedia, stopMediaStream]);
-
-  useEffect(() => {
-    if (!hasActiveQuestion || submitting) return undefined;
-    if (remainingSeconds <= 0 || remainingTotalSeconds <= 0) {
-      if (!autoSkipLockRef.current) {
-        autoSkipLockRef.current = true;
-        void submitAnswer(true);
-      }
-      return undefined;
-    }
-    const timeoutId = setTimeout(() => {
-      setRemainingSeconds((value) => Math.max(0, value - 1));
-      setRemainingTotalSeconds((value) => Math.max(0, value - 1));
+    // Timers
+    const interval = setInterval(() => {
+      setTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
+      setTotalTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
     }, 1000);
+
     return () => {
-      clearTimeout(timeoutId);
+      clearInterval(interval);
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+      }
+      if (videoElement) {
+        videoElement.srcObject = null;
+      }
     };
-  }, [hasActiveQuestion, remainingSeconds, remainingTotalSeconds, submitAnswer, submitting]);
+  }, []);
 
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      if (!document.hidden) return;
-      const nextCount = tabSwitchCountRef.current + 1;
-      tabSwitchCountRef.current = nextCount;
-      setTabSwitchCount(nextCount);
-      addEvent("tab_switch", "Candidate switched tab/window.", { tab_switch_count: nextCount });
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [addEvent]);
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      updateTrackState(false);
-    }, 2000);
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [updateTrackState]);
+  const handleNext = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      // Add answer to transcripts
+      if (answer) {
+        setTranscripts((currentTranscripts) => [
+          ...currentTranscripts,
+          { q: questions[currentQuestionIndex], a: answer },
+        ]);
+      }
+      setCurrentQuestionIndex((index) => index + 1);
+      setAnswer("");
+      setTimeLeft(120);
+    } else {
+      setIsSubmitting(true);
+      setTimeout(() => {
+        navigate(`/interview/${resultId}/completed`);
+      }, 1500);
+    }
+  };
 
-  useEffect(() => {
-    if (!speechDisabled) return;
-    stopVoiceInput();
-  }, [speechDisabled, stopVoiceInput]);
-
-  if (loading) {
-    return <p className="center muted">Loading interview session...</p>;
-  }
+  const toggleRecording = () => {
+    setIsRecording(!isRecording);
+    if (!isRecording) {
+      // Mock transcription
+      const mockText = "In my previous role, I led the migration of a monolithic application to a microservices architecture using React and Node.js...";
+      let i = 0;
+      const interval = setInterval(() => {
+        setAnswer(mockText.slice(0, i));
+        i += 3;
+        if (i > mockText.length) clearInterval(interval);
+      }, 50);
+    }
+  };
 
   return (
-    <div className="stack">
-      <header className="title-row">
-        <h2>Live Interview</h2>
-        <span className={timerClassName}>Q Timer: {remainingSeconds}s</span>
-      </header>
-
-      {error && <p className="alert error">{error}</p>}
-
-      <div className="interview-layout">
-        <section className="card stack-sm interview-main">
-          <p>
-            Question {questionNumber} / {maxQuestions} | Total Time Left: {remainingTotalSeconds}s
-          </p>
-          <div className="question-box">
-            {currentQuestion?.text || "No active question. Complete this interview session."}
-          </div>
-          <textarea
-            rows={7}
-            value={answerText}
-            onChange={(event) => setAnswerText(event.target.value)}
-            placeholder="Speak or type your answer..."
-            disabled={!hasActiveQuestion || submitting}
-          />
-          <div className="inline-row">
-            <button
-              type="button"
-              className={`voice-button ${speechListening ? "active" : ""}`}
-              onClick={() => {
-                if (speechListening) {
-                  stopVoiceInput();
-                } else {
-                  startVoiceInput();
-                }
-              }}
-              disabled={speechBusy || (!speechListening && (!speechSupported || speechDisabled))}
-            >
-              {speechBusy ? (speechListening ? "Stopping..." : "Starting...") : speechListening ? "Stop Mic" : "Start Mic"}
-            </button>
-            <span className={`voice-status ${speechListening ? "active" : ""}`}>
-              {speechBusy ? "Mic Busy" : speechListening ? "Recording" : "Idle"}
-            </span>
-          </div>
-          {!speechSupported && <p className="muted">Web Speech API is not supported in this browser.</p>}
-          {speechInterimText && <p className="live-transcript">Live: {speechInterimText}</p>}
-          {speechError && <p className="alert error">{speechError}</p>}
-          <div className="inline-row">
-            <button disabled={!hasActiveQuestion || submitting} onClick={() => submitAnswer(false)}>
-              {submitting ? "Submitting..." : "Submit Answer"}
-            </button>
-            <button disabled={!hasActiveQuestion || submitting} onClick={() => submitAnswer(true)}>
-              Skip Question
-            </button>
-          </div>
-        </section>
-
-        <aside className="card stack-sm interview-side">
-          <h3>Proctoring</h3>
-          <video ref={previewRef} className="interview-video preview-small" autoPlay muted playsInline />
-          <div className="stack-sm">
-            <p className="muted">
-              Camera: <strong>{cameraGranted ? "Granted" : "Denied"}</strong>
-            </p>
-            <p className="muted">
-              Mic: <strong>{micGranted ? "Granted" : "Denied"}</strong>
-            </p>
-            <p className="muted">
-              Camera Stream: <strong>{cameraActive ? "Active" : "Off"}</strong>
-            </p>
-            <p className="muted">
-              Mic Stream: <strong>{micActive ? "Active" : "Off"}</strong>
-            </p>
-            <p className="muted">
-              Tab Switches: <strong>{tabSwitchCount}</strong>
-            </p>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans p-4 lg:p-8">
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
+        
+        {/* Main Content: Question & Answer */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Header Info */}
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 w-10 h-10 rounded-xl flex items-center justify-center font-bold">
+                {currentQuestionIndex + 1}
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider leading-none">Question {currentQuestionIndex + 1} of {questions.length}</h4>
+                <p className="text-slate-900 dark:text-white font-bold mt-1">Live Interview Session</p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-6">
+              <div className="text-right hidden sm:block">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Question Timer</p>
+                <p className={cn("text-xl font-black font-mono", timeLeft < 20 ? "text-red-500 animate-pulse" : "text-slate-900 dark:text-white")}>
+                  {formatTime(timeLeft)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Time</p>
+                <p className="text-xl font-black font-mono text-slate-900 dark:text-white">{formatTime(totalTimeLeft)}</p>
+              </div>
+            </div>
           </div>
 
-          <h4>Suspicious Events</h4>
-          {!eventLog.length && <p className="muted">No events logged.</p>}
-          {!!eventLog.length && (
-            <div className="event-log">
-              {eventLog.map((item) => (
-                <div key={item.id} className="event-item">
-                  <p>
-                    <strong>{item.eventType}</strong>
-                  </p>
-                  <p className="muted">{item.detail}</p>
-                  <p className="muted">{new Date(item.timestamp).toLocaleTimeString()}</p>
+          {/* Question Box */}
+          <div className="bg-white dark:bg-slate-900 p-10 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+            <div className="absolute top-0 left-0 w-2 h-full bg-blue-600 transition-all duration-300 group-hover:w-4" />
+            <h2 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white font-display leading-tight">
+              {questions[currentQuestionIndex]}
+            </h2>
+          </div>
+
+          {/* Answer Area */}
+          <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center">
+                <MessageSquare className="mr-2 text-blue-600" size={18} />
+                Your Response (Speech-to-Text)
+              </h4>
+              <div className="flex items-center space-x-2">
+                <span className={cn(
+                  "w-2 h-2 rounded-full",
+                  isRecording ? "bg-red-500 animate-pulse" : "bg-slate-300"
+                )} />
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                  {isRecording ? "Listening..." : "Microphone Idle"}
+                </span>
+              </div>
+            </div>
+
+            <textarea
+              className="w-full h-48 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl p-6 text-lg text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500/20 transition-all resize-none font-medium leading-relaxed"
+              placeholder="Your answer will appear here as you speak..."
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+            />
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <button 
+                  onClick={toggleRecording}
+                  className={cn(
+                    "flex-1 sm:flex-none flex items-center justify-center space-x-3 px-8 py-4 rounded-2xl font-black transition-all",
+                    isRecording 
+                      ? "bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-200" 
+                      : "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-200"
+                  )}
+                >
+                  {isRecording ? <MicOff size={22} /> : <Mic size={22} />}
+                  <span>{isRecording ? "Stop Recording" : "Start Speaking"}</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <button 
+                  onClick={() => setAnswer("")}
+                  className="flex-1 sm:flex-none px-6 py-4 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+                >
+                  Clear
+                </button>
+                <button 
+                  onClick={handleNext}
+                  disabled={isSubmitting}
+                  className="flex-1 sm:flex-none flex items-center justify-center space-x-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black transition-all shadow-lg shadow-indigo-200"
+                >
+                  <span>{currentQuestionIndex === questions.length - 1 ? (isSubmitting ? "Finishing..." : "Finish Interview") : "Next Question"}</span>
+                  <Send size={18} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Sidebar: Proctoring & Transcripts */}
+        <div className="space-y-6">
+          {/* Proctoring Feed */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 space-y-6">
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center">
+              <Activity className="mr-2 text-emerald-500" size={18} />
+              Proctoring Feed
+            </h4>
+            <div className="relative aspect-video bg-slate-900 rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800">
+              <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay muted playsInline />
+              <div className="absolute top-4 left-4 flex items-center space-x-2 bg-black/40 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/10">
+                <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-[10px] font-black text-white uppercase tracking-widest">Rec 02:45</span>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-2xl border border-slate-100 dark:border-slate-700">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Video</span>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                </div>
+                <p className="text-xs font-black text-slate-900 dark:text-white">Active</p>
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-2xl border border-slate-100 dark:border-slate-700">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Audio</span>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                </div>
+                <p className="text-xs font-black text-slate-900 dark:text-white">Streaming</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Real-time Transcription Panel */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 space-y-6 flex-1 flex flex-col min-h-[400px]">
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center">
+              <CheckCircle2 className="mr-2 text-blue-600" size={18} />
+              Session Log
+            </h4>
+            <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+              {transcripts.length === 0 && (
+                <div className="text-center py-12 opacity-30">
+                  <MessageSquare size={48} className="mx-auto mb-4" />
+                  <p className="text-sm font-bold uppercase tracking-widest">No history yet</p>
+                </div>
+              )}
+              {transcripts.map((t, i) => (
+                <div key={i} className="space-y-2 border-l-2 border-slate-100 dark:border-slate-800 pl-4">
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Question {i + 1}</p>
+                  <p className="text-xs text-slate-900 dark:text-white font-bold line-clamp-2">{t.q}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic line-clamp-3">"{t.a}"</p>
                 </div>
               ))}
+              {isRecording && (
+                <div className="space-y-2 border-l-2 border-blue-500 pl-4 animate-pulse">
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Currently Recording...</p>
+                  <p className="text-xs text-slate-400 italic">Transcribing live audio feed...</p>
+                </div>
+              )}
             </div>
-          )}
-        </aside>
+          </div>
+        </div>
       </div>
     </div>
   );

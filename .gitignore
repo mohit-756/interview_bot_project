@@ -8,14 +8,17 @@ __pycache__/
 # Ignore virtual environment
 venv/
 env/
+.venv/
 
 uploads/
 __pycache__/
 *.pdf
 
 app.db
+interview-frontend/node_modules/
 interview-frontend/dist/
 interview-frontend/.vite/
+frontend/node_modules/
 interview_bot_project/
 .nested_git_backups/
 tmp_pycache/

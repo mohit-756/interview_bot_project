@@ -1,20 +1,27 @@
 """Authentication helpers for password hashing and JWT token creation."""
 
 from datetime import datetime, timedelta
+import os
+import warnings
+
+from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from passlib.exc import PasswordValueError, UnknownHashError
-import os
-from dotenv import load_dotenv
 
 # ---------------------------
 # Auth Config
 # ---------------------------
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise RuntimeError("SECRET_KEY must be set in environment.")
+DEFAULT_DEV_SECRET_KEY = "dev-secret-key-change-me"
+SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY
+if SECRET_KEY == DEFAULT_DEV_SECRET_KEY:
+    warnings.warn(
+        "SECRET_KEY is not set. Using the development fallback; configure SECRET_KEY in production.",
+        RuntimeWarning,
+        stacklevel=1,
+    )
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 

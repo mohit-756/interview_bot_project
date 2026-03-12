@@ -1,75 +1,60 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Sora:wght@600;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --bg:
-    radial-gradient(circle at 0% 0%, rgba(33, 115, 190, 0.18), transparent 45%),
-    radial-gradient(circle at 100% 0%, rgba(15, 123, 108, 0.14), transparent 35%),
-    linear-gradient(180deg, #f4f8fc 0%, #e8eff7 100%);
-  --text: #0d2840;
-  --muted: #526377;
-  --muted-strong: #3b556f;
-  --panel: rgba(255, 255, 255, 0.9);
-  --panel-strong: rgba(255, 255, 255, 0.96);
-  --surface: rgba(247, 250, 252, 0.95);
-  --border: rgba(13, 40, 64, 0.09);
-  --border-strong: rgba(13, 40, 64, 0.16);
-  --shadow: 0 18px 40px rgba(13, 40, 64, 0.08);
-  --accent: #2173be;
-  --accent-strong: #0b5cab;
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+  }
 }
 
-:root[data-theme="dark"] {
-  --bg:
-    radial-gradient(circle at 0% 0%, rgba(33, 115, 190, 0.22), transparent 42%),
-    radial-gradient(circle at 100% 0%, rgba(15, 123, 108, 0.18), transparent 35%),
-    linear-gradient(180deg, #0d1826 0%, #111f30 100%);
-  --text: #e8eef5;
-  --muted: #a7b6c6;
-  --muted-strong: #c2d0dc;
-  --panel: rgba(16, 26, 40, 0.9);
-  --panel-strong: rgba(18, 30, 46, 0.96);
-  --surface: rgba(24, 38, 57, 0.92);
-  --border: rgba(226, 232, 240, 0.08);
-  --border-strong: rgba(226, 232, 240, 0.16);
-  --shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
-  --accent: #5fa8f5;
-  --accent-strong: #8dc6ff;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-  font-family: "Plus Jakarta Sans", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-}
-
-a {
-  color: var(--accent-strong);
-  text-decoration: none;
-}
-
-h1,
-h2,
-h3,
-h4 {
-  font-family: "Sora", "Plus Jakarta Sans", sans-serif;
-  letter-spacing: 0.2px;
-}
-
-p,
-li,
-label,
-th,
-td,
-span,
-input,
-select,
-textarea,
-button {
-  font-family: inherit;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
 }

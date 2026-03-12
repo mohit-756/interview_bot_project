@@ -1,222 +1,256 @@
-import axios from "axios";
+import { mockCandidates, mockStats, mockInterviewResults } from "../data/mockData";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
+// Simulation delay helper
+const delay = (ms = 500) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  withCredentials: true,
-});
+const mockInterviewReviews = [
+  {
+    interview: {
+      interview_id: "INT-001",
+      application_id: "APP-001",
+      status: "completed",
+      started_at: "2026-03-09T09:30:00Z",
+      ended_at: "2026-03-09T09:56:00Z",
+      candidate: mockCandidates[0],
+      job: { title: "Full Stack Developer" },
+    },
+    questions: [
+      {
+        id: 1,
+        text: "Tell me about a challenging project you delivered recently.",
+        answer_text: "I led a React and Node.js migration for a multi-tenant dashboard and coordinated rollout in phases.",
+        answer_summary: "Strong ownership, clear technical tradeoffs, and measurable delivery outcome.",
+        ai_answer_score: 88,
+        score_breakdown: { relevance: 90, completeness: 86, clarity: 88 },
+        time_taken_seconds: 92,
+        allotted_seconds: 120,
+        skipped: false,
+      },
+      {
+        id: 2,
+        text: "How do you approach state management in large React applications?",
+        answer_text: "I start by minimizing shared state, then use context or Zustand only where domain boundaries justify it.",
+        answer_summary: "Balanced answer showing pragmatic tool selection.",
+        ai_answer_score: 84,
+        score_breakdown: { relevance: 85, completeness: 82, clarity: 85 },
+        time_taken_seconds: 77,
+        allotted_seconds: 120,
+        skipped: false,
+      },
+    ],
+    events: [
+      {
+        id: 1,
+        event_type: "face_detected",
+        created_at: "2026-03-09T09:31:00Z",
+        score: 0.1,
+        suspicious: false,
+        meta_json: { faces_count: 1, frame_reasons: [] },
+        snapshot_path: null,
+      },
+      {
+        id: 2,
+        event_type: "away_from_screen",
+        created_at: "2026-03-09T09:45:00Z",
+        score: 0.82,
+        suspicious: true,
+        meta_json: { faces_count: 0, frame_reasons: ["candidate_not_centered"] },
+        snapshot_path: null,
+      },
+    ],
+    hr_review: {
+      notes: "Technically strong. Minor concern around attention drift mid-session.",
+      final_score: 86,
+      behavioral_score: 81,
+      communication_score: 84,
+      red_flags: "Brief screen drift",
+    },
+  },
+  {
+    interview: {
+      interview_id: "INT-002",
+      application_id: "APP-002",
+      status: "selected",
+      started_at: "2026-03-08T11:00:00Z",
+      ended_at: "2026-03-08T11:22:00Z",
+      candidate: mockCandidates[1],
+      job: { title: "Frontend Engineer" },
+    },
+    questions: [
+      {
+        id: mockInterviewResults[0]?.questions?.length ? 3 : 3,
+        text: "How do you balance accessibility with visual polish?",
+        answer_text: "I start with semantic HTML and keyboard flows, then layer visual design without breaking core interaction paths.",
+        answer_summary: "Strong accessibility-first answer.",
+        ai_answer_score: 91,
+        score_breakdown: { relevance: 92, completeness: 90, clarity: 91 },
+        time_taken_seconds: 69,
+        allotted_seconds: 120,
+        skipped: false,
+      },
+    ],
+    events: [
+      {
+        id: 3,
+        event_type: "steady_presence",
+        created_at: "2026-03-08T11:10:00Z",
+        score: 0.02,
+        suspicious: false,
+        meta_json: { faces_count: 1, frame_reasons: [] },
+        snapshot_path: null,
+      },
+    ],
+    hr_review: {
+      notes: "Excellent frontend fundamentals and communication.",
+      final_score: 92,
+      behavioral_score: 90,
+      communication_score: 94,
+      red_flags: "",
+    },
+  },
+];
 
-// 1) What this does: converts API/network errors into a readable message.
-// 2) Why needed: every page should show one consistent user-facing error string.
-// 3) How it works: checks backend detail first, then falls back to generic error text.
-function getErrorMessage(error) {
-  const fallback = "Request failed. Please try again.";
-  if (!error) return fallback;
-  const detail = error?.response?.data?.detail;
-  if (typeof detail === "string" && detail.trim()) return detail;
-  if (detail && typeof detail === "object" && typeof detail.message === "string") return detail.message;
-  return (
-    error?.response?.data?.message ||
-    error?.message ||
-    fallback
-  );
-}
-
-// 1) What this does: unwraps axios responses and normalizes errors.
-// 2) Why needed: keeps every API method small and consistent.
-// 3) How it works: returns `response.data` on success and throws a clean Error on failure.
-async function unwrap(promise) {
-  try {
-    const response = await promise;
-    return response.data;
-  } catch (error) {
-    throw new Error(getErrorMessage(error));
-  }
-}
-
-async function downloadFile(promise, fallbackFilename) {
-  try {
-    const response = await promise;
-    const blob = response.data;
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const disposition = response.headers?.["content-disposition"] || "";
-    const nameMatch = disposition.match(/filename="?([^"]+)"?/i);
-    link.href = url;
-    link.download = nameMatch?.[1] || fallbackFilename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-  } catch (error) {
-    throw new Error(getErrorMessage(error));
-  }
+function findInterviewRecord(id) {
+  return mockInterviewReviews.find((record) => record.interview.interview_id === id);
 }
 
 export const authApi = {
-  login(payload) {
-    return unwrap(apiClient.post("/auth/login", payload));
+  async login(payload) {
+    await delay();
+    const selectedRole = payload.role === "hr" ? "hr" : payload.email.includes("hr") ? "hr" : "candidate";
+    if (selectedRole === "hr") {
+      localStorage.setItem("user", JSON.stringify({ name: "HR Manager", role: "hr", email: payload.email }));
+    } else {
+      localStorage.setItem("user", JSON.stringify({ name: "Alex Johnson", role: "candidate", email: payload.email }));
+    }
+    return { status: "success" };
   },
-  signup(payload) {
-    return unwrap(apiClient.post("/auth/signup", payload));
+  async signup(payload) {
+    void payload;
+    await delay();
+    return { status: "success" };
   },
-  logout() {
-    return unwrap(apiClient.post("/auth/logout"));
+  async logout() {
+    await delay(200);
+    localStorage.removeItem("user");
+    return { status: "success" };
   },
-  me() {
-    return unwrap(apiClient.get("/auth/me"));
+  async me() {
+    await delay(100);
+    const user = localStorage.getItem("user");
+    if (!user) throw new Error("Not authenticated");
+    return JSON.parse(user);
   },
 };
 
 export const candidateApi = {
-  dashboard(jobId) {
-    const params = jobId ? { job_id: jobId } : undefined;
-    return unwrap(apiClient.get("/candidate/dashboard", { params }));
+  async dashboard() {
+    await delay();
+    return {
+      candidate: mockCandidates[0],
+      available_jds: [{ id: 1, title: "Full Stack Developer" }],
+      selected_jd_id: 1,
+      result: { shortlisted: true, score: 85 },
+    };
   },
-  listJds() {
-    return unwrap(apiClient.get("/candidate/jds"));
+  async uploadResume(file) {
+    void file;
+    await delay(1500);
+    return { status: "success", message: "Resume analyzed successfully" };
   },
-  selectJd(payload) {
-    return unwrap(apiClient.post("/candidate/select-jd", payload));
-  },
-  uploadResume(file, jobId) {
-    const formData = new FormData();
-    formData.append("resume", file);
-    if (jobId) formData.append("job_id", String(jobId));
-    return unwrap(apiClient.post("/candidate/upload-resume", formData));
-  },
-  scheduleInterview(payload) {
-    return unwrap(apiClient.post("/candidate/select-interview-date", payload));
-  },
-  skillMatch(jobId) {
-    return unwrap(apiClient.get(`/candidate/skill-match/${jobId}`));
-  },
-  practiceKit(jobId) {
-    const params = jobId ? { job_id: jobId } : undefined;
-    return unwrap(apiClient.get("/candidate/practice-kit", { params }));
-  },
+  async practiceKit() {
+    await delay();
+    return {
+      practice: {
+        questions: [
+          { text: "Explain React Hooks", type: "Technical", topic: "React", difficulty: "Medium" }
+        ]
+      },
+      score_preview: 85
+    };
+  }
 };
 
 export const hrApi = {
-  // 1) What this does: loads the HR interview review list.
-  // 2) Why needed: the interview review page uses this endpoint.
-  // 3) How it works: performs a simple GET request.
-  interviews() {
-    return unwrap(apiClient.get("/hr/interviews"));
+  async dashboard() {
+    await delay();
+    return {
+      analytics: {
+        overview: {
+          active_candidates: mockStats.totalCandidates,
+          total_applications: 156,
+          avg_resume_score: 74,
+          shortlist_rate: 32
+        }
+      },
+      candidates: mockCandidates,
+    };
   },
-  // 1) What this does: loads the candidate manager list.
-  // 2) Why needed: supports search, filter, sorting, and pagination from the HR UI.
-  // 3) How it works: sends GET params to the candidate list endpoint.
-  listCandidates(params) {
-    return unwrap(apiClient.get("/hr/candidates", { params }));
+  async listCandidates() {
+    await delay();
+    return { candidates: mockCandidates, total_results: mockCandidates.length };
   },
-  // 1) What this does: loads one candidate's HR detail page payload.
-  // 2) Why needed: the detail page needs candidate and application data.
-  // 3) How it works: fetches by the human-friendly candidate UID.
-  candidateDetail(candidateUid) {
-    return unwrap(apiClient.get(`/hr/candidates/${candidateUid}`));
+  async candidateDetail(uid) {
+    await delay();
+    return { candidate: mockCandidates.find(c => c.uid === uid) || mockCandidates[0] };
   },
-  // 1) What this does: loads matched and missing skills for one candidate/job pair.
-  // 2) Why needed: powers the HR "Skill Gap Analyzer" section.
-  // 3) How it works: sends an optional job_id query param to the new backend endpoint.
-  candidateSkillGap(candidateUid, jobId) {
-    const params = jobId ? { job_id: jobId } : undefined;
-    return unwrap(apiClient.get(`/hr/candidates/${candidateUid}/skill-gap`, { params }));
+  async deleteCandidate() {
+    await delay();
+    return { status: "success" };
   },
-  // 1) What this does: deletes one candidate from the HR panel.
-  // 2) Why needed: supports cleanup from the candidate manager and detail page.
-  // 3) How it works: performs a protected POST delete action.
-  deleteCandidate(candidateUid) {
-    return unwrap(apiClient.post(`/hr/candidates/${candidateUid}/delete`));
+  async interviews() {
+    await delay();
+    return {
+      interviews: mockInterviewReviews.map((record) => ({
+        interview_id: record.interview.interview_id,
+        application_id: record.interview.application_id,
+        status: record.interview.status,
+        started_at: record.interview.started_at,
+        events_count: record.events.length,
+        suspicious_events_count: record.events.filter((event) => event.suspicious).length,
+        candidate: record.interview.candidate,
+        job: record.interview.job,
+      })),
+    };
   },
-  generateCandidateQuestions(candidateId) {
-    return unwrap(apiClient.post(`/hr/candidate/${candidateId}/generate-questions`));
+  async interviewDetail(id) {
+    await delay();
+    const record = findInterviewRecord(id);
+    if (!record) {
+      throw new Error("Interview not found");
+    }
+    return {
+      interview: record.interview,
+      questions: record.questions,
+      events: record.events,
+      hr_review: record.hr_review,
+    };
   },
-  interviewDetail(id) {
-    return unwrap(apiClient.get(`/hr/interviews/${id}`));
-  },
-  finalizeInterview(id, payload) {
-    return unwrap(apiClient.post(`/hr/interviews/${id}/finalize`, payload));
-  },
-  dashboard(jobId) {
-    const params = jobId ? { job_id: jobId } : undefined;
-    return unwrap(apiClient.get("/hr/dashboard", { params }));
-  },
-  uploadJd({
-    file,
-    jdTitle,
-    educationRequirement,
-    experienceRequirement,
-    cutoffScore,
-    questionCount,
-  }) {
-    const formData = new FormData();
-    formData.append("jd_file", file);
-    formData.append("jd_title", jdTitle || "");
-    formData.append("education_requirement", educationRequirement || "");
-    formData.append("experience_requirement", experienceRequirement || "");
-    formData.append("cutoff_score", String(cutoffScore ?? 65));
-    formData.append("question_count", String(questionCount ?? 8));
-    return unwrap(apiClient.post("/hr/upload-jd", formData));
-  },
-  confirmJd(skillScores) {
-    return unwrap(apiClient.post("/hr/confirm-jd", { skill_scores: skillScores }));
-  },
-  updateSkillWeights(skillScores, jobId, settings = {}) {
-    return unwrap(
-      apiClient.post("/hr/update-skill-weights", {
-        skill_scores: skillScores,
-        job_id: jobId ?? null,
-        cutoff_score: settings.cutoffScore ?? null,
-        question_count: settings.questionCount ?? null,
-      }),
-    );
-  },
-  submitInterviewScore(resultId, technicalScore) {
-    return unwrap(
-      apiClient.post("/hr/interview-score", {
-        result_id: resultId,
-        technical_score: technicalScore,
-      }),
-    );
-  },
-  downloadLocalBackup() {
-    return downloadFile(
-      apiClient.get("/hr/local-backup", {
-        responseType: "blob",
-      }),
-      "interview_bot_local_backup.zip",
-    );
+  async finalizeInterview(id, payload) {
+    await delay();
+    const record = findInterviewRecord(id);
+    if (!record) {
+      throw new Error("Interview not found");
+    }
+    record.interview.status = payload.decision;
+    record.hr_review = {
+      notes: payload.notes || "",
+      final_score: payload.final_score,
+      behavioral_score: payload.behavioral_score,
+      communication_score: payload.communication_score,
+      red_flags: payload.red_flags || "",
+    };
+    return { status: "success" };
   },
 };
 
 export const interviewApi = {
-  start(payload = {}) {
-    return unwrap(apiClient.post("/interview/start", payload));
+  async start() {
+    await delay();
+    return { session_id: "SESS-999", current_question: { id: 1, text: "First Question" } };
   },
-  submitAnswer(payload) {
-    return unwrap(apiClient.post("/interview/answer", payload));
-  },
-  sendEvent(token, payload) {
-    return unwrap(apiClient.post(`/interview/${encodeURIComponent(token)}/event`, payload));
-  },
-  transcribeAudio(formData) {
-    return unwrap(
-      apiClient.post("/interview/transcribe", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 300000,
-      }),
-    );
-  },
-  uploadProctorFrame(formData) {
-    return unwrap(
-      apiClient.post("/proctor/frame", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      }),
-    );
-  },
-  hrProctoring(sessionId) {
-    return unwrap(apiClient.get(`/hr/proctoring/${sessionId}`));
-  },
+  async submitAnswer() {
+    await delay();
+    return { next_question: { id: 2, text: "Second Question" } };
+  }
 };

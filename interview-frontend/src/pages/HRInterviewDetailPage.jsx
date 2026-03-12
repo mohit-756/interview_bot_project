@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import MetricCard from "../components/MetricCard";
 import PageHeader from "../components/PageHeader";
@@ -35,7 +35,7 @@ export default function HRInterviewDetailPage() {
     setRedFlags(hrReview.red_flags || "");
   }
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -52,11 +52,11 @@ export default function HRInterviewDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
   useEffect(() => {
     load();
-  }, [id]);
+  }, [load]);
 
   async function handleFinalize() {
     setSaving(true);

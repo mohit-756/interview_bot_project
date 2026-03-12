@@ -1,203 +1,167 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { interviewApi } from "../services/api";
-
-function mapPermissionError(error) {
-  const code = error?.name || "";
-  if (code === "NotAllowedError" || code === "PermissionDeniedError") return "denied";
-  if (code === "NotFoundError" || code === "DevicesNotFoundError") return "denied";
-  if (code === "NotReadableError" || code === "TrackStartError") return "denied";
-  return "pending";
-}
-
-function statusClass(status) {
-  if (status === "granted") return "success";
-  if (status === "denied") return "danger";
-  return "secondary";
-}
-
-function statusLabel(status) {
-  if (status === "granted") return "Granted";
-  if (status === "denied") return "Denied";
-  return "Pending";
-}
+import { 
+  Camera, 
+  Mic, 
+  Wifi, 
+  CheckCircle2, 
+  AlertCircle, 
+  Play, 
+  ShieldCheck,
+  Video,
+  Settings
+} from "lucide-react";
+import { cn } from "../utils/utils";
 
 export default function PreCheck() {
   const { resultId } = useParams();
   const navigate = useNavigate();
-  const numericResultId = Number(resultId);
-  const routeResultId = Number.isFinite(numericResultId) && numericResultId > 0 ? numericResultId : 0;
-
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
+  
+  const [checks, setChecks] = useState({
+    camera: { status: 'pending', label: 'Camera access' },
+    mic: { status: 'pending', label: 'Microphone access' },
+    internet: { status: 'granted', label: 'Internet connection' },
+  });
 
-  const [checksBusy, setChecksBusy] = useState(false);
-  const [startBusy, setStartBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [cameraStatus, setCameraStatus] = useState("pending");
-  const [micStatus, setMicStatus] = useState("pending");
-  const [internetStatus, setInternetStatus] = useState(navigator.onLine ? "online" : "offline");
+  const [isChecking, setIsChecking] = useState(false);
 
-  const canStart = useMemo(
-    () => cameraStatus === "granted" && micStatus === "granted" && internetStatus === "online",
-    [cameraStatus, micStatus, internetStatus],
-  );
-
-  function stopStream() {
-    if (!streamRef.current) return;
-    streamRef.current.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  }
-
-  async function checkOneDevice(constraints, keepPreview = false) {
-    let stream;
+  const startCheck = async () => {
+    setIsChecking(true);
+    
     try {
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
-      if (keepPreview && constraints.video) {
-        stopStream();
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      } else {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-      return "granted";
-    } catch (mediaError) {
-      return mapPermissionError(mediaError);
-    }
-  }
-
-  async function runChecks() {
-    setChecksBusy(true);
-    setError("");
-    setNotice("");
-    setInternetStatus(navigator.onLine ? "online" : "offline");
-    stopStream();
-
-    try {
-      const fullStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      streamRef.current = fullStream;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       if (videoRef.current) {
-        videoRef.current.srcObject = fullStream;
+        videoRef.current.srcObject = stream;
       }
-      setCameraStatus("granted");
-      setMicStatus("granted");
-      setNotice("Camera and microphone checks passed.");
-    } catch {
-      const [camera, mic] = await Promise.all([
-        checkOneDevice({ video: true, audio: false }, true),
-        checkOneDevice({ video: false, audio: true }, false),
-      ]);
-      setCameraStatus(camera);
-      setMicStatus(mic);
-      if (camera !== "granted" || mic !== "granted") {
-        setError("Allow camera and microphone access, then run checks again.");
-      }
-    } finally {
-      setChecksBusy(false);
-    }
-  }
-
-  async function startInterview() {
-    if (!canStart) {
-      setError("Complete pre-check and grant camera + microphone access.");
-      return;
-    }
-    setStartBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      const payload = { consent_given: true };
-      if (routeResultId > 0) payload.result_id = routeResultId;
-      const bootstrap = await interviewApi.start(payload);
-      navigate(`/interview/${resultId}/live`, {
-        replace: true,
-        state: {
-          bootstrap,
-          precheck: {
-            cameraGranted: true,
-            micGranted: true,
-          },
-        },
+      setChecks({
+        camera: { status: 'granted', label: 'Camera access' },
+        mic: { status: 'granted', label: 'Microphone access' },
+        internet: { status: 'granted', label: 'Internet connection' },
       });
-    } catch (startError) {
-      setError(startError.message);
+    } catch {
+      setChecks({
+        camera: { status: 'denied', label: 'Camera access' },
+        mic: { status: 'denied', label: 'Microphone access' },
+        internet: { status: 'granted', label: 'Internet connection' },
+      });
     } finally {
-      setStartBusy(false);
+      setIsChecking(false);
     }
-  }
+  };
 
-  useEffect(() => {
-    const updateInternet = () => {
-      setInternetStatus(navigator.onLine ? "online" : "offline");
-    };
-    window.addEventListener("online", updateInternet);
-    window.addEventListener("offline", updateInternet);
-    return () => {
-      window.removeEventListener("online", updateInternet);
-      window.removeEventListener("offline", updateInternet);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopStream();
-    };
-  }, []);
+  const allGranted = Object.values(checks).every(c => c.status === 'granted');
 
   return (
-    <div className="stack">
-      <header className="title-row">
-        <h2>Interview Pre-check</h2>
-        <button className="subtle-button" onClick={() => navigate("/candidate")}>
-          Back
-        </button>
-      </header>
-
-      {error && <p className="alert error">{error}</p>}
-      {notice && <p className="alert success">{notice}</p>}
-
-      <section className="card stack">
-        <p className="muted">
-          Run checks once before starting. Interview starts only after camera + microphone are granted.
-        </p>
-        <div className="precheck-grid">
-          <div className="precheck-item">
-            <p>Camera permission</p>
-            <span className={`status-badge ${statusClass(cameraStatus)}`}>{statusLabel(cameraStatus)}</span>
+    <div className="min-h-[calc(100vh-160px)] flex flex-col items-center justify-center py-12">
+      <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-2 gap-12">
+        
+        {/* Left: Instructions & Checks */}
+        <div className="space-y-8">
+          <div>
+            <div className="flex items-center space-x-2 text-blue-600 mb-4">
+              <ShieldCheck size={24} />
+              <span className="text-sm font-black uppercase tracking-widest">System Check</span>
+            </div>
+            <h1 className="text-4xl font-black text-slate-900 dark:text-white font-display leading-tight">
+              Ready to start your interview?
+            </h1>
+            <p className="text-slate-500 dark:text-slate-400 mt-4 text-lg">
+              Before we begin, please ensure your camera and microphone are working correctly. This ensures a smooth interview experience.
+            </p>
           </div>
-          <div className="precheck-item">
-            <p>Microphone permission</p>
-            <span className={`status-badge ${statusClass(micStatus)}`}>{statusLabel(micStatus)}</span>
+
+          <div className="space-y-4">
+            {Object.entries(checks).map(([key, check]) => (
+              <div key={key} className={cn(
+                "flex items-center justify-between p-5 rounded-2xl border transition-all",
+                check.status === 'granted' 
+                  ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400"
+                  : check.status === 'denied'
+                  ? "bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/50 text-red-700 dark:text-red-400"
+                  : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400"
+              )}>
+                <div className="flex items-center space-x-4">
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center",
+                    check.status === 'granted' ? "bg-emerald-100 dark:bg-emerald-800" : "bg-slate-100 dark:bg-slate-800"
+                  )}>
+                    {key === 'camera' && <Camera size={20} />}
+                    {key === 'mic' && <Mic size={20} />}
+                    {key === 'internet' && <Wifi size={20} />}
+                  </div>
+                  <span className="font-bold">{check.label}</span>
+                </div>
+                {check.status === 'granted' && <CheckCircle2 size={24} />}
+                {check.status === 'denied' && <AlertCircle size={24} />}
+              </div>
+            ))}
           </div>
-          <div className="precheck-item">
-            <p>Internet</p>
-            <span className={`status-badge ${internetStatus === "online" ? "success" : "danger"}`}>
-              {internetStatus === "online" ? "Online" : "Offline"}
-            </span>
+
+          <div className="pt-4 flex items-center gap-4">
+            <button 
+              onClick={startCheck}
+              disabled={isChecking}
+              className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-black py-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center space-x-2 shadow-sm"
+            >
+              {isChecking ? "Checking..." : "Run System Check"}
+            </button>
+            <button 
+              disabled={!allGranted}
+              onClick={() => navigate(`/interview/${resultId}/live`)}
+              className={cn(
+                "flex-[1.5] py-4 rounded-2xl font-black flex items-center justify-center space-x-2 transition-all shadow-xl shadow-blue-200 dark:shadow-none",
+                allGranted ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
+              )}
+            >
+              <span>Start Interview</span>
+              <Play size={18} fill="currentColor" />
+            </button>
           </div>
         </div>
 
-        <div className="inline-row">
-          <button disabled={checksBusy || startBusy} onClick={runChecks}>
-            {checksBusy ? "Running Checks..." : "Run Checks"}
-          </button>
-          <button disabled={!canStart || checksBusy || startBusy} onClick={startInterview}>
-            {startBusy ? "Starting..." : "Start Interview"}
-          </button>
-        </div>
-      </section>
+        {/* Right: Video Preview */}
+        <div className="space-y-6">
+          <div className="relative aspect-video bg-slate-900 rounded-[32px] overflow-hidden shadow-2xl border-4 border-white dark:border-slate-800">
+            {checks.camera.status === 'granted' ? (
+              <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay muted playsInline />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+                <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                  <Video size={32} />
+                </div>
+                <p className="text-sm font-bold uppercase tracking-widest">No Video Feed</p>
+              </div>
+            )}
+            
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center space-x-2 bg-black/50 backdrop-blur-md px-4 py-2 rounded-full border border-white/20">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-[10px] font-black text-white uppercase tracking-widest">Live Preview</span>
+            </div>
+          </div>
 
-      <section className="card stack-sm">
-        <h3>Camera Preview</h3>
-        <video ref={videoRef} className="interview-video preview-small" autoPlay muted playsInline />
-        <p className="muted">Keep your face visible during the interview.</p>
-      </section>
+          <div className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-3xl border border-blue-100 dark:border-blue-800/50">
+            <h4 className="text-sm font-bold text-blue-800 dark:text-blue-300 flex items-center mb-3">
+              <Settings className="mr-2" size={16} />
+              Interview Requirements
+            </h4>
+            <ul className="space-y-2 text-xs text-blue-700 dark:text-blue-400 font-medium">
+              <li className="flex items-center space-x-2">
+                <div className="w-1 h-1 bg-blue-400 rounded-full" />
+                <span>Sit in a well-lit and quiet room</span>
+              </li>
+              <li className="flex items-center space-x-2">
+                <div className="w-1 h-1 bg-blue-400 rounded-full" />
+                <span>Ensure your face is clearly visible</span>
+              </li>
+              <li className="flex items-center space-x-2">
+                <div className="w-1 h-1 bg-blue-400 rounded-full" />
+                <span>Avoid wearing headphones if possible for AI clarity</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
