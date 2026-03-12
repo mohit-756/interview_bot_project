@@ -11,8 +11,10 @@ import HRInterviewListPage from "./pages/HRInterviewListPage";
 import HRInterviewDetailPage from "./pages/HRInterviewDetailPage";
 import HRScoreMatrixPage from "./pages/HRScoreMatrixPage";
 import HRJdManagementPage from "./pages/HRJdManagementPage";
+import HRJdDetailPage from "./pages/HRJdDetailPage";
 import HRAnalyticsPage from "./pages/HRAnalyticsPage";
 import CandidateComparisonPage from "./pages/CandidateComparisonPage";
+import ResumeAnalysisPage from "./pages/ResumeAnalysisPage";
 import CandidateDashboardPage from "./pages/CandidateDashboardPage";
 import PracticeInterviewPage from "./pages/PracticeInterviewPage";
 import PreCheck from "./pages/PreCheck";
@@ -66,8 +68,10 @@ export default function App() {
         <Route element={<DashboardLayout />}>
           <Route path="hr" element={<HRDashboardPage />} />
           <Route path="hr/jds" element={<HRJdManagementPage />} />
+          <Route path="hr/jds/:jdId" element={<HRJdDetailPage />} />
           <Route path="hr/candidates" element={<HRCandidatesPage />} />
           <Route path="hr/candidates/:candidateUid" element={<HRCandidateDetailPage />} />
+          <Route path="hr/resume-analysis/:candidateUid" element={<ResumeAnalysisPage />} />
           <Route path="hr/interviews" element={<HRInterviewListPage />} />
           <Route path="hr/interviews/:id" element={<HRInterviewDetailPage />} />
           <Route path="hr/matrix" element={<HRScoreMatrixPage />} />
