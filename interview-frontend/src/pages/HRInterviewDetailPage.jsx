@@ -22,6 +22,7 @@ export default function HRInterviewDetailPage() {
   const [finalScore, setFinalScore] = useState("");
   const [behavioralScore, setBehavioralScore] = useState("");
   const [communicationScore, setCommunicationScore] = useState("");
+  const [confidenceScore, setConfidenceScore] = useState("");
   const [redFlags, setRedFlags] = useState("");
 
   function hydrateReview(hrReview) {
@@ -30,6 +31,7 @@ export default function HRInterviewDetailPage() {
     setFinalScore(scoreOrEmpty(hrReview.final_score));
     setBehavioralScore(scoreOrEmpty(hrReview.behavioral_score));
     setCommunicationScore(scoreOrEmpty(hrReview.communication_score));
+    setConfidenceScore(scoreOrEmpty(hrReview.confidence_score));
     setRedFlags(hrReview.red_flags || "");
   }
 
@@ -66,6 +68,7 @@ export default function HRInterviewDetailPage() {
         final_score: finalScore ? Number(finalScore) : null,
         behavioral_score: behavioralScore ? Number(behavioralScore) : null,
         communication_score: communicationScore ? Number(communicationScore) : null,
+        confidence_score: confidenceScore ? Number(confidenceScore) : null,
         red_flags: redFlags.trim() || null,
       });
       await load();
@@ -124,7 +127,7 @@ export default function HRInterviewDetailPage() {
         </div>
 
         <p className="muted">
-          Current scores: Final {hrReview?.final_score ?? "N/A"} | Behavioral {hrReview?.behavioral_score ?? "N/A"} | Communication {hrReview?.communication_score ?? "N/A"}
+          Current scores: Final {hrReview?.final_score ?? "N/A"} | Behavioral {hrReview?.behavioral_score ?? "N/A"} | Communication {hrReview?.communication_score ?? "N/A"} | Confidence {hrReview?.confidence_score ?? "N/A"}
         </p>
 
         <div className="section-grid">
@@ -135,6 +138,7 @@ export default function HRInterviewDetailPage() {
           <input type="number" min={0} max={100} placeholder="Final score (0-100)" value={finalScore} onChange={(event) => setFinalScore(event.target.value)} />
           <input type="number" min={0} max={100} placeholder="Behavioral score" value={behavioralScore} onChange={(event) => setBehavioralScore(event.target.value)} />
           <input type="number" min={0} max={100} placeholder="Communication score" value={communicationScore} onChange={(event) => setCommunicationScore(event.target.value)} />
+          <input type="number" min={0} max={100} placeholder="Confidence score" value={confidenceScore} onChange={(event) => setConfidenceScore(event.target.value)} />
         </div>
 
         <textarea rows={2} placeholder="Red flags / suspicious behavior remarks" value={redFlags} onChange={(event) => setRedFlags(event.target.value)} />

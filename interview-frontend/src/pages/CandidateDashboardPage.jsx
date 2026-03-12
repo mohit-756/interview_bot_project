@@ -324,6 +324,43 @@ export default function CandidateDashboardPage() {
           </div>
         )}
       </section>
+
+      {result?.hr_decision && (
+        <section className="card stack">
+          <div className="title-row">
+            <div>
+              <p className="eyebrow">Final Decision</p>
+              <h3>HR Review Complete</h3>
+            </div>
+            <StatusBadge
+              status={{
+                tone: result.hr_decision === "selected" ? "success" : result.hr_decision === "waitlisted" ? "primary" : "danger",
+                label: result.hr_decision === "selected" ? "Selected" : result.hr_decision === "waitlisted" ? "Waitlisted" : "Rejected",
+              }}
+            />
+          </div>
+
+          <div className="metric-grid compact">
+            <MetricCard label="Final Score" value={result.final_score ? formatPercent(result.final_score) : "N/A"} hint="HR assigned" />
+            <MetricCard label="Behavioral Score" value={result.behavioral_score ? formatPercent(result.behavioral_score) : "N/A"} hint="Interview observation" />
+            <MetricCard label="Communication Score" value={result.communication_score ? formatPercent(result.communication_score) : "N/A"} hint="Interaction quality" />
+            <MetricCard label="Confidence Score" value={result.confidence_score ? formatPercent(result.confidence_score) : "N/A"} hint="Candidate confidence level" />
+          </div>
+
+          {result.hr_notes && (
+            <div>
+              <p><strong>HR Feedback:</strong></p>
+              <p className="muted">{result.hr_notes}</p>
+            </div>
+          )}
+
+          {result.red_flags && (
+            <div className="alert error">
+              <p><strong>Red Flags:</strong> {result.red_flags}</p>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

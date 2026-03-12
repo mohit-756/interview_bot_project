@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
+import Sidebar from "./components/Sidebar";
 import { useAuth } from "./context/AuthContext";
 import CandidateDashboardPage from "./pages/CandidateDashboardPage";
+import CandidateComparisonPage from "./pages/CandidateComparisonPage";
 import Completed from "./pages/Completed";
 import HRCandidateDetailPage from "./pages/HRCandidateDetailPage";
 import HRCandidatesPage from "./pages/HRCandidatesPage";
 import HRDashboardPage from "./pages/HRDashboardPage";
 import HRInterviewListPage from "./pages/HRInterviewListPage";
 import HRInterviewDetailPage from "./pages/HRInterviewDetailPage";
+import HRJdManagementPage from "./pages/HRJdManagementPage";
 import Interview from "./pages/Interview";
 import LoginPage from "./pages/LoginPage";
 import PracticeInterviewPage from "./pages/PracticeInterviewPage";
@@ -48,7 +51,12 @@ function AppLayout() {
           )}
         </div>
       </header>
-      <Outlet />
+      <div className="app-container">
+        <Sidebar />
+        <div className="app-content">
+          <Outlet />
+        </div>
+      </div>
     </main>
   );
 }
@@ -97,10 +105,12 @@ export default function App() {
         </Route>
         <Route element={<ProtectedRoute role="hr" />}>
           <Route path="hr" element={<HRDashboardPage />} />
+          <Route path="hr/jds" element={<HRJdManagementPage />} />
           <Route path="hr/candidates" element={<HRCandidatesPage />} />
           <Route path="hr/candidates/:candidateUid" element={<HRCandidateDetailPage />} />
           <Route path="hr/interviews" element={<HRInterviewListPage />} />
           <Route path="hr/interviews/:id" element={<HRInterviewDetailPage />} />
+          <Route path="hr/compare" element={<CandidateComparisonPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
