@@ -1,12 +1,11 @@
 /**
- * Interview.jsx — Live interview page with enhanced proctoring.
+ * Interview.jsx — Live interview page with enhanced proctoring + TTS (Indian accent).
  *
- * NEW features added (all performance-safe):
- *   • Tab-switch detection via visibilitychange
- *   • Lightweight emotion heuristic (no ML model, canvas pixel analysis)
- *   • Voice confidence analysis on each submitted answer
- *   • Live proctoring status bar showing emotion + tab alerts
- *   • Auto-disables emotion analysis if FPS drops below 20
+ * NEW: Text-to-Speech using Web Speech API
+ *   • Auto-speaks each question when it appears (en-IN / Indian English)
+ *   • Speaker button to replay question
+ *   • Mute toggle to disable auto-speak
+ *   • Stops speaking when mic starts recording
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,11 +13,81 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   Mic, MicOff, Send, MessageSquare, CheckCircle2,
   Activity, AlertTriangle, Eye, EyeOff, Brain,
+  Volume2, VolumeX,
 } from "lucide-react";
 import { interviewApi, proctorApi } from "../services/api";
 import { cn } from "../utils/utils";
 import AnswerFeedback from "../components/AnswerFeedback";
 import { useProctoring } from "../hooks/useProctoring";
+
+// ── TTS hook ──────────────────────────────────────────────────────────────────
+function useTTS() {
+  const [muted, setMuted] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+
+  const pickVoice = useCallback(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices();
+    // Priority order: Indian English > British > American > any English
+    const priority = ["en-IN", "en-GB", "en-US"];
+    for (const lang of priority) {
+      const v = voices.find((v) => v.lang === lang);
+      if (v) return v;
+    }
+    return voices.find((v) => v.lang.startsWith("en")) || null;
+  }, []);
+
+  const speak = useCallback((text) => {
+    if (!text || typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-IN";
+    utterance.rate = 0.88;   // slightly slower — clear for non-native listeners
+    utterance.pitch = 1.05;
+    utterance.volume = muted ? 0 : 1;
+
+    const applyVoice = () => {
+      const voice = pickVoice();
+      if (voice) utterance.voice = voice;
+    };
+
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend   = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+
+    if (window.speechSynthesis.getVoices().length === 0) {
+      // Chrome loads voices async — wait for them
+      window.speechSynthesis.onvoiceschanged = () => {
+        applyVoice();
+        window.speechSynthesis.speak(utterance);
+      };
+    } else {
+      applyVoice();
+      window.speechSynthesis.speak(utterance);
+    }
+  }, [muted, pickVoice]);
+
+  const stop = useCallback(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setSpeaking(false);
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    stop();
+    setMuted((m) => !m);
+  }, [stop]);
+
+  useEffect(() => () => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+  }, []);
+
+  return { speak, stop, speaking, muted, toggleMute };
+}
 
 // ── tiny helpers ──────────────────────────────────────────────────────────────
 function formatTime(seconds) {
@@ -51,29 +120,7 @@ function getPreferredAudioMimeType() {
   return candidates.find((t) => window.MediaRecorder.isTypeSupported(t)) || "";
 }
 
-async function attachPreviewStream(videoEl, stream) {
-  if (!videoEl) return;
-  videoEl.srcObject = stream;
-  videoEl.muted     = true;
-  videoEl.playsInline = true;
-  try { await videoEl.play(); } catch {
-    await new Promise((res) => {
-      const id = window.setTimeout(res, 500);
-      videoEl.onloadedmetadata = () => { window.clearTimeout(id); res(); };
-    });
-    try { await videoEl.play(); } catch { /* keep srcObject */ }
-  }
-}
 
-function waitForRealFrame(videoEl, onReady) {
-  const check = () => {
-    if (videoEl?.videoWidth > 0) { onReady(); }
-    else { setTimeout(check, 300); }
-  };
-  setTimeout(check, 300);
-}
-
-// ── emotion badge colours ─────────────────────────────────────────────────────
 const EMOTION_COLOR = {
   confident: "text-emerald-400",
   focused:   "text-blue-400",
@@ -81,7 +128,6 @@ const EMOTION_COLOR = {
   nervous:   "text-amber-400",
 };
 
-// ── voice confidence bar ─────────────────────────────────────────────────────
 function VoiceConfidenceBar({ metrics }) {
   if (!metrics) return null;
   const pct = Math.round(metrics.confidence_score * 100);
@@ -97,7 +143,6 @@ function VoiceConfidenceBar({ metrics }) {
   );
 }
 
-// ── tab switch alert banner ───────────────────────────────────────────────────
 function TabSwitchAlert({ count }) {
   if (count === 0) return null;
   return (
@@ -113,7 +158,6 @@ export default function Interview() {
   const { resultId } = useParams();
   const navigate     = useNavigate();
 
-  // ── interview state ────────────────────────────────────────────────────────
   const [sessionId,       setSessionId]       = useState(null);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [questionNumber,  setQuestionNumber]  = useState(1);
@@ -132,7 +176,6 @@ export default function Interview() {
   const [previewWarning,  setPreviewWarning]   = useState("");
   const [answerFeedback,  setAnswerFeedback]   = useState(null);
 
-  // ── refs ───────────────────────────────────────────────────────────────────
   const videoRef             = useRef(null);
   const autoSubmittedRef     = useRef(false);
   const baselineCapturedRef  = useRef(false);
@@ -140,9 +183,12 @@ export default function Interview() {
   const audioStreamRef       = useRef(null);
   const recorderRef          = useRef(null);
   const recordedChunksRef    = useRef([]);
-  const answerStartTimeRef   = useRef(null);   // for voice duration
+  const answerStartTimeRef   = useRef(null);
 
-  // ── proctoring hook ────────────────────────────────────────────────────────
+  // ── TTS ────────────────────────────────────────────────────────────────────
+  const { speak, stop: stopSpeaking, speaking, muted, toggleMute } = useTTS();
+
+  // ── proctoring ─────────────────────────────────────────────────────────────
   const {
     proctoringEvents,
     voiceMetrics,
@@ -151,7 +197,6 @@ export default function Interview() {
     analyseAnswer,
   } = useProctoring({ sessionId, videoRef, enabled: !!sessionId });
 
-  // Derived tab-switch count from proctoring events
   const tabSwitchCount = proctoringEvents.filter((e) => e.type === "TAB_SWITCH").length;
 
   // ── session load ───────────────────────────────────────────────────────────
@@ -193,36 +238,100 @@ export default function Interview() {
 
   useEffect(() => { loadSession(); }, [loadSession]);
 
+  // ── AUTO-SPEAK question (Indian accent) ────────────────────────────────────
+  useEffect(() => {
+    if (!currentQuestion?.text || loading || answerFeedback) return;
+    if (muted) return;
+    // Small delay so the UI renders before audio starts
+    const timer = setTimeout(() => {
+      speak(currentQuestion.text);
+    }, 700);
+    return () => {
+      clearTimeout(timer);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentQuestion?.id]); // only re-trigger on question ID change, not every render
+
+  // Stop TTS when recording or submitting
+  useEffect(() => {
+    if (isRecording || isSubmitting) stopSpeaking();
+  }, [isRecording, isSubmitting, stopSpeaking]);
+
   // ── camera setup ───────────────────────────────────────────────────────────
   useEffect(() => {
     let disposed = false;
-    const videoEl = videoRef.current;
 
     async function startPreview() {
       setPreviewReady(false);
       setPreviewWarning("");
+
+      // Stop any existing stream first
       if (streamRef.current) { stopStreamTracks(streamRef.current); streamRef.current = null; }
+
+      // Wait for videoRef to be assigned by React (max 2s)
+      let waited = 0;
+      while (!videoRef.current && waited < 2000) {
+        await new Promise((r) => setTimeout(r, 50));
+        waited += 50;
+      }
+
+      if (disposed) return;
+
+      const videoEl = videoRef.current;
+      if (!videoEl) {
+        setPreviewWarning("Camera preview element not ready. Refresh and try again.");
+        return;
+      }
+
+      // Try with both video + audio first, fallback to video-only
+      let stream = null;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (disposed) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
-        await attachPreviewStream(videoEl, stream);
-        waitForRealFrame(videoEl, () => { if (!disposed) setPreviewReady(true); });
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       } catch {
         try {
-          const videoOnly = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          if (disposed) { videoOnly.getTracks().forEach((t) => t.stop()); return; }
-          streamRef.current = videoOnly;
-          await attachPreviewStream(videoEl, videoOnly);
-          waitForRealFrame(videoEl, () => { if (!disposed) setPreviewReady(true); });
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           setPreviewWarning("Microphone unavailable. Camera preview still active.");
         } catch {
-          setPreviewWarning("Camera unavailable. Check browser permissions.");
+          setPreviewWarning("Camera unavailable — please allow camera access in your browser.");
+          return;
         }
       }
+
+      if (disposed) { stopStreamTracks(stream); return; }
+
+      streamRef.current = stream;
+
+      // Directly assign srcObject — most reliable method
+      videoEl.srcObject = stream;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+
+      try {
+        await videoEl.play();
+      } catch {
+        // Some browsers need a user-gesture; try again after a short pause
+        await new Promise((r) => setTimeout(r, 300));
+        try { await videoEl.play(); } catch { /* srcObject is still set, video shows */ }
+      }
+
+      // Poll until we get real pixels (handles slow camera init)
+      const pollStart = Date.now();
+      const poll = () => {
+        if (disposed) return;
+        if (videoEl.videoWidth > 0 && videoEl.readyState >= 2) {
+          setPreviewReady(true);
+        } else if (Date.now() - pollStart < 8000) {
+          setTimeout(poll, 200);
+        } else {
+          // Even if still 0×0, mark ready so the UI shows (camera may still render)
+          setPreviewReady(true);
+        }
+      };
+      setTimeout(poll, 200);
     }
 
     startPreview();
+
     return () => {
       disposed = true;
       const rec = recorderRef.current;
@@ -233,7 +342,7 @@ export default function Interview() {
       }
       releaseAudioStream();
       if (streamRef.current) { stopStreamTracks(streamRef.current); streamRef.current = null; }
-      if (videoEl) videoEl.srcObject = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
     };
   }, [releaseAudioStream]);
 
@@ -249,6 +358,7 @@ export default function Interview() {
 
   // ── advance after answer ───────────────────────────────────────────────────
   const _advanceAfterAnswer = useCallback((response) => {
+    stopSpeaking();
     if (response.interview_completed || !response.next_question) {
       navigate(`/interview/${resultId}/completed`);
       return;
@@ -265,15 +375,14 @@ export default function Interview() {
     autoSubmittedRef.current   = false;
     answerStartTimeRef.current = Date.now();
     setAnswerFeedback(null);
-  }, [navigate, resultId, questionNumber, maxQuestions]);
+  }, [navigate, resultId, questionNumber, maxQuestions, stopSpeaking]);
 
   // ── submit answer ──────────────────────────────────────────────────────────
   const submitAnswer = useCallback(async ({ skipCurrent = false, answerOverride } = {}) => {
     if (!sessionId || !currentQuestion) return;
-
-    const resolvedAnswer = skipCurrent ? "" : String(answerOverride ?? answer);
+    const resolvedAnswer  = skipCurrent ? "" : String(answerOverride ?? answer);
     const normalizedAnswer = resolvedAnswer.trim();
-    const durationSeconds = answerStartTimeRef.current
+    const durationSeconds  = answerStartTimeRef.current
       ? (Date.now() - answerStartTimeRef.current) / 1000 : 0;
 
     setIsSubmitting(true);
@@ -288,17 +397,12 @@ export default function Interview() {
         time_taken_sec: timeTaken,
       });
 
-      // Analyse voice confidence for this answer
-      if (!skipCurrent && normalizedAnswer) {
-        analyseAnswer(normalizedAnswer, durationSeconds);
-      }
+      if (!skipCurrent && normalizedAnswer) analyseAnswer(normalizedAnswer, durationSeconds);
 
-      setTranscripts((prev) => [
-        ...prev,
-        { q: currentQuestion.text, a: skipCurrent ? "" : resolvedAnswer },
-      ]);
+      setTranscripts((prev) => [...prev, { q: currentQuestion.text, a: skipCurrent ? "" : resolvedAnswer }]);
 
       if (response.feedback && !skipCurrent && normalizedAnswer) {
+        stopSpeaking();
         setAnswerFeedback({ ...response.feedback, _nextResponse: response });
         return;
       }
@@ -310,9 +414,9 @@ export default function Interview() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [answer, currentQuestion, _advanceAfterAnswer, sessionId, timeLeft, analyseAnswer]);
+  }, [answer, currentQuestion, _advanceAfterAnswer, sessionId, timeLeft, analyseAnswer, stopSpeaking]);
 
-  // ── recording helpers ──────────────────────────────────────────────────────
+  // ── recording ──────────────────────────────────────────────────────────────
   const stopRecordingAndTranscribe = useCallback(async () => {
     const recorder = recorderRef.current;
     if (!recorder) return { text: "", lowConfidence: true, confidence: null };
@@ -353,6 +457,7 @@ export default function Interview() {
   const startRecording = useCallback(async () => {
     if (!window.MediaRecorder) { setError("Voice recording not supported. Use Chrome or Edge."); return; }
     setError(""); setTranscriptionWarning("");
+    stopSpeaking(); // always stop TTS before mic
     try {
       let recStream;
       if (hasActiveAudioTrack(streamRef.current)) {
@@ -373,13 +478,13 @@ export default function Interview() {
       };
       rec.start();
       recorderRef.current = rec;
-      answerStartTimeRef.current = Date.now(); // start timing when mic opens
+      answerStartTimeRef.current = Date.now();
       setIsRecording(true);
     } catch {
       releaseAudioStream();
       setError("Microphone access unavailable. Allow permission and try again.");
     }
-  }, [releaseAudioStream]);
+  }, [releaseAudioStream, stopSpeaking]);
 
   const handleRecordingToggle = useCallback(async () => {
     if (isSubmitting || isTranscribing) return;
@@ -408,10 +513,9 @@ export default function Interview() {
       const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.7));
       if (!blob) return;
       await proctorApi.uploadFrame(sessionId, blob, eventType);
-    } catch { /* silent — never block interview */ }
+    } catch { /* silent */ }
   }, [sessionId, previewReady]);
 
-  // Baseline capture once after camera is ready
   useEffect(() => {
     if (!sessionId || !previewReady || baselineCapturedRef.current) return;
     baselineCapturedRef.current = true;
@@ -419,7 +523,6 @@ export default function Interview() {
     return () => clearTimeout(t);
   }, [sessionId, previewReady, captureAndUploadFrame]);
 
-  // Periodic scan every 15 s
   useEffect(() => {
     if (!sessionId || !previewReady) return;
     const id = setInterval(() => void captureAndUploadFrame("scan"), 15000);
@@ -463,11 +566,9 @@ export default function Interview() {
         <div className="lg:col-span-2 space-y-4">
 
           {error && <p className="alert error">{error}</p>}
-
-          {/* Tab switch alert */}
           <TabSwitchAlert count={tabSwitchCount} />
 
-          {/* Progress + timers */}
+          {/* Progress + timers + mute toggle */}
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="bg-blue-900/40 text-blue-400 w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm border border-blue-800/50">
@@ -482,7 +583,23 @@ export default function Interview() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3">
+              {/* Mute / unmute TTS */}
+              <button
+                type="button"
+                onClick={toggleMute}
+                title={muted ? "Enable question voice" : "Mute question voice"}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-black transition-all",
+                  muted
+                    ? "bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300"
+                    : "bg-blue-900/30 border-blue-700/50 text-blue-400 hover:bg-blue-900/50"
+                )}
+              >
+                {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                <span className="hidden sm:inline">{muted ? "Voice Off" : "Voice On"}</span>
+              </button>
+
               {!answerFeedback && (
                 <div className="text-right hidden sm:block">
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">This Q</p>
@@ -499,12 +616,44 @@ export default function Interview() {
             </div>
           </div>
 
-          {/* Question card */}
+          {/* Question card with replay button */}
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-1 h-full bg-blue-600" />
-            <h2 className="text-2xl font-bold text-white leading-tight pl-4">
-              {currentQuestion?.text}
-            </h2>
+            <div className="flex items-start gap-4 pl-4">
+              <h2 className="text-2xl font-bold text-white leading-tight flex-1">
+                {currentQuestion?.text}
+              </h2>
+              {/* Replay / stop TTS */}
+              <button
+                type="button"
+                onClick={() => speaking ? stopSpeaking() : speak(currentQuestion?.text || "")}
+                title={speaking ? "Stop" : "Read question aloud (Indian accent)"}
+                className={cn(
+                  "flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center border transition-all",
+                  speaking
+                    ? "bg-blue-600 border-blue-500 text-white"
+                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-blue-400 hover:border-blue-600"
+                )}
+              >
+                {speaking ? (
+                  <span className="flex gap-0.5">
+                    {[...Array(3)].map((_, i) => (
+                      <span key={i} className="w-0.5 bg-white rounded-full animate-bounce" style={{ height: "14px", animationDelay: `${i * 0.15}s` }} />
+                    ))}
+                  </span>
+                ) : (
+                  <Volume2 size={18} />
+                )}
+              </button>
+            </div>
+
+            {/* Speaking status badge */}
+            {speaking && (
+              <div className="mt-3 ml-4 inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 rounded-full text-blue-400 text-[10px] font-black uppercase tracking-widest">
+                <Volume2 size={10} className="animate-pulse" />
+                Reading question in Indian English…
+              </div>
+            )}
           </div>
 
           {/* Answer / feedback */}
@@ -531,7 +680,6 @@ export default function Interview() {
                 </div>
               </div>
 
-              {/* Voice metrics bar */}
               {voiceMetrics && (
                 <div className="bg-slate-800/50 rounded-xl px-4 py-2 border border-slate-700/50">
                   <VoiceConfidenceBar metrics={voiceMetrics} />
@@ -562,9 +710,7 @@ export default function Interview() {
                   disabled={isSubmitting || isTranscribing}
                   className={cn(
                     "flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-black text-sm transition-all disabled:opacity-50",
-                    isRecording
-                      ? "bg-red-600 hover:bg-red-700 text-white"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
+                    isRecording ? "bg-red-600 hover:bg-red-700 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"
                   )}
                 >
                   {isRecording ? <MicOff size={18} /> : <Mic size={18} />}
@@ -598,7 +744,6 @@ export default function Interview() {
         {/* ── RIGHT — proctoring panel ───────────────────────────────────── */}
         <div className="space-y-4">
 
-          {/* Camera feed */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden p-4 space-y-3">
             <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
               <Activity size={14} className="text-emerald-400" />
@@ -614,20 +759,24 @@ export default function Interview() {
                 </div>
               )}
 
-              {/* Emotion badge overlay */}
               {emotionSignal && emotionEnabled && (
                 <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-full border border-white/10 flex items-center gap-1.5">
                   <Brain size={11} className={EMOTION_COLOR[emotionSignal.emotion] || "text-slate-400"} />
                   <span className={cn("text-[10px] font-black capitalize", EMOTION_COLOR[emotionSignal.emotion] || "text-slate-400")}>
                     {emotionSignal.emotion}
                   </span>
-                  <span className="text-[9px] text-slate-500">
-                    {Math.round(emotionSignal.confidence * 100)}%
-                  </span>
+                  <span className="text-[9px] text-slate-500">{Math.round(emotionSignal.confidence * 100)}%</span>
                 </div>
               )}
 
-              {/* Live pill */}
+              {/* TTS overlay on video */}
+              {speaking && (
+                <div className="absolute bottom-10 left-2 flex items-center gap-1 bg-blue-600/80 px-2 py-1 rounded-full border border-blue-400/30">
+                  <Volume2 size={10} className="text-white animate-pulse" />
+                  <span className="text-[9px] font-black text-white">Reading…</span>
+                </div>
+              )}
+
               <div className="absolute bottom-2 left-2 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm px-2 py-1 rounded-full border border-white/10">
                 <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
                 <span className="text-[9px] font-black text-white uppercase tracking-widest">Live</span>
@@ -651,6 +800,29 @@ export default function Interview() {
               ))}
             </div>
 
+            {/* TTS status tile */}
+            <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 flex items-center justify-between">
+              <div>
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Question Voice (en-IN)</p>
+                <p className={cn("text-xs font-black mt-0.5",
+                  speaking ? "text-blue-400" : muted ? "text-amber-400" : "text-emerald-400")}>
+                  {speaking ? "Speaking question…" : muted ? "Muted" : "Auto-speak ON"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={toggleMute}
+                className={cn(
+                  "p-1.5 rounded-lg border transition-all",
+                  muted
+                    ? "bg-slate-700 border-slate-600 text-slate-400 hover:text-white"
+                    : "bg-blue-900/30 border-blue-700/50 text-blue-400 hover:bg-blue-900/50"
+                )}
+              >
+                {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+              </button>
+            </div>
+
             {previewWarning && (
               <p className="text-[10px] text-amber-400 bg-amber-500/10 rounded-lg px-3 py-1.5 border border-amber-500/20">
                 {previewWarning}
@@ -658,7 +830,7 @@ export default function Interview() {
             )}
           </div>
 
-          {/* Proctoring event log */}
+          {/* Event log */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 max-h-72 overflow-hidden flex flex-col">
             <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
               <Eye size={14} className="text-blue-400" />
@@ -669,7 +841,6 @@ export default function Interview() {
                 </span>
               )}
             </h4>
-
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
               {proctoringEvents.length === 0 && (
                 <div className="text-center py-6 opacity-30">
@@ -678,27 +849,24 @@ export default function Interview() {
                 </div>
               )}
               {proctoringEvents.map((ev, i) => {
-                const isAlert = ev.type === "TAB_SWITCH";
+                const isAlert   = ev.type === "TAB_SWITCH";
                 const isEmotion = ev.type === "EMOTION";
-                const isVoice  = ev.type === "VOICE_CONFIDENCE";
+                const isVoice   = ev.type === "VOICE_CONFIDENCE";
                 return (
                   <div key={i} className={cn(
                     "flex items-start gap-2 px-2.5 py-2 rounded-lg text-[10px] border",
-                    isAlert
-                      ? "bg-red-500/10 border-red-500/30 text-red-400"
-                      : isEmotion
-                      ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
-                      : isVoice
-                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-                      : "bg-slate-800/50 border-slate-700/50 text-slate-500"
+                    isAlert   ? "bg-red-500/10 border-red-500/30 text-red-400"      :
+                    isEmotion ? "bg-blue-500/10 border-blue-500/20 text-blue-400"   :
+                    isVoice   ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" :
+                                "bg-slate-800/50 border-slate-700/50 text-slate-500"
                   )}>
                     <span className="font-black flex-shrink-0">
                       {isAlert ? "⚠" : isEmotion ? "😐" : isVoice ? "🎤" : "·"}
                     </span>
                     <span className="font-bold leading-tight">
-                      {isAlert  && "Tab switch detected"}
+                      {isAlert   && "Tab switch detected"}
                       {isEmotion && `Emotion: ${ev.emotion} (${Math.round(ev.confidence * 100)}%)`}
-                      {isVoice  && `Voice: ${ev.confidence_score >= 0.7 ? "confident" : "hesitant"} · ${ev.speaking_rate}wpm`}
+                      {isVoice   && `Voice: ${ev.confidence_score >= 0.7 ? "confident" : "hesitant"} · ${ev.speaking_rate}wpm`}
                       {!isAlert && !isEmotion && !isVoice && ev.type}
                     </span>
                     <span className="ml-auto flex-shrink-0 opacity-50">
@@ -710,7 +878,7 @@ export default function Interview() {
             </div>
           </div>
 
-          {/* Session transcript log */}
+          {/* Session log */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 flex-1 flex flex-col min-h-40">
             <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
               <CheckCircle2 size={14} className="text-blue-400" />

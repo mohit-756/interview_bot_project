@@ -1,51 +1,44 @@
-"""Gradual interview question generation helpers."""
+"""Adaptive interview question flow helpers — runtime stage awareness."""
 
 from __future__ import annotations
 
 import re
 
 STOPWORDS = {
-    "about",
-    "after",
-    "also",
-    "because",
-    "could",
-    "from",
-    "have",
-    "just",
-    "like",
-    "make",
-    "more",
-    "should",
-    "that",
-    "them",
-    "then",
-    "they",
-    "this",
-    "what",
-    "when",
-    "with",
-    "your",
+    "about", "after", "also", "because", "could", "from", "have",
+    "just", "like", "make", "more", "should", "that", "them", "then",
+    "they", "this", "what", "when", "with", "your",
 }
 
-FALLBACK_STAGE_QUESTIONS = {
-    "basics": (
-        "Introduce your most relevant project and your personal ownership in it.",
-        "Which core technologies do you use confidently in production and why?",
+# Fallback questions per stage used when the source bank runs out
+FALLBACK_STAGE_QUESTIONS: dict[str, tuple[str, ...]] = {
+    "intro": (
+        "Please give us a quick introduction — your background, current role, "
+        "and the project you are most proud of.",
     ),
-    "experience": (
-        "Describe a production bug you solved end-to-end, including root cause and fix.",
-        "Tell me about a technical trade-off where you chose speed vs quality.",
+    "project": (
+        "Walk me through one of your key projects — the problem, your approach, and the outcome.",
+        "Tell me about a production issue you faced in one of your projects and how you resolved it.",
+        "If you could redesign one part of a project you built, what would it be and why?",
     ),
-    "system": (
-        "How would you design this feature to support scale and failures?",
-        "What monitoring, alerts, and rollback strategy would you define here?",
-    ),
-    "behavioral": (
-        "Describe a difficult team conflict and how you resolved it professionally.",
-        "Tell me about a time you failed, what you learned, and what changed.",
+    "hr": (
+        "Describe a time you had to learn something new very quickly under pressure.",
+        "Tell me about a time you disagreed with your team. How did you handle it?",
+        "Where do you see yourself in the next two to three years?",
     ),
 }
+
+# Stage boundaries — index-based
+# index 0        → intro
+# index 1 to N-2 → project  (80 %)
+# last 1–2       → hr        (20 %)
+def stage_for_question_index(index: int, max_questions: int = 8) -> str:
+    if index == 0:
+        return "intro"
+    hr_start = max(2, max_questions - max(1, round(max_questions * 0.20)))
+    if index >= hr_start:
+        return "hr"
+    return "project"
 
 
 def normalize_result_questions(payload: object) -> list[dict[str, str]]:
@@ -61,46 +54,33 @@ def normalize_result_questions(payload: object) -> list[dict[str, str]]:
         if isinstance(item, str):
             text = item.strip()
             if text:
-                normalized.append({"text": text, "difficulty": "medium", "topic": "general"})
+                normalized.append({"text": text, "difficulty": "medium", "topic": "general", "type": "project"})
             continue
         if not isinstance(item, dict):
             continue
         text = str(item.get("text") or item.get("question") or "").strip()
         if not text:
             continue
-        normalized.append(
-            {
-                "text": text,
-                "difficulty": str(item.get("difficulty") or "medium"),
-                "topic": str(item.get("topic") or "general"),
-            }
-        )
+        normalized.append({
+            "text":       text,
+            "difficulty": str(item.get("difficulty") or "medium"),
+            "topic":      str(item.get("topic") or "general"),
+            "type":       str(item.get("type") or "project"),
+        })
     return normalized
 
 
-def stage_for_question_index(index: int) -> str:
-    if index < 2:
-        return "basics"
-    if index < 5:
-        return "experience"
-    if index < 7:
-        return "system"
-    return "behavioral"
-
-
-def compute_dynamic_seconds(base_seconds: int, question_index: int, last_answer: str) -> int:
+def compute_dynamic_seconds(
+    base_seconds: int,
+    question_index: int,
+    last_answer: str,
+    max_questions: int = 8,
+) -> int:
+    stage = stage_for_question_index(question_index, max_questions)
+    stage_bonus = {"intro": -10, "project": 10, "hr": 5}.get(stage, 0)
     words = len((last_answer or "").split())
-    stage = stage_for_question_index(question_index)
-    stage_bonus = {"basics": 0, "experience": 10, "system": 20, "behavioral": 5}.get(stage, 0)
-
-    answer_adjust = 0
-    if words < 15:
-        answer_adjust = -10
-    elif words > 80:
-        answer_adjust = 15
-
-    dynamic_seconds = base_seconds + stage_bonus + answer_adjust
-    return max(30, min(180, int(dynamic_seconds)))
+    answer_adjust = -10 if words < 15 else (15 if words > 80 else 0)
+    return max(30, min(180, int(base_seconds) + stage_bonus + answer_adjust))
 
 
 def next_question_payload(
@@ -109,44 +89,42 @@ def next_question_payload(
     question_index: int,
     last_answer: str,
     jd_title: str | None,
+    max_questions: int = 8,
 ) -> dict[str, str]:
-    asked_set = {text.strip().lower() for text in asked_questions if text.strip()}
+    asked_set = {t.strip().lower() for t in asked_questions if t.strip()}
+
+    # Try to pick the next unasked question from the source bank
     for item in source_questions:
         text = item["text"].strip()
-        if text.lower() in asked_set:
-            continue
-        return {
-            "text": text,
-            "difficulty": item.get("difficulty", "medium"),
-            "topic": item.get("topic", "general"),
-        }
+        if text.lower() not in asked_set:
+            return {
+                "text":       text,
+                "difficulty": item.get("difficulty", "medium"),
+                "topic":      item.get("topic", "general"),
+                "type":       item.get("type", "project"),
+            }
 
-    stage = stage_for_question_index(question_index)
-    stage_questions = FALLBACK_STAGE_QUESTIONS.get(stage, FALLBACK_STAGE_QUESTIONS["experience"])
-
+    # Fallback: generate contextual question from the appropriate stage
+    stage = stage_for_question_index(question_index, max_questions)
+    pool  = FALLBACK_STAGE_QUESTIONS.get(stage, FALLBACK_STAGE_QUESTIONS["project"])
+    base  = pool[question_index % len(pool)]
     focus = _focus_phrase(last_answer) or (jd_title or "your recent project")
-    base = stage_questions[question_index % len(stage_questions)]
-    if stage in {"experience", "system"}:
-        text = f"{base} Please include metrics, decisions, and trade-offs around {focus}."
-    elif stage == "behavioral":
-        text = f"{base} Explain your communication style while handling {focus}."
-    else:
-        text = f"{base} Connect it to {focus}."
 
-    return {"text": text, "difficulty": _difficulty_for_stage(stage), "topic": stage}
+    if stage == "project":
+        text = f"{base} Make sure to include specific details about {focus}."
+    elif stage == "hr":
+        text = base
+    else:
+        text = base
+
+    return {"text": text, "difficulty": _difficulty_for_stage(stage), "topic": stage, "type": stage}
 
 
 def _difficulty_for_stage(stage: str) -> str:
-    if stage == "basics":
-        return "easy"
-    if stage == "experience":
-        return "medium"
-    return "hard"
+    return {"intro": "easy", "project": "medium", "hr": "medium"}.get(stage, "medium")
 
 
 def _focus_phrase(last_answer: str) -> str:
     tokens = re.findall(r"[A-Za-z][A-Za-z0-9+#.-]{2,}", (last_answer or "").lower())
-    filtered = [token for token in tokens if token not in STOPWORDS]
-    if not filtered:
-        return ""
-    return " ".join(filtered[:4])
+    filtered = [t for t in tokens if t not in STOPWORDS]
+    return " ".join(filtered[:4]) if filtered else ""
