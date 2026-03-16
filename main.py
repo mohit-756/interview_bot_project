@@ -1,19 +1,39 @@
-"""FastAPI application entrypoint for Interview Bot backend."""
+"""
+main.py — FastAPI application entrypoint for Interview Bot backend.
+
+FIXES applied:
+  1. ensure_schema() migrates all new columns added to models.py
+     (hr_decision, hr_final_score, hr_behavioral_score, hr_communication_score,
+      hr_notes, hr_red_flags on results; llm_eval_status on interview_sessions;
+      education_requirement + experience_requirement on job_descriptions)
+  2. @app.on_event("startup") pre-loads the SentenceTransformer model so the
+     first resume upload does not have a 10-second cold-start delay.
+  3. GROQ_API_KEY is checked at startup — a clear warning is printed if it is
+     missing so engineers catch it immediately instead of seeing 500 errors
+     during interviews.
+"""
 from __future__ import annotations
+
+import logging
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
+
 from database import SessionLocal, engine
 from models import Base, Candidate
 from routes.api_routes import api_router
 from routes.common import ensure_candidate_profile
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Interview Bot API", version="1.0.0")
 
 # Keep startup table creation for local/dev environments.
@@ -22,9 +42,9 @@ Base.metadata.create_all(bind=engine)
 
 def ensure_schema() -> None:
     """Backfill lightweight schema changes for existing local SQLite DBs."""
-
     try:
         with engine.begin() as conn:
+            # ── job_descriptions (canonical config table) ─────────────────
             conn.execute(
                 text(
                     """
@@ -43,6 +63,15 @@ def ensure_schema() -> None:
                     """
                 )
             )
+
+            # Add NEW columns to job_descriptions if they don't exist
+            jd_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(job_descriptions)")).fetchall()}
+            if "education_requirement" not in jd_cols:
+                conn.execute(text("ALTER TABLE job_descriptions ADD COLUMN education_requirement VARCHAR(50)"))
+            if "experience_requirement" not in jd_cols:
+                conn.execute(text("ALTER TABLE job_descriptions ADD COLUMN experience_requirement INTEGER DEFAULT 0 NOT NULL"))
+
+            # ── jobs (legacy table) ───────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(jobs)")).fetchall()
             columns = {row[1] for row in rows}
             if "jd_title" not in columns:
@@ -56,7 +85,7 @@ def ensure_schema() -> None:
             if "experience_requirement" not in columns:
                 conn.execute(text("ALTER TABLE jobs ADD COLUMN experience_requirement INTEGER DEFAULT 0"))
 
-            # candidate identifiers
+            # ── candidates ────────────────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(candidates)")).fetchall()
             candidate_cols = {row[1] for row in rows}
             if "candidate_uid" not in candidate_cols:
@@ -68,7 +97,8 @@ def ensure_schema() -> None:
             if "questions_json" not in candidate_cols:
                 conn.execute(text("ALTER TABLE candidates ADD COLUMN questions_json TEXT"))
 
-            # One interview attempt per (candidate, JD) — safe on existing DBs
+            # ── results ───────────────────────────────────────────────────
+            # One interview attempt per (candidate, JD)
             conn.execute(
                 text(
                     """
@@ -78,14 +108,27 @@ def ensure_schema() -> None:
                     """
                 )
             )
-
-            # application_id on results
             rows = conn.execute(text("PRAGMA table_info(results)")).fetchall()
             res_cols = {row[1] for row in rows}
             if "application_id" not in res_cols:
                 conn.execute(text("ALTER TABLE results ADD COLUMN application_id VARCHAR(64)"))
             if "events_json" not in res_cols:
                 conn.execute(text("ALTER TABLE results ADD COLUMN events_json TEXT"))
+            # FIX: new dedicated HR decision columns
+            if "hr_decision" not in res_cols:
+                conn.execute(text("ALTER TABLE results ADD COLUMN hr_decision VARCHAR(20)"))
+            if "hr_final_score" not in res_cols:
+                conn.execute(text("ALTER TABLE results ADD COLUMN hr_final_score FLOAT"))
+            if "hr_behavioral_score" not in res_cols:
+                conn.execute(text("ALTER TABLE results ADD COLUMN hr_behavioral_score FLOAT"))
+            if "hr_communication_score" not in res_cols:
+                conn.execute(text("ALTER TABLE results ADD COLUMN hr_communication_score FLOAT"))
+            if "hr_notes" not in res_cols:
+                conn.execute(text("ALTER TABLE results ADD COLUMN hr_notes TEXT"))
+            if "hr_red_flags" not in res_cols:
+                conn.execute(text("ALTER TABLE results ADD COLUMN hr_red_flags TEXT"))
+
+            # ── interview_answers ─────────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(interview_answers)")).fetchall()
             ans_cols = {row[1] for row in rows}
             if "llm_score" not in ans_cols:
@@ -93,73 +136,47 @@ def ensure_schema() -> None:
             if "llm_feedback" not in ans_cols:
                 conn.execute(text("ALTER TABLE interview_answers ADD COLUMN llm_feedback TEXT"))
 
-
-            # new columns on interview_questions_v2
+            # ── interview_questions_v2 ────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(interview_questions_v2)")).fetchall()
             q_cols = {row[1] for row in rows}
-            if "answer_summary" not in q_cols:
-                conn.execute(text("ALTER TABLE interview_questions_v2 ADD COLUMN answer_summary TEXT"))
-            if "relevance_score" not in q_cols:
-                conn.execute(text("ALTER TABLE interview_questions_v2 ADD COLUMN relevance_score FLOAT"))
-            if "time_taken_seconds" not in q_cols:
-                conn.execute(text("ALTER TABLE interview_questions_v2 ADD COLUMN time_taken_seconds INTEGER"))
-            if "skipped" not in q_cols:
-                conn.execute(text("ALTER TABLE interview_questions_v2 ADD COLUMN skipped BOOLEAN DEFAULT 0 NOT NULL"))
-            if "answer_text" not in q_cols:
-                conn.execute(text("ALTER TABLE interview_questions_v2 ADD COLUMN answer_text TEXT"))
-            if "llm_score" not in q_cols:
-                conn.execute(text("ALTER TABLE interview_questions_v2 ADD COLUMN llm_score FLOAT"))
-            if "llm_feedback" not in q_cols:
-                conn.execute(text("ALTER TABLE interview_questions_v2 ADD COLUMN llm_feedback TEXT"))
-            if "allotted_seconds" not in q_cols:
-                conn.execute(
-                    text("ALTER TABLE interview_questions_v2 ADD COLUMN allotted_seconds INTEGER DEFAULT 60 NOT NULL")
-                )
+            for col, defn in [
+                ("answer_summary",    "TEXT"),
+                ("relevance_score",   "FLOAT"),
+                ("time_taken_seconds","INTEGER"),
+                ("skipped",           "BOOLEAN DEFAULT 0 NOT NULL"),
+                ("answer_text",       "TEXT"),
+                ("llm_score",         "FLOAT"),
+                ("llm_feedback",      "TEXT"),
+                ("allotted_seconds",  "INTEGER DEFAULT 60 NOT NULL"),
+            ]:
+                if col not in q_cols:
+                    conn.execute(text(f"ALTER TABLE interview_questions_v2 ADD COLUMN {col} {defn}"))
 
-            # new columns on interview_sessions
+            # ── interview_sessions ────────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(interview_sessions)")).fetchall()
             session_cols = {row[1] for row in rows}
-            if "per_question_seconds" not in session_cols:
-                conn.execute(
-                    text("ALTER TABLE interview_sessions ADD COLUMN per_question_seconds INTEGER DEFAULT 60 NOT NULL")
-                )
-            if "total_time_seconds" not in session_cols:
-                conn.execute(
-                    text("ALTER TABLE interview_sessions ADD COLUMN total_time_seconds INTEGER DEFAULT 1200 NOT NULL")
-                )
-            if "remaining_time_seconds" not in session_cols:
-                conn.execute(
-                    text(
-                        "ALTER TABLE interview_sessions ADD COLUMN remaining_time_seconds INTEGER DEFAULT 1200 NOT NULL"
-                    )
-                )
-            if "max_questions" not in session_cols:
-                conn.execute(
-                    text("ALTER TABLE interview_sessions ADD COLUMN max_questions INTEGER DEFAULT 8 NOT NULL")
-                )
-            if "baseline_face_signature" not in session_cols:
-                conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN baseline_face_signature TEXT"))
-            if "baseline_face_captured_at" not in session_cols:
-                conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN baseline_face_captured_at DATETIME"))
-            if "consent_given" not in session_cols:
-                conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN consent_given BOOLEAN DEFAULT 0 NOT NULL"))
-            if "warning_count" not in session_cols:
-                conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN warning_count INTEGER DEFAULT 0 NOT NULL"))
-            if "consecutive_violation_frames" not in session_cols:
-                conn.execute(
-                    text("ALTER TABLE interview_sessions ADD COLUMN consecutive_violation_frames INTEGER DEFAULT 0 NOT NULL")
-                )
-            if "paused_until" not in session_cols:
-                conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN paused_until DATETIME"))
+            for col, defn in [
+                ("per_question_seconds",           "INTEGER DEFAULT 60 NOT NULL"),
+                ("total_time_seconds",             "INTEGER DEFAULT 1200 NOT NULL"),
+                ("remaining_time_seconds",         "INTEGER DEFAULT 1200 NOT NULL"),
+                ("max_questions",                  "INTEGER DEFAULT 8 NOT NULL"),
+                ("baseline_face_signature",        "TEXT"),
+                ("baseline_face_captured_at",      "DATETIME"),
+                ("consent_given",                  "BOOLEAN DEFAULT 0 NOT NULL"),
+                ("warning_count",                  "INTEGER DEFAULT 0 NOT NULL"),
+                ("consecutive_violation_frames",   "INTEGER DEFAULT 0 NOT NULL"),
+                ("paused_until",                   "DATETIME"),
+                # FIX: LLM evaluation job status
+                ("llm_eval_status",                "VARCHAR(20) DEFAULT 'pending' NOT NULL"),
+            ]:
+                if col not in session_cols:
+                    conn.execute(text(f"ALTER TABLE interview_sessions ADD COLUMN {col} {defn}"))
 
-            # Migrate legacy token-flow proctor events into unified proctor_events.
+            # ── legacy proctor event migration ────────────────────────────
             legacy_table = conn.execute(
                 text(
-                    """
-                    SELECT name
-                    FROM sqlite_master
-                    WHERE type = 'table' AND name = 'interview_proctor_events'
-                    """
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='interview_proctor_events'"
                 )
             ).first()
             if legacy_table:
@@ -167,12 +184,7 @@ def ensure_schema() -> None:
                     text(
                         """
                         INSERT INTO proctor_events (
-                            session_id,
-                            created_at,
-                            event_type,
-                            score,
-                            meta_json,
-                            image_path
+                            session_id, created_at, event_type, score, meta_json, image_path
                         )
                         SELECT
                             legacy.interview_id,
@@ -187,26 +199,22 @@ def ensure_schema() -> None:
                             END
                         FROM interview_proctor_events legacy
                         WHERE NOT EXISTS (
-                            SELECT 1
-                            FROM proctor_events current
-                            WHERE current.session_id = legacy.interview_id
-                                AND current.created_at = legacy.created_at
-                                AND current.event_type = legacy.event_type
-                                AND COALESCE(current.image_path, '') = COALESCE(
-                                    CASE
-                                        WHEN legacy.snapshot_path LIKE 'uploads/%'
-                                            THEN substr(legacy.snapshot_path, 9)
-                                        ELSE legacy.snapshot_path
-                                    END,
-                                    ''
-                                )
+                            SELECT 1 FROM proctor_events curr
+                            WHERE curr.session_id = legacy.interview_id
+                              AND curr.created_at  = legacy.created_at
+                              AND curr.event_type  = legacy.event_type
                         )
                         """
                     )
                 )
-            conn.execute(text("UPDATE candidates SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
-    except Exception:
-        # Non-blocking schema migration best effort.
+
+            conn.execute(
+                text("UPDATE candidates SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
+            )
+
+    except Exception as exc:
+        # Schema migration is best-effort — log but don't crash startup.
+        logger.warning("ensure_schema warning (non-fatal): %s", exc)
         return
 
     try:
@@ -214,7 +222,11 @@ def ensure_schema() -> None:
         try:
             candidates = (
                 db.query(Candidate)
-                .filter((Candidate.candidate_uid.is_(None)) | (Candidate.candidate_uid == "") | (Candidate.created_at.is_(None)))
+                .filter(
+                    (Candidate.candidate_uid.is_(None))
+                    | (Candidate.candidate_uid == "")
+                    | (Candidate.created_at.is_(None))
+                )
                 .all()
             )
             changed = False
@@ -226,15 +238,55 @@ def ensure_schema() -> None:
             db.close()
 
         with engine.begin() as conn:
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_candidates_candidate_uid ON candidates(candidate_uid)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_candidates_created_at ON candidates(created_at)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_candidates_selected_jd_id ON candidates(selected_jd_id)"))
-    except Exception:
-        # Non-blocking schema migration best effort.
-        pass
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_candidates_candidate_uid "
+                    "ON candidates(candidate_uid)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_candidates_created_at "
+                    "ON candidates(created_at)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_candidates_selected_jd_id "
+                    "ON candidates(selected_jd_id)"
+                )
+            )
+    except Exception as exc:
+        logger.warning("ensure_schema index step warning (non-fatal): %s", exc)
 
 
 ensure_schema()
+
+
+# ── FIX: Check GROQ_API_KEY at startup so engineers know immediately ────────
+_groq_key = os.getenv("GROQ_API_KEY", "")
+if not _groq_key:
+    logger.warning(
+        "⚠️  GROQ_API_KEY is not set. "
+        "Voice transcription and LLM answer scoring will be unavailable. "
+        "The system will run in text-only / local-scoring mode. "
+        "Set GROQ_API_KEY in your .env file to enable full AI features."
+    )
+
+
+# ── FIX: Pre-load SentenceTransformer on startup ────────────────────────────
+# Without this the first resume upload triggers a ~10s model load during the
+# request, causing a timeout-like experience for the candidate.
+@app.on_event("startup")
+async def _preload_ml_model() -> None:
+    """Warm up the SentenceTransformer model in the background at startup."""
+    try:
+        from ai_engine.phase1.matching import _get_model
+        _get_model()
+        logger.info("✅  SentenceTransformer model loaded and ready.")
+    except Exception as exc:
+        logger.warning("SentenceTransformer preload failed (non-fatal): %s", exc)
+
 
 app.add_middleware(
     SessionMiddleware,

@@ -15,8 +15,6 @@ import HRJdDetailPage from "./pages/HRJdDetailPage";
 import HRAnalyticsPage from "./pages/HRAnalyticsPage";
 import HRBackupPage from "./pages/HRBackupPage";
 import HRProctoringPage from "./pages/HRProctoringPage";
-// PHASE 1 FIX: HRSkillWeightsPage removed — skill weights are now managed
-// directly inside HRJdManagementPage (edit JD form). Page was redundant.
 import CandidateDashboardPage from "./pages/CandidateDashboardPage";
 import PracticeInterviewPage from "./pages/PracticeInterviewPage";
 import PreCheck from "./pages/PreCheck";
@@ -28,11 +26,12 @@ import "./App.css";
 
 function HomeRedirect() {
   const { user, loading } = useAuth();
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-    </div>
-  );
+  if (loading)
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
   if (!user) return <Navigate to="/login" replace />;
   return <Navigate to={user.role === "hr" ? "/hr" : "/candidate"} replace />;
 }
@@ -47,11 +46,19 @@ function PublicOnlyRoute({ children }) {
 export default function App() {
   return (
     <Routes>
-      {/* Public */}
+      {/* Public routes */}
       <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
       <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
 
-      {/* HR */}
+      {/* ── INTERVIEW ROUTES — NO LOGIN REQUIRED ─────────────────────────────
+          These are accessed directly from the email link.
+          The backend validates the candidate via session cookie if present,
+          or handles it in PreCheck. No frontend auth guard needed. */}
+      <Route path="/interview/:resultId" element={<PreCheck />} />
+      <Route path="/interview/:resultId/live" element={<Interview />} />
+      <Route path="/interview/:resultId/completed" element={<Completed />} />
+
+      {/* HR routes — login required */}
       <Route element={<ProtectedRoute role="hr" />}>
         <Route element={<DashboardLayout />}>
           <Route path="/hr" element={<HRDashboardPage />} />
@@ -64,13 +71,12 @@ export default function App() {
           <Route path="/hr/matrix" element={<HRScoreMatrixPage />} />
           <Route path="/hr/analytics" element={<HRAnalyticsPage />} />
           <Route path="/hr/backup" element={<HRBackupPage />} />
-          {/* PHASE 1 FIX: /hr/skill-weights route removed — no longer needed */}
           <Route path="/hr/proctoring/:sessionId" element={<HRProctoringPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
 
-      {/* Candidate */}
+      {/* Candidate dashboard routes — login required */}
       <Route element={<ProtectedRoute role="candidate" />}>
         <Route element={<DashboardLayout />}>
           <Route path="/candidate" element={<CandidateDashboardPage />} />
@@ -78,9 +84,6 @@ export default function App() {
           <Route path="/interview/result" element={<FinalResultPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
-        <Route path="/interview/:resultId" element={<PreCheck />} />
-        <Route path="/interview/:resultId/live" element={<Interview />} />
-        <Route path="/interview/:resultId/completed" element={<Completed />} />
       </Route>
 
       <Route path="/" element={<HomeRedirect />} />

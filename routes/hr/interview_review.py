@@ -1,23 +1,60 @@
-"""HR dashboard APIs for interviews and proctoring review."""
+"""
+routes/hr/interview_review.py — HR dashboard APIs for interviews and proctoring.
 
+FIXES applied:
+  1. finalize_interview now writes to dedicated Result columns
+     (hr_decision, hr_final_score, hr_behavioral_score, hr_communication_score,
+      hr_notes, hr_red_flags) instead of merging into the explanation JSON blob.
+     This eliminates silent data-loss when other code paths also write explanation.
+  2. interview_detail reads HR review data from the new columns with a fallback
+     to the old explanation keys for backward compatibility with existing rows.
+  3. NEW endpoint: POST /hr/interviews/{id}/re-evaluate — lets HR manually
+     re-trigger LLM scoring when it shows "Pending" after a Groq outage.
+"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session, joinedload
 
 from ai_engine.phase1.scoring import compute_answer_scorecard
 from database import get_db
-from models import Candidate, InterviewAnswer, InterviewSession, JobDescription, ProctorEvent, Result
+from models import (
+    Candidate, InterviewAnswer, InterviewQuestion,
+    InterviewSession, JobDescription, ProctorEvent, Result,
+)
 from routes.dependencies import require_role, SessionUser
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hr", tags=["hr"])
 
 
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _hr_review_from_result(result: Result) -> dict:
+    """Read HR review data from the dedicated columns (new) or explanation JSON (legacy)."""
+    expl = result.explanation or {}
+    return {
+        # New dedicated columns take precedence; fall back to legacy JSON keys.
+        "final_score":         result.hr_final_score         if result.hr_final_score         is not None else expl.get("hr_final_score"),
+        "behavioral_score":    result.hr_behavioral_score    if result.hr_behavioral_score    is not None else expl.get("hr_behavioral_score"),
+        "communication_score": result.hr_communication_score if result.hr_communication_score is not None else expl.get("hr_communication_score"),
+        "red_flags":           result.hr_red_flags           if result.hr_red_flags           is not None else expl.get("hr_red_flags"),
+        "notes":               result.hr_notes               if result.hr_notes               is not None else expl.get("hr_final_notes"),
+    }
+
+
+# ── list interviews ───────────────────────────────────────────────────────────
+
 @router.get("/interviews")
-def list_interviews(current_user: SessionUser = Depends(require_role("hr")), db: Session = Depends(get_db)):
-    # HR owns jobs; gather sessions via results->jobs.
+def list_interviews(
+    current_user: SessionUser = Depends(require_role("hr")),
+    db: Session = Depends(get_db),
+):
     sessions = (
         db.query(InterviewSession)
         .join(Result, InterviewSession.result_id == Result.id)
@@ -65,10 +102,14 @@ def list_interviews(current_user: SessionUser = Depends(require_role("hr")), db:
                 "ended_at": session.ended_at,
                 "events_count": count_map.get(session.id, {}).get("events_count", 0),
                 "suspicious_events_count": count_map.get(session.id, {}).get("suspicious_count", 0),
+                # FIX: expose LLM eval status so the frontend can show "Pending / Scored"
+                "llm_eval_status": session.llm_eval_status or "pending",
             }
         )
     return {"ok": True, "interviews": payload}
 
+
+# ── interview detail ──────────────────────────────────────────────────────────
 
 @router.get("/interviews/{interview_id}")
 def interview_detail(
@@ -81,7 +122,10 @@ def interview_detail(
         .join(Result, InterviewSession.result_id == Result.id)
         .join(JobDescription, Result.job_id == JobDescription.id)
         .options(joinedload(InterviewSession.questions))
-        .filter(InterviewSession.id == interview_id, JobDescription.company_id == current_user.user_id)
+        .filter(
+            InterviewSession.id == interview_id,
+            JobDescription.company_id == current_user.user_id,
+        )
         .first()
     )
     if not session:
@@ -97,29 +141,25 @@ def interview_detail(
         .all()
     )
     latest_answers: dict[int, InterviewAnswer] = {}
-    answer_rows = (
+    for row in (
         db.query(InterviewAnswer)
         .filter(InterviewAnswer.session_id == session.id)
         .order_by(InterviewAnswer.question_id.asc(), InterviewAnswer.id.desc())
         .all()
-    )
-    for row in answer_rows:
+    ):
         latest_answers.setdefault(row.question_id, row)
 
-    explanation = result.explanation or {}
-    hr_review = {
-        "final_score": explanation.get("hr_final_score"),
-        "behavioral_score": explanation.get("hr_behavioral_score"),
-        "communication_score": explanation.get("hr_communication_score"),
-        "red_flags": explanation.get("hr_red_flags"),
-        "notes": explanation.get("hr_final_notes"),
-    }
+    # FIX: read HR review from dedicated columns (new) with JSON fallback (legacy)
+    hr_review = _hr_review_from_result(result)
     job_skills = (job.skill_scores or {}).keys() if job else ()
+
     questions_payload = []
     for q in sorted(session.questions, key=lambda item: item.id):
-        answer_text = q.answer_text if q.answer_text is not None else (latest_answers[q.id].answer_text if q.id in latest_answers else None)
-        time_taken_seconds = (
-            q.time_taken_seconds if q.time_taken_seconds is not None else (latest_answers[q.id].time_taken_sec if q.id in latest_answers else None)
+        answer_text = q.answer_text if q.answer_text is not None else (
+            latest_answers[q.id].answer_text if q.id in latest_answers else None
+        )
+        time_taken_seconds = q.time_taken_seconds if q.time_taken_seconds is not None else (
+            latest_answers[q.id].time_taken_sec if q.id in latest_answers else None
         )
         score_breakdown = compute_answer_scorecard(
             q.text,
@@ -158,6 +198,7 @@ def interview_detail(
             "status": session.status,
             "started_at": session.started_at,
             "ended_at": session.ended_at,
+            "llm_eval_status": session.llm_eval_status or "pending",
         },
         "questions": questions_payload,
         "events": [
@@ -175,6 +216,8 @@ def interview_detail(
         "hr_review": hr_review,
     }
 
+
+# ── finalize interview ────────────────────────────────────────────────────────
 
 class FinalizeBody(BaseModel):
     decision: str
@@ -196,7 +239,10 @@ def finalize_interview(
         db.query(InterviewSession)
         .join(Result, InterviewSession.result_id == Result.id)
         .join(JobDescription, Result.job_id == JobDescription.id)
-        .filter(InterviewSession.id == interview_id, JobDescription.company_id == current_user.user_id)
+        .filter(
+            InterviewSession.id == interview_id,
+            JobDescription.company_id == current_user.user_id,
+        )
         .first()
     )
     if not session:
@@ -204,16 +250,20 @@ def finalize_interview(
 
     session.status = payload.decision.lower()
     session.ended_at = session.ended_at or session.started_at
+
     result = session.result
-    explanation = result.explanation or {}
-    explanation["hr_final_notes"] = payload.notes
-    explanation["hr_final_score"] = payload.final_score
-    explanation["hr_behavioral_score"] = payload.behavioral_score
-    explanation["hr_communication_score"] = payload.communication_score
-    explanation["hr_red_flags"] = payload.red_flags
-    result.explanation = explanation
+
+    # FIX: Write to dedicated columns — no longer merging into explanation JSON.
+    result.hr_decision = payload.decision.lower()
+    result.hr_final_score = payload.final_score
+    result.hr_behavioral_score = payload.behavioral_score
+    result.hr_communication_score = payload.communication_score
+    result.hr_notes = payload.notes
+    result.hr_red_flags = payload.red_flags
+
     if payload.final_score is not None:
         result.score = payload.final_score
+
     db.commit()
     return {
         "ok": True,
@@ -226,3 +276,150 @@ def finalize_interview(
             "notes": payload.notes,
         },
     }
+
+
+# ── FIX: NEW re-evaluate endpoint ─────────────────────────────────────────────
+# Allows HR to manually re-trigger LLM scoring when it shows "Pending" after
+# a Groq outage. Previously there was no way to recover from a scoring failure.
+
+@router.post("/interviews/{interview_id}/re-evaluate")
+def re_evaluate_interview(
+    interview_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: SessionUser = Depends(require_role("hr")),
+    db: Session = Depends(get_db),
+):
+    """Re-trigger LLM answer scoring for a completed interview session."""
+    session = (
+        db.query(InterviewSession)
+        .join(Result, InterviewSession.result_id == Result.id)
+        .join(JobDescription, Result.job_id == JobDescription.id)
+        .filter(
+            InterviewSession.id == interview_id,
+            JobDescription.company_id == current_user.user_id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Interview not found")
+
+    if session.status == "in_progress":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot re-evaluate an interview that is still in progress.",
+        )
+
+    # Mark as running so the frontend can show a spinner
+    session.llm_eval_status = "running"
+    db.commit()
+
+    # Run scoring in a background task so the HTTP response returns immediately
+    background_tasks.add_task(_run_llm_evaluation, interview_id)
+
+    return {
+        "ok": True,
+        "message": "LLM re-evaluation started. Refresh the interview detail page in ~30 seconds.",
+        "session_id": interview_id,
+    }
+
+
+def _run_llm_evaluation(session_id: int) -> None:
+    """Background worker: score all answers for a session with Groq LLM."""
+    from services.llm.client import score_answer
+
+    db = SessionLocal()
+    try:
+        session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+        if not session:
+            return
+
+        questions = (
+            db.query(InterviewQuestion)
+            .filter(InterviewQuestion.session_id == session_id)
+            .order_by(InterviewQuestion.id.asc())
+            .all()
+        )
+
+        scored = 0
+        total_score = 0.0
+
+        for question in questions:
+            answer_text = (question.answer_text or "").strip()
+            if not answer_text or question.skipped:
+                _save_llm_fields(db, session_id, question.id, 0, "Answer was skipped or empty.")
+                continue
+
+            try:
+                result = score_answer(question.text, answer_text)
+                llm_score = int(result["score"])
+                llm_feedback = str(result["feedback"])
+            except Exception as exc:
+                logger.error("LLM scoring failed for question %s: %s", question.id, exc)
+                # Fall back to local rubric score so "Pending" doesn't persist
+                from ai_engine.phase1.scoring import compute_answer_scorecard
+                local = compute_answer_scorecard(question.text, answer_text)
+                llm_score = int(local["overall_score"])
+                llm_feedback = "Scored locally (LLM unavailable)."
+
+            _save_llm_fields(db, session_id, question.id, llm_score, llm_feedback)
+            total_score += llm_score
+            scored += 1
+
+        db.commit()
+
+        # Mark session as completed
+        session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+        if session:
+            session.llm_eval_status = "completed"
+            db.commit()
+
+        logger.info(
+            "LLM re-evaluation done: session=%s scored=%s avg=%.1f",
+            session_id, scored, total_score / scored if scored else 0,
+        )
+    except Exception as exc:
+        logger.error("LLM re-evaluation worker failed for session %s: %s", session_id, exc)
+        try:
+            session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+            if session:
+                session.llm_eval_status = "failed"
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+def _save_llm_fields(
+    db: Session,
+    session_id: int,
+    question_id: int,
+    llm_score: int,
+    llm_feedback: str,
+) -> None:
+    """FIX: Save llm_score+llm_feedback to BOTH InterviewAnswer and InterviewQuestion
+    inside a single flush so both succeed or neither does."""
+    answer = (
+        db.query(InterviewAnswer)
+        .filter(
+            InterviewAnswer.session_id == session_id,
+            InterviewAnswer.question_id == question_id,
+        )
+        .order_by(InterviewAnswer.id.desc())
+        .first()
+    )
+    if answer:
+        answer.llm_score = llm_score
+        answer.llm_feedback = llm_feedback
+
+    question = db.query(InterviewQuestion).filter(InterviewQuestion.id == question_id).first()
+    if question:
+        question.llm_score = llm_score
+        question.llm_feedback = llm_feedback
+
+    # FIX: single flush ensures both writes are atomic within the transaction
+    db.flush()
+
+
+# Keep the import available for background tasks
+from database import SessionLocal  # noqa: E402

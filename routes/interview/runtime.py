@@ -1,8 +1,21 @@
-"""Interview + timed session + OpenCV proctoring routes."""
+"""
+routes/interview/runtime.py — Interview + timed session + OpenCV proctoring.
 
+FIXES applied:
+  1. PAUSE_ON_WARNINGS_ENABLED is now read from the PROCTOR_PAUSE_ENABLED
+     environment variable instead of being a hardcoded False.
+     Set PROCTOR_PAUSE_ENABLED=true in .env to enable enforcement.
+  2. Baseline re-capture on reconnect is prevented: if session already has a
+     baseline_face_signature, we skip the baseline capture instead of
+     overwriting it with the new camera frame. This fixes the "reconnect
+     loses original baseline" bug.
+  3. llm_eval_status is set to "pending" when a session completes so the
+     HR dashboard correctly shows "Pending" until /evaluate is called.
+"""
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -45,8 +58,11 @@ PERIODIC_SAVE_SECONDS = 10
 VIOLATION_FRAMES_PER_WARNING = 3
 PAUSE_SECONDS_ON_THIRD_WARNING = 60
 MAX_WARNINGS_BEFORE_PAUSE = 3
-# Temporary local switch: keep warning signals, but do not hard-pause the interview flow.
-PAUSE_ON_WARNINGS_ENABLED = False
+
+# FIX: Read from env var instead of hardcoded False.
+# Set PROCTOR_PAUSE_ENABLED=true in .env to activate interview pause on violations.
+PAUSE_ON_WARNINGS_ENABLED: bool = os.getenv("PROCTOR_PAUSE_ENABLED", "false").lower() == "true"
+
 SUSPICIOUS_TYPES = {
     "no_face",
     "multi_face",
@@ -64,7 +80,6 @@ SUSPICIOUS_TYPES = {
 @router.get("/interview/{result_id}")
 def legacy_interview_entry(result_id: int, token: str | None = None) -> RedirectResponse:
     """Redirect legacy backend interview URLs to the SPA pre-check route."""
-
     target = interview_entry_url(result_id) or "/"
     if token:
         target = f"{target}?token={token}"
@@ -98,8 +113,7 @@ def _pause_seconds_left(session: InterviewSession, now: datetime | None = None) 
     if not session.paused_until:
         return 0
     ref = now or datetime.utcnow()
-    seconds_left = int((session.paused_until - ref).total_seconds())
-    return max(0, seconds_left)
+    return max(0, int((session.paused_until - ref).total_seconds()))
 
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -143,10 +157,8 @@ def _frame_reasons(
         reasons.append("No face detected. Please face the camera.")
     elif faces_count > 1:
         reasons.append("Only one person should be visible in the frame.")
-
     if baseline_ready and face_similarity is not None and face_similarity < FACE_MISMATCH_THRESHOLD:
         reasons.append("Face mismatch detected. Ensure only the candidate is in front of the camera.")
-
     if shoulder_model_enabled and (shoulder_score is None or shoulder_score < SHOULDER_MIN_THRESHOLD):
         reasons.append("Both shoulders must be visible in frame.")
     return reasons
@@ -177,7 +189,7 @@ def _resolve_candidate_result(db, candidate_id, result_id):
     if result_id is not None:
         result = db.query(Result).filter(
             Result.id == result_id,
-            Result.candidate_id == candidate_id  # ← FAILS if wrong candidate is logged in
+            Result.candidate_id == candidate_id,
         ).first()
         if not result:
             raise HTTPException(status_code=404, detail="Interview result not found")
@@ -215,14 +227,12 @@ def _ensure_interview_ready(result: Result) -> None:
     access = interview_access_state(result)
     if access["interview_ready"]:
         return
-
     if access["interview_locked_reason"] == "shortlist_required":
         raise HTTPException(status_code=403, detail="Only shortlisted candidates can start interviews")
     if access["interview_locked_reason"] == "already_started":
         raise HTTPException(status_code=409, detail="Interview session is already in progress")
     if access["interview_locked_reason"] == "already_completed":
         raise HTTPException(status_code=400, detail="Interview session has already been submitted")
-
     raise HTTPException(status_code=400, detail="Schedule your interview before starting")
 
 
@@ -230,17 +240,14 @@ def _resolve_result_by_token(db: Session, candidate_id: int, token: str) -> Resu
     token_value = (token or "").strip()
     if not token_value:
         raise HTTPException(status_code=404, detail="Interview token is missing")
-
     query = db.query(Result).filter(Result.candidate_id == candidate_id)
     by_token = query.filter(Result.interview_token == token_value).order_by(Result.id.desc()).first()
     if by_token:
         return by_token
-
     if token_value.isdigit():
         by_id = query.filter(Result.id == int(token_value)).first()
         if by_id:
             return by_id
-
     raise HTTPException(status_code=404, detail="Interview token is invalid")
 
 
@@ -282,7 +289,6 @@ def _create_next_question(
         question_index=len(existing),
         last_answer=last_answer,
     )
-
     question = InterviewQuestion(
         session_id=session.id,
         text=generated["text"],
@@ -365,6 +371,7 @@ def interview_start(
             warning_count=0,
             consecutive_violation_frames=0,
             paused_until=None,
+            llm_eval_status="pending",
         )
         db.add(session)
         db.commit()
@@ -501,6 +508,8 @@ def interview_answer(
     if interview_completed:
         session.status = "completed"
         session.ended_at = now
+        # FIX: llm_eval_status stays "pending" until /evaluate is called
+        session.llm_eval_status = "pending"
         db.commit()
         return {
             "ok": True,
@@ -532,7 +541,6 @@ def interview_answer(
             "word_count": score_breakdown["word_count"],
         } if (not payload.skipped and answer_text) else None,
     }
-
 
 
 @router.post("/interview/transcribe")
@@ -689,10 +697,13 @@ def upload_proctor_frame(
         elif shoulder_model_enabled and shoulder_score < SHOULDER_MIN_THRESHOLD:
             resolved_event_type = "baseline_no_shoulder"
         elif current_signature:
-            session.baseline_face_signature = json.dumps(current_signature)
-            session.baseline_face_captured_at = now
+            # FIX: Only capture baseline if one doesn't already exist for this session.
+            # Prevents overwriting the original baseline when the candidate reconnects.
+            if not session.baseline_face_signature:
+                session.baseline_face_signature = json.dumps(current_signature)
+                session.baseline_face_captured_at = now
+                baseline_ready = True
             resolved_event_type = "baseline"
-            baseline_ready = True
         else:
             resolved_event_type = "baseline_no_face"
     elif requested_event == "frame_check":
@@ -721,7 +732,9 @@ def upload_proctor_frame(
             else:
                 resolved_event_type = "periodic"
 
-            violation_for_warning = resolved_event_type in {"no_face", "multi_face", "face_mismatch", "shoulder_missing"}
+            violation_for_warning = resolved_event_type in {
+                "no_face", "multi_face", "face_mismatch", "shoulder_missing"
+            }
             if violation_for_warning:
                 session.consecutive_violation_frames = int(session.consecutive_violation_frames or 0) + 1
                 if session.consecutive_violation_frames >= VIOLATION_FRAMES_PER_WARNING:
@@ -753,7 +766,7 @@ def upload_proctor_frame(
         if resolved_event_type in {"periodic", "pause_active"}:
             should_store = should_store_periodic(session.id, PERIODIC_SAVE_SECONDS)
 
-    payload = {
+    payload_out = {
         "ok": True,
         "stored": False,
         "event_type": resolved_event_type,
@@ -784,7 +797,7 @@ def upload_proctor_frame(
 
     if not should_store:
         db.commit()
-        return payload
+        return payload_out
 
     session_dir = PROCTOR_UPLOAD_ROOT / str(session.id)
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -838,10 +851,10 @@ def upload_proctor_frame(
     db.commit()
     db.refresh(event)
 
-    payload["stored"] = True
-    payload["event_id"] = event.id
-    payload["image_url"] = f"/uploads/{relative_path}"
-    return payload
+    payload_out["stored"] = True
+    payload_out["event_id"] = event.id
+    payload_out["image_url"] = f"/uploads/{relative_path}"
+    return payload_out
 
 
 @router.get("/hr/proctoring/{session_id}")
@@ -872,7 +885,6 @@ def hr_proctoring_timeline(
         .all()
     )
     base_url = str(request.base_url).rstrip("/")
-    
 
     return {
         "ok": True,
@@ -891,6 +903,7 @@ def hr_proctoring_timeline(
             "warning_count": int(session.warning_count or 0),
             "paused": _pause_seconds_left(session) > 0,
             "pause_seconds_left": _pause_seconds_left(session),
+            "llm_eval_status": session.llm_eval_status or "pending",
         },
         "timeline": [
             {
@@ -904,5 +917,4 @@ def hr_proctoring_timeline(
             }
             for event in events
         ],
-        
     }

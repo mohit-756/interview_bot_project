@@ -1,9 +1,11 @@
 import React, { useRef, useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  Camera, Mic, Wifi, CheckCircle2, AlertCircle, Play, ShieldCheck, Video, Settings, AlertTriangle
+  Camera, Mic, Wifi, CheckCircle2, AlertCircle, Play,
+  ShieldCheck, Video, Settings, AlertTriangle, Lock, Mail
 } from "lucide-react";
 import { interviewApi } from "../services/api";
+import { useAuth } from "../context/useAuth";
 import { cn } from "../utils/utils";
 
 async function attachPreviewStream(videoElement, stream) {
@@ -22,8 +24,6 @@ async function attachPreviewStream(videoElement, stream) {
   }
 }
 
-// PHASE 1 FIX: Check MediaRecorder API support upfront so candidates see
-// a clear warning before entering the live interview, not a silent failure mid-session.
 function checkMediaRecorderSupport() {
   if (typeof window === "undefined") return { supported: false, reason: "Non-browser environment." };
   if (typeof window.MediaRecorder === "undefined") {
@@ -39,9 +39,88 @@ function checkMediaRecorderSupport() {
   return { supported: true, reason: "" };
 }
 
+// ── Inline login form shown when candidate is not logged in ──────────────────
+function InlineLogin({ onSuccess }) {
+  const { login } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      await login({ email, password, role: "candidate" });
+      onSuccess();
+    } catch (err) {
+      setError(err?.message || "Login failed. Please check your credentials.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 p-8 space-y-6">
+        <div className="text-center">
+          <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Lock size={28} className="text-blue-600 dark:text-blue-400" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Sign in to continue</h2>
+          <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm">
+            Please sign in with your candidate account to access your interview.
+          </p>
+        </div>
+
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-xl text-sm border border-red-100 dark:border-red-900/30">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="relative">
+            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email address"
+              required
+              className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+            />
+          </div>
+          <div className="relative">
+            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              required
+              className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all disabled:opacity-60"
+          >
+            {loading ? "Signing in..." : "Sign In & Open Interview"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Main PreCheck component ───────────────────────────────────────────────────
 export default function PreCheck() {
   const { resultId } = useParams();
   const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -49,15 +128,13 @@ export default function PreCheck() {
     camera:        { status: "pending", label: "Camera access" },
     mic:           { status: "pending", label: "Microphone access" },
     internet:      { status: "granted", label: "Internet connection" },
-    // PHASE 1 FIX: voice recording support check
     voiceRecorder: { status: "pending", label: "Voice recording support" },
   });
   const [isChecking, setIsChecking] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
 
-  // PHASE 1 FIX: Run MediaRecorder check on mount so we show its status
-  // immediately (before the user even clicks "Run System Check").
+  // Check MediaRecorder support on mount
   useEffect(() => {
     const { supported, reason } = checkMediaRecorderSupport();
     setChecks((prev) => ({
@@ -70,6 +147,32 @@ export default function PreCheck() {
     }));
   }, []);
 
+  // Cleanup camera stream on unmount
+  React.useEffect(() => {
+    const videoElement = videoRef.current;
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+      if (videoElement) videoElement.srcObject = null;
+    };
+  }, []);
+
+  // Show spinner while auth state is loading
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // If not logged in — show inline login form (no redirect away from interview URL)
+  if (!user) {
+    return <InlineLogin onSuccess={() => window.location.reload()} />;
+  }
+
   const startCheck = async () => {
     setIsChecking(true);
     setError("");
@@ -79,7 +182,6 @@ export default function PreCheck() {
       streamRef.current = null;
     }
 
-    // Always re-check MediaRecorder in case browser state changed
     const recorderCheck = checkMediaRecorderSupport();
 
     try {
@@ -122,25 +224,19 @@ export default function PreCheck() {
     }
   };
 
-  React.useEffect(() => {
-    const videoElement = videoRef.current;
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
-      if (videoElement) videoElement.srcObject = null;
-    };
-  }, []);
+  function handleStartInterview() {
+    if (starting) return;
+    // Save consent flag and navigate to live interview
+    sessionStorage.setItem(`interview-consent:${resultId}`, "true");
+    navigate(`/interview/${resultId}/live`);
+  }
 
-  // PHASE 1 FIX: Allow starting if camera is available, even if voice recorder
-  // is unsupported (candidate can still type answers). Show a clear warning instead.
   const cameraGranted = checks.camera.status === "granted";
   const voiceUnsupported = checks.voiceRecorder.status === "denied" && checks.voiceRecorder.detail;
   const allGranted = Object.values(checks).every((c) => c.status === "granted");
 
   return (
-    <div className="min-h-[calc(100vh-160px)] flex flex-col items-center justify-center py-12">
+    <div className="min-h-[calc(100vh-160px)] flex flex-col items-center justify-center py-12 px-4">
       <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-2 gap-12">
 
         {/* Left: checks */}
@@ -154,19 +250,18 @@ export default function PreCheck() {
               Ready to start your interview?
             </h1>
             <p className="text-slate-500 dark:text-slate-400 mt-4 text-lg">
-              Before we begin, ensure your camera, microphone, and browser recording support are active.
+              Before we begin, ensure your camera, microphone, and browser are ready.
             </p>
           </div>
 
-          {error ? <p className="alert error">{error}</p> : null}
+          {error && <p className="alert error">{error}</p>}
 
-          {/* PHASE 1 FIX: voice unsupported banner — shown as warning not blocker */}
           {voiceUnsupported && (
             <div className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300">
               <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-bold">Voice recording not supported</p>
-                <p className="mt-0.5">{checks.voiceRecorder.detail} You can still type your answers manually. Use Chrome or Edge for full voice support.</p>
+                <p className="mt-0.5">{checks.voiceRecorder.detail} You can still type your answers. Use Chrome or Edge for full voice support.</p>
               </div>
             </div>
           )}
@@ -198,23 +293,32 @@ export default function PreCheck() {
           </div>
 
           <div className="pt-4 flex items-center gap-4">
-            <button onClick={startCheck} disabled={isChecking}
-              className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-black py-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center space-x-2 shadow-sm">
+            <button
+              onClick={startCheck}
+              disabled={isChecking}
+              className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-black py-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center space-x-2 shadow-sm"
+            >
               {isChecking ? "Checking..." : "Run System Check"}
             </button>
-            {/* PHASE 1 FIX: allow start if camera is available even if voice is unsupported */}
-            <button disabled={!cameraGranted || starting} onClick={handleStartInterview}
+
+            <button
+              disabled={!cameraGranted || starting}
+              onClick={handleStartInterview}
               className={cn(
-                "flex-[1.5] py-4 rounded-2xl font-black flex items-center justify-center space-x-2 transition-all shadow-xl shadow-blue-200 dark:shadow-none",
-                cameraGranted ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
-              )}>
+                "flex-[1.5] py-4 rounded-2xl font-black flex items-center justify-center space-x-2 transition-all shadow-xl",
+                cameraGranted
+                  ? "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200 dark:shadow-none"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
+              )}
+            >
               <span>{starting ? "Starting..." : "Start Interview"}</span>
               <Play size={18} fill="currentColor" />
             </button>
           </div>
+
           {!allGranted && cameraGranted && (
             <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-              Camera is ready. You can start — voice answers are optional; type if mic is unavailable.
+              Camera is ready. You can start — type answers if mic is unavailable.
             </p>
           )}
         </div>
@@ -223,14 +327,14 @@ export default function PreCheck() {
         <div className="space-y-6">
           <div className="relative aspect-video bg-slate-900 rounded-[32px] overflow-hidden shadow-2xl border-4 border-white dark:border-slate-800">
             <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay muted playsInline />
-            {checks.camera.status !== "granted" ? (
+            {checks.camera.status !== "granted" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
                 <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-4">
                   <Video size={32} />
                 </div>
                 <p className="text-sm font-bold uppercase tracking-widest">No Video Feed</p>
               </div>
-            ) : null}
+            )}
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center space-x-2 bg-black/50 backdrop-blur-md px-4 py-2 rounded-full border border-white/20">
               <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
               <span className="text-[10px] font-black text-white uppercase tracking-widest">Live Preview</span>

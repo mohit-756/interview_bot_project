@@ -5,20 +5,23 @@ export default function ProtectedRoute({ role }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-    </div>
-  );
+  if (loading)
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
 
-  // Not logged in — save where they were trying to go, then send to login
   if (!user) {
-    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+    return (
+      <Navigate to="/login" state={{ from: location.pathname }} replace />
+    );
   }
 
-  // Logged in but wrong role — send to their own dashboard
   if (role && user.role !== role) {
-    return <Navigate to={user.role === "hr" ? "/hr" : "/candidate"} replace />;
+    return (
+      <Navigate to={user.role === "hr" ? "/hr" : "/candidate"} replace />
+    );
   }
 
   return <Outlet />;

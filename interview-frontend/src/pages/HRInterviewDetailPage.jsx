@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { CheckCircle2, XCircle, AlertTriangle, Camera, Clock } from "lucide-react";
+import { CheckCircle2, XCircle, AlertTriangle, Camera, Clock, RefreshCw } from "lucide-react";
 import MetricCard from "../components/MetricCard";
 import PageHeader from "../components/PageHeader";
 import { hrApi } from "../services/api";
@@ -14,7 +14,6 @@ function scoreColor(score) {
   return "text-red-500 dark:text-red-400";
 }
 
-// FIX 5: Shows "Pending" when llm_score is null and answer wasn't skipped
 function ScorePill({ score, skipped }) {
   if (skipped) return <span className="text-slate-400 text-xs italic">Skipped</span>;
   if (score === null || score === undefined) {
@@ -33,6 +32,22 @@ function ScorePill({ score, skipped }) {
   );
 }
 
+// FIX: LLM eval status badge so HR can see if scoring is pending/running/done
+function EvalStatusBadge({ status }) {
+  const map = {
+    pending:   { label: "Scoring Pending", cls: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800" },
+    running:   { label: "Scoring…",        cls: "bg-blue-50  text-blue-700  border-blue-200  dark:bg-blue-900/20  dark:text-blue-400  dark:border-blue-800"  },
+    completed: { label: "Scored ✓",        cls: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800" },
+    failed:    { label: "Scoring Failed",  cls: "bg-red-50   text-red-700   border-red-200   dark:bg-red-900/20   dark:text-red-400   dark:border-red-800"   },
+  };
+  const cfg = map[status] || map.pending;
+  return (
+    <span className={`px-3 py-1 rounded-full text-xs font-bold border ${cfg.cls}`}>
+      {cfg.label}
+    </span>
+  );
+}
+
 export default function HRInterviewDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -40,6 +55,10 @@ export default function HRInterviewDetailPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // FIX: re-evaluate state
+  const [reEvaluating, setReEvaluating] = useState(false);
+  const [reEvalMessage, setReEvalMessage] = useState("");
+
   const [decision, setDecision] = useState("selected");
   const [notes, setNotes] = useState("");
   const [finalScore, setFinalScore] = useState("");
@@ -48,7 +67,8 @@ export default function HRInterviewDetailPage() {
   const [redFlags, setRedFlags] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true); setError("");
+    setLoading(true);
+    setError("");
     try {
       const response = await hrApi.interviewDetail(id);
       setData(response);
@@ -61,25 +81,48 @@ export default function HRInterviewDetailPage() {
         setRedFlags(hr.red_flags || "");
       }
       if (response?.interview?.status === "rejected") setDecision("rejected");
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
 
   async function handleFinalize() {
-    setSaving(true); setError("");
+    setSaving(true);
+    setError("");
     try {
       await hrApi.finalizeInterview(id, {
-        decision, notes,
+        decision,
+        notes,
         final_score: finalScore ? Number(finalScore) : null,
         behavioral_score: behavioralScore ? Number(behavioralScore) : null,
         communication_score: communicationScore ? Number(communicationScore) : null,
         red_flags: redFlags.trim() || null,
       });
       await load();
-    } catch (e) { setError(e.message); }
-    finally { setSaving(false); }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // FIX: re-evaluate handler — calls new POST /hr/interviews/{id}/re-evaluate
+  async function handleReEvaluate() {
+    setReEvaluating(true);
+    setReEvalMessage("");
+    setError("");
+    try {
+      const resp = await hrApi.reEvaluateInterview(id);
+      setReEvalMessage(resp.message || "Re-evaluation started. Refresh in ~30 seconds.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setReEvaluating(false);
+    }
   }
 
   const suspiciousEvents = useMemo(() => (data?.events || []).filter((e) => e.suspicious), [data?.events]);
@@ -102,16 +145,40 @@ export default function HRInterviewDetailPage() {
   if (!data?.interview) return <p className="muted">Not found.</p>;
 
   const { interview, questions, events, hr_review } = data;
+  const evalStatus = interview.llm_eval_status || "pending";
+  const canReEvaluate = evalStatus !== "running" && pendingCount > 0;
 
   return (
     <div className="space-y-8 pb-12">
       <PageHeader
         title={`Interview — ${interview.candidate?.name || "Candidate"}`}
         subtitle={`${interview.job?.title || "Role"} · Application ${interview.application_id || interview.interview_id}`}
-        actions={<button type="button" className="subtle-button" onClick={() => navigate(-1)}>Back</button>}
+        actions={
+          <div className="flex items-center gap-3">
+            {/* FIX: re-evaluate button — visible when scoring is pending or failed */}
+            {canReEvaluate && (
+              <button
+                type="button"
+                onClick={handleReEvaluate}
+                disabled={reEvaluating}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold disabled:opacity-60 transition-all"
+              >
+                <RefreshCw size={16} className={reEvaluating ? "animate-spin" : ""} />
+                {reEvaluating ? "Starting…" : "Re-run AI Scoring"}
+              </button>
+            )}
+            <EvalStatusBadge status={evalStatus} />
+            <button type="button" className="subtle-button" onClick={() => navigate(-1)}>Back</button>
+          </div>
+        }
       />
 
       {error && <p className="alert error">{error}</p>}
+      {reEvalMessage && (
+        <p className="rounded-2xl border border-blue-200 bg-blue-50 text-blue-700 px-4 py-3 text-sm font-medium">
+          {reEvalMessage}
+        </p>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard label="Status" value={interview.status} hint="Current outcome" />
@@ -125,12 +192,19 @@ export default function HRInterviewDetailPage() {
         <MetricCard label="Proctor flags" value={String(suspiciousEvents.length)} hint="Needs review" color="red" />
       </div>
 
-      {pendingCount > 0 && (
+      {pendingCount > 0 && evalStatus !== "running" && (
         <div className="flex items-center gap-3 px-5 py-3.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl text-sm text-amber-800 dark:text-amber-300">
           <Clock size={16} className="flex-shrink-0" />
           <span>
-            <strong>{pendingCount} answer{pendingCount > 1 ? "s" : ""}</strong> {pendingCount > 1 ? "are" : "is"} awaiting AI scoring. This runs automatically when the interview session closes.
+            <strong>{pendingCount} answer{pendingCount > 1 ? "s" : ""}</strong> {pendingCount > 1 ? "are" : "is"} awaiting AI scoring.
+            {canReEvaluate && " Click 'Re-run AI Scoring' above to trigger it now."}
           </span>
+        </div>
+      )}
+      {evalStatus === "running" && (
+        <div className="flex items-center gap-3 px-5 py-3.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl text-sm text-blue-800 dark:text-blue-300">
+          <RefreshCw size={16} className="animate-spin flex-shrink-0" />
+          <span>AI scoring is currently running. Refresh the page in ~30 seconds to see results.</span>
         </div>
       )}
 
@@ -140,7 +214,6 @@ export default function HRInterviewDetailPage() {
           <h3 className="text-lg font-bold text-slate-900 dark:text-white">Questions, Answers & LLM Scores</h3>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Each answer is scored by AI after the interview completes.</p>
         </div>
-
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
@@ -178,7 +251,10 @@ export default function HRInterviewDetailPage() {
                     )}
                   </td>
                   <td className="px-5 py-4 text-center">
-                    <ScorePill score={q.llm_score ?? (q.ai_answer_score > 0 ? q.ai_answer_score : null)} skipped={q.skipped} />
+                    <ScorePill
+                      score={q.llm_score ?? (q.ai_answer_score > 0 ? q.ai_answer_score : null)}
+                      skipped={q.skipped}
+                    />
                   </td>
                   <td className="px-5 py-4 text-slate-500 dark:text-slate-400 max-w-xs">
                     <p className="text-sm leading-relaxed line-clamp-3">
@@ -228,7 +304,6 @@ export default function HRInterviewDetailPage() {
             </div>
           )}
         </div>
-
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
@@ -271,6 +346,7 @@ export default function HRInterviewDetailPage() {
       {/* HR Decision Panel */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-8">
         <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-6">HR Decision</h3>
+        {/* FIX: read from dedicated columns via hr_review — set in finalize_interview */}
         {hr_review?.final_score != null && (
           <div className="mb-6 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl text-sm text-slate-600 dark:text-slate-300">
             Current: Final {hr_review.final_score ?? "—"} · Behavioral {hr_review.behavioral_score ?? "—"} · Communication {hr_review.communication_score ?? "—"}
