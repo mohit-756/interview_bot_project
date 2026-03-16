@@ -139,20 +139,6 @@ export default function PreCheck() {
   const voiceUnsupported = checks.voiceRecorder.status === "denied" && checks.voiceRecorder.detail;
   const allGranted = Object.values(checks).every((c) => c.status === "granted");
 
-  const handleStartInterview = async () => {
-    setStarting(true);
-    setError("");
-    try {
-      await interviewApi.start({ result_id: Number(resultId), consent_given: true });
-      sessionStorage.setItem(`interview-consent:${resultId}`, "true");
-      navigate(`/interview/${resultId}/live`);
-    } catch (startError) {
-      setError(startError.message);
-    } finally {
-      setStarting(false);
-    }
-  };
-
   return (
     <div className="min-h-[calc(100vh-160px)] flex flex-col items-center justify-center py-12">
       <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-2 gap-12">

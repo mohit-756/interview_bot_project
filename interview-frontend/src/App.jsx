@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import DashboardLayout from "./layout/DashboardLayout";
 import { useAuth } from "./context/useAuth";
@@ -39,52 +39,48 @@ function HomeRedirect() {
 
 function PublicOnlyRoute({ children }) {
   const { user, loading } = useAuth();
-  const location = useLocation();
   if (loading) return null;
-  if (user) {
-    // If redirected here from a protected page, go back there after login
-    const next = location.state?.from || (user.role === "hr" ? "/hr" : "/candidate");
-    return <Navigate to={next} replace />;
-  }
+  if (user) return <Navigate to={user.role === "hr" ? "/hr" : "/candidate"} replace />;
   return children;
 }
 
 export default function App() {
   return (
     <Routes>
-      <Route path="login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
-      <Route path="signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
+      {/* Public */}
+      <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
+      <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
 
       {/* HR */}
       <Route element={<ProtectedRoute role="hr" />}>
         <Route element={<DashboardLayout />}>
-          <Route path="hr" element={<HRDashboardPage />} />
-          <Route path="hr/jds" element={<HRJdManagementPage />} />
-          <Route path="hr/jds/:jdId" element={<HRJdDetailPage />} />
-          <Route path="hr/candidates" element={<HRCandidatesPage />} />
-          <Route path="hr/candidates/:candidateUid" element={<HRCandidateDetailPage />} />
-          <Route path="hr/interviews" element={<HRInterviewListPage />} />
-          <Route path="hr/interviews/:id" element={<HRInterviewDetailPage />} />
-          <Route path="hr/matrix" element={<HRScoreMatrixPage />} />
-          <Route path="hr/analytics" element={<HRAnalyticsPage />} />
-          <Route path="hr/backup" element={<HRBackupPage />} />
+          <Route path="/hr" element={<HRDashboardPage />} />
+          <Route path="/hr/jds" element={<HRJdManagementPage />} />
+          <Route path="/hr/jds/:jdId" element={<HRJdDetailPage />} />
+          <Route path="/hr/candidates" element={<HRCandidatesPage />} />
+          <Route path="/hr/candidates/:candidateUid" element={<HRCandidateDetailPage />} />
+          <Route path="/hr/interviews" element={<HRInterviewListPage />} />
+          <Route path="/hr/interviews/:id" element={<HRInterviewDetailPage />} />
+          <Route path="/hr/matrix" element={<HRScoreMatrixPage />} />
+          <Route path="/hr/analytics" element={<HRAnalyticsPage />} />
+          <Route path="/hr/backup" element={<HRBackupPage />} />
           {/* PHASE 1 FIX: /hr/skill-weights route removed — no longer needed */}
-          <Route path="hr/proctoring/:sessionId" element={<HRProctoringPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="/hr/proctoring/:sessionId" element={<HRProctoringPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
 
       {/* Candidate */}
       <Route element={<ProtectedRoute role="candidate" />}>
         <Route element={<DashboardLayout />}>
-          <Route path="candidate" element={<CandidateDashboardPage />} />
-          <Route path="candidate/practice" element={<PracticeInterviewPage />} />
-          <Route path="interview/result" element={<FinalResultPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="/candidate" element={<CandidateDashboardPage />} />
+          <Route path="/candidate/practice" element={<PracticeInterviewPage />} />
+          <Route path="/interview/result" element={<FinalResultPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
-        <Route path="interview/:resultId" element={<PreCheck />} />
-        <Route path="interview/:resultId/live" element={<Interview />} />
-        <Route path="interview/:resultId/completed" element={<Completed />} />
+        <Route path="/interview/:resultId" element={<PreCheck />} />
+        <Route path="/interview/:resultId/live" element={<Interview />} />
+        <Route path="/interview/:resultId/completed" element={<Completed />} />
       </Route>
 
       <Route path="/" element={<HomeRedirect />} />

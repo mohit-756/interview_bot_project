@@ -173,13 +173,12 @@ def _get_candidate_session_or_403(
     return session
 
 
-def _resolve_candidate_result(db: Session, candidate_id: int, result_id: int | None) -> Result:
+def _resolve_candidate_result(db, candidate_id, result_id):
     if result_id is not None:
-        result = (
-            db.query(Result)
-            .filter(Result.id == result_id, Result.candidate_id == candidate_id)
-            .first()
-        )
+        result = db.query(Result).filter(
+            Result.id == result_id,
+            Result.candidate_id == candidate_id  # ← FAILS if wrong candidate is logged in
+        ).first()
         if not result:
             raise HTTPException(status_code=404, detail="Interview result not found")
         return result
