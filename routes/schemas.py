@@ -61,7 +61,7 @@ class InterviewEventBody(BaseModel):
 
 class HrJDCreateBody(BaseModel):
     title: str = Field(..., min_length=2, max_length=200)
-    jd_text: str = Field(..., min_length=10)
+    jd_text: str = Field(..., min_length=2)
     jd_dict_json: dict[str, Any] | None = None
     weights_json: dict[str, int] = Field(default_factory=dict)
     qualify_score: float = Field(default=65.0, ge=0, le=100)

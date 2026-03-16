@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { CheckCircle2, Home, BarChart3, ArrowRight, Loader2 } from "lucide-react";
+import { CheckCircle2, Home, BarChart3, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import { interviewApi } from "../services/api";
 
 export default function Completed() {
@@ -8,8 +8,8 @@ export default function Completed() {
   const { resultId } = useParams();
   const [evaluating, setEvaluating] = useState(false);
   const [evaluated, setEvaluated] = useState(false);
+  const [evaluateFailed, setEvaluateFailed] = useState(false);
 
-  // Trigger LLM scoring once when this page mounts
   useEffect(() => {
     const sessionId = sessionStorage.getItem(`session-id:${resultId}`);
     if (!sessionId) { setEvaluated(true); return; }
@@ -17,8 +17,14 @@ export default function Completed() {
     setEvaluating(true);
     interviewApi
       .evaluate(Number(sessionId))
-      .then(() => setEvaluated(true))
-      .catch(() => setEvaluated(true))  // don't block navigation on failure
+      .then(() => {
+        setEvaluated(true);
+        setEvaluateFailed(false);
+      })
+      .catch(() => {
+        setEvaluated(true);
+        setEvaluateFailed(true);
+      })
       .finally(() => setEvaluating(false));
   }, [resultId]);
 
@@ -48,7 +54,14 @@ export default function Completed() {
           {evaluating ? (
             <>
               <Loader2 size={18} className="text-blue-500 animate-spin" />
-              <span className="text-sm text-slate-600 dark:text-slate-300">Scoring your answers...</span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">Scoring your answers with AI...</span>
+            </>
+          ) : evaluateFailed ? (
+            <>
+              <AlertCircle size={18} className="text-amber-500" />
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                Answer scoring unavailable right now — HR will review manually.
+              </span>
             </>
           ) : (
             <>

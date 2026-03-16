@@ -133,6 +133,8 @@ def interview_detail(
             {
                 "id": q.id,
                 "text": q.text,
+                "difficulty": q.difficulty,
+                "topic": q.topic,
                 "answer_text": answer_text,
                 "answer_summary": q.answer_summary,
                 "relevance_score": q.relevance_score,

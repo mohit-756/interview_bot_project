@@ -511,6 +511,7 @@ def interview_answer(
             "question_number": answered_count,
             "max_questions": max_questions,
             "time_limit_seconds": 0,
+            "feedback": None,
         }
 
     db.commit()
@@ -523,7 +524,16 @@ def interview_answer(
         "question_number": answered_count + 1,
         "max_questions": max_questions,
         "time_limit_seconds": int(next_question.allotted_seconds or session.per_question_seconds or 60),
+        "feedback": {
+            "overall_score": score_breakdown["overall_score"],
+            "relevance": score_breakdown["relevance"],
+            "completeness": score_breakdown["completeness"],
+            "clarity": score_breakdown["clarity"],
+            "time_fit": score_breakdown["time_fit"],
+            "word_count": score_breakdown["word_count"],
+        } if (not payload.skipped and answer_text) else None,
     }
+
 
 
 @router.post("/interview/transcribe")
@@ -863,6 +873,7 @@ def hr_proctoring_timeline(
         .all()
     )
     base_url = str(request.base_url).rstrip("/")
+    
 
     return {
         "ok": True,
@@ -894,4 +905,5 @@ def hr_proctoring_timeline(
             }
             for event in events
         ],
+        
     }
