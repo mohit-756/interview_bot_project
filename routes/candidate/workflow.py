@@ -32,6 +32,25 @@ from utils.email_service import send_interview_email
 router = APIRouter()
 
 
+# NOTE: Keep Result.interview_questions as the active source of truth for the
+# interview question bank. Generate it immediately after resume-vs-JD screening.
+def _persist_result_question_bank(
+    *,
+    result: Result,
+    resume_text: str,
+    job: JobDescription,
+) -> list[dict[str, object]]:
+    bundle = build_question_bundle(
+        resume_text=resume_text,
+        jd_title=job.jd_title,
+        jd_skill_scores=(job.skill_scores or {}),
+        question_count=int(job.question_count if job.question_count is not None else 8),
+    )
+    questions = bundle.get("questions") or []
+    result.interview_questions = questions
+    return questions
+
+
 def _generate_result_question_bank(
     *,
     result: Result,
@@ -275,7 +294,9 @@ def upload_resume(
         "selected_job_id": selected_job.id,
         "selected_jd_id": selected_job.id,
         "result": serialize_result(result),
-        "question_count": len(questions),
+        "question_count": len(questions or []),
+        "question_generation_ready": bool(result.interview_questions),
+        "diagnostic_first_question": (questions[0].get("text") if questions else None),
         "resume_advice": _resume_advice_payload(
             candidate=candidate,
             selected_jd=selected_jd,

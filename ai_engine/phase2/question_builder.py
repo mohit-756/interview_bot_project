@@ -319,6 +319,7 @@ def build_question_bundle(*, resume_text: str, jd_title: str | None, jd_skill_sc
         counts=counts,
     )
     generated_by = "llm"
+    
     if not questions:
         questions = [dict(INTRO_QUESTION) for _ in range(counts["intro"])] + _build_project_questions(projects, jd_skill_scores or {}, counts["project"]) + _build_hr_questions(counts["hr"])
         generated_by = "deterministic"

@@ -18,7 +18,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-
+from services.question_builder import build_question_bundle
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -183,7 +183,7 @@ def _get_candidate_session_or_403(
     return session
 
 
-def _resolve_candidate_result(db, candidate_id, result_id):
+def _resolve_candidate_result(db: Session, candidate_id: int, result_id: int | None) -> Result:
     if result_id is not None:
         result = db.query(Result).filter(
             Result.id == result_id,
@@ -215,7 +215,12 @@ def _resolve_candidate_result(db, candidate_id, result_id):
     if result:
         return result
 
-    result = db.query(Result).filter(Result.candidate_id == candidate_id).order_by(Result.id.desc()).first()
+    result = (
+        db.query(Result)
+        .filter(Result.candidate_id == candidate_id)
+        .order_by(Result.id.desc())
+        .first()
+    )
     if not result:
         raise HTTPException(status_code=404, detail="No interview context found for candidate")
     return result
@@ -249,6 +254,20 @@ def _resolve_result_by_token(db: Session, candidate_id: int, token: str) -> Resu
     raise HTTPException(status_code=404, detail="Interview token is invalid")
 
 
+def _latest_interview_session(db: Session, result: Result) -> InterviewSession | None:
+    return (
+        db.query(InterviewSession)
+        .filter(InterviewSession.result_id == result.id)
+        .order_by(InterviewSession.id.desc())
+        .first()
+    )
+
+
+def _job_title_for_result(db: Session, result: Result) -> str:
+    job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
+    return str(getattr(job, "title", None) or getattr(job, "job_title", None) or "Interview")
+
+
 def _create_next_question(
     db: Session,
     session: InterviewSession,
@@ -259,6 +278,7 @@ def _create_next_question(
     max_questions = int(session.max_questions or 8)
     if len(existing) >= max_questions:
         return None
+
     remaining_total = int(session.remaining_time_seconds or session.total_time_seconds or 1200)
     if remaining_total <= 0:
         return None
@@ -266,7 +286,13 @@ def _create_next_question(
     asked_questions = [item.text for item in existing]
     source_questions = normalize_result_questions(result.interview_questions)
     if not source_questions:
-        raise HTTPException(status_code=400, detail="Interview questions are not available for this session yet. Please reopen the interview from pre-check.")
+        raise HTTPException(
+            status_code=400,
+            detail="Interview questions are not available for this session yet. Please reopen the interview from pre-check.",
+        )
+
+    job_title = _job_title_for_result(db, result)
+
     generated = next_question_payload(
         source_questions=source_questions,
         asked_questions=asked_questions,
@@ -294,6 +320,39 @@ def _create_next_question(
     db.add(question)
     db.flush()
     return question
+
+
+def _ensure_question_bank(
+    db: Session,
+    *,
+    result: Result,
+    candidate: Candidate,
+    job: JobDescription | None,
+    question_count: int,
+) -> list[dict[str, object]]:
+    questions = normalize_result_questions(result.interview_questions)
+    if questions:
+        return questions
+    if not candidate.resume_path:
+        raise HTTPException(status_code=400, detail="Resume is required before interview questions can be prepared.")
+
+    logger.info("interview_question_bank_generate_start result_id=%s candidate_id=%s", result.id, candidate.id)
+    bundle = build_question_bundle(
+    
+        jd_title=(job.jd_title if job else None),
+        jd_skill_scores=(job.skill_scores if job else {}) or {},
+        question_count=int(question_count or 8),
+    )
+    questions = normalize_result_questions(bundle.get("questions") or [])
+    if not questions:
+        raise HTTPException(status_code=400, detail="Interview questions could not be generated for this result yet.")
+
+    result.interview_questions = questions
+    db.add(result)
+    db.commit()
+    db.refresh(result)
+    logger.info("interview_question_bank_generate_success result_id=%s questions=%s", result.id, len(questions))
+    return questions
 
 
 def _compose_start_response(
@@ -327,29 +386,30 @@ def interview_access(
     candidate = db.query(Candidate).filter(Candidate.id == current_user.user_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    result = _resolve_candidate_result(db, candidate.id, result_id)
-    _ensure_interview_ready(result)
-    questions = normalize_result_questions(result.interview_questions)
-    if not questions:
-        raise HTTPException(status_code=400, detail="Interview questions are not ready yet for this result.")
-    return {"ok": True, "result_id": result.id, "interview_ready": True, "question_count": len(questions)}
 
-
-@router.get("/interview/{result_id}/access")
-def interview_access(
-    result_id: int,
-    current_user: SessionUser = Depends(require_role("candidate")),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    candidate = db.query(Candidate).filter(Candidate.id == current_user.user_id).first()
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
     result = _resolve_candidate_result(db, candidate.id, result_id)
-    _ensure_interview_ready(result)
+    access = interview_access_state(result)
+    latest_session = _latest_interview_session(db, result)
     questions = normalize_result_questions(result.interview_questions)
+    print("RESULT ID:", result.id)
+    print("RAW interview_questions:", result.interview_questions)
+    print("NORMALIZED questions:", questions)
     if not questions:
-        raise HTTPException(status_code=400, detail="Interview questions are not ready yet for this result.")
-    return {"ok": True, "result_id": result.id, "interview_ready": True, "question_count": len(questions)}
+        raise HTTPException(
+            status_code=400,
+            detail="Interview questions are not ready yet for this result.",
+        )
+
+    return {
+        "ok": True,
+        "result_id": result.id,
+        "shortlisted": bool(result.shortlisted),
+        "interview_date": result.interview_date,
+        "interview_ready": bool(access["interview_ready"]),
+        "interview_locked_reason": access["interview_locked_reason"],
+        "latest_session_status": str(getattr(latest_session, "status", "") or "").strip().lower() or None,
+        "question_count": len(questions),
+    }
 
 
 @router.post("/interview/start")
@@ -367,6 +427,7 @@ def interview_start(
 
     result = _resolve_candidate_result(db, candidate.id, payload.result_id)
     _ensure_interview_ready(result)
+
     job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
     configured_max_questions = (
         int(payload.max_questions)
@@ -385,9 +446,13 @@ def interview_start(
         .order_by(InterviewSession.id.desc())
         .first()
     )
+
     if not session:
         if not payload.consent_given:
-            raise HTTPException(status_code=400, detail="Consent to webcam proctoring is required before starting.")
+            raise HTTPException(
+                status_code=400,
+                detail="Consent to webcam proctoring is required before starting.",
+            )
         session = InterviewSession(
             candidate_id=candidate.id,
             result_id=result.id,
@@ -411,7 +476,10 @@ def interview_start(
         db.refresh(session)
 
     if not session.consent_given:
-        raise HTTPException(status_code=400, detail="Please complete consent in pre-check before starting interview.")
+        raise HTTPException(
+            status_code=400,
+            detail="Please complete consent in pre-check before starting interview.",
+        )
 
     ordered = _ordered_questions(db, session.id)
     answered_count = sum(1 for item in ordered if item.time_taken_seconds is not None)
@@ -477,6 +545,7 @@ def interview_answer(
     result = db.query(Result).filter(Result.id == session.result_id).first()
     if not result:
         raise HTTPException(status_code=404, detail="Interview result not found")
+
     job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
     summary, relevance_score, score_breakdown = summarize_and_score(
         question.text,
@@ -591,12 +660,9 @@ def interview_transcribe(
             context_hint=context_hint,
         )
     except Exception as exc:
-        # FIX I3: Return graceful empty transcript instead of HTTP 500.
-        # When Groq STT is down or rate-limited, the interview must not crash.
-        # The candidate sees a soft warning and can type their answer manually.
-        # Previously this raised HTTP 500 which showed a hard error mid-interview.
         logger.warning(
-            "STT transcription unavailable (Groq error) — returning empty transcript. Error: %s", exc
+            "STT transcription unavailable (Groq error) — returning empty transcript. Error: %s",
+            exc,
         )
         return {
             "ok": True,
@@ -767,7 +833,10 @@ def upload_proctor_frame(
                 resolved_event_type = "periodic"
 
             violation_for_warning = resolved_event_type in {
-                "no_face", "multi_face", "face_mismatch", "shoulder_missing"
+                "no_face",
+                "multi_face",
+                "face_mismatch",
+                "shoulder_missing",
             }
             if violation_for_warning:
                 session.consecutive_violation_frames = int(session.consecutive_violation_frames or 0) + 1

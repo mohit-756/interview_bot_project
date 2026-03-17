@@ -14,6 +14,7 @@ FIXES applied:
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -399,6 +400,29 @@ def _run_llm_evaluation(session_id: int) -> None:
 
 
 def _save_llm_fields(db: Session, session_id: int, question_id: int, evaluation: dict[str, object]) -> None:
+    answer = (
+        db.query(InterviewAnswer)
+        .filter(
+            InterviewAnswer.session_id == session_id,
+            InterviewAnswer.question_id == question_id,
+        )
+        .order_by(InterviewAnswer.id.desc())
+        .first()
+    )
+    if answer:
+        answer.llm_score = float(evaluation["score"])
+        answer.llm_feedback = str(evaluation["feedback"])
+        answer.evaluation_json = evaluation
+
+    question = db.query(InterviewQuestion).filter(InterviewQuestion.id == question_id).first()
+    if question:
+        question.llm_score = float(evaluation["score"])
+        question.llm_feedback = str(evaluation["feedback"])
+        question.reference_answer = str(evaluation.get("generated_reference_answer") or question.reference_answer or "") or None
+        question.evaluation_json = evaluation
+
+    db.flush()
+def fields(db: Session, session_id: int, question_id: int, evaluation: dict[str, object]) -> None:
     answer = (
         db.query(InterviewAnswer)
         .filter(
