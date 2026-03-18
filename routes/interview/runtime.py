@@ -293,13 +293,24 @@ def _create_next_question(
 
     job_title = _job_title_for_result(db, result)
 
-    generated = next_question_payload(
-        source_questions=source_questions,
-        asked_questions=asked_questions,
-        question_index=len(existing),
-        last_answer=last_answer,
-        jd_title=job_title,
-    )
+    try:
+        generated = next_question_payload(
+            source_questions=source_questions,
+            asked_questions=asked_questions,
+            question_index=len(existing),
+            last_answer=last_answer,
+            jd_title=job_title,
+        )
+    except RuntimeError as exc:
+        logger.warning(
+            "Interview question bank exhausted for session_id=%s result_id=%s existing=%s source=%s: %s",
+            session.id,
+            result.id,
+            len(existing),
+            len(source_questions),
+            exc,
+        )
+        return None
     dynamic_seconds = compute_dynamic_seconds(
         base_seconds=int(session.per_question_seconds or 60),
         question_index=len(existing),
