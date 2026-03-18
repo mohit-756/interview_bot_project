@@ -18,13 +18,11 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from services.question_builder import build_question_bundle
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-
 from ai_engine.phase1.matching import extract_text_from_file
 from fastapi.responses import RedirectResponse
+from services.question_generation import build_question_bundle
 from sqlalchemy.orm import Session
-
 from ai_engine.phase3.question_flow import (
     compute_dynamic_seconds,
     next_question_payload,
