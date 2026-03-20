@@ -35,6 +35,7 @@ from models import (
     InterviewQuestion,
     InterviewSession,
     JobDescription,
+    JobDescriptionConfig,
     ProctorEvent,
     Result,
 )
@@ -91,6 +92,91 @@ def _ordered_questions(db: Session, session_id: int) -> list[InterviewQuestion]:
         .order_by(InterviewQuestion.id.asc())
         .all()
     )
+
+
+def _ensure_session_questions(
+    db: Session,
+    *,
+    session: InterviewSession,
+    result: Result,
+) -> list[InterviewQuestion]:
+    """Materialize the planned question bank into session rows once.
+
+    This makes the interview progression deterministic: the session gets exactly
+    `session.max_questions` questions (or fewer only if the bank itself is shorter),
+    and the runtime simply serves the next unanswered row.
+    """
+    existing = _ordered_questions(db, session.id)
+
+    source_questions = normalize_result_questions(result.interview_questions)
+    if not source_questions:
+        raise HTTPException(
+            status_code=400,
+            detail="Interview questions are not available for this session yet. Please reopen the interview from pre-check.",
+        )
+
+    max_questions = int(session.max_questions or 8)
+    planned = source_questions[:max_questions]
+    job_title = _job_title_for_result(db, result)
+
+    # If the session was created earlier with a short/partial question list (e.g. old bug),
+    # top it up to match the planned max_questions. This prevents "finish after 2".
+    if existing and len(existing) >= len(planned):
+        return existing
+
+    logger.info(
+        "interview_session_questions_materialize_start session_id=%s result_id=%s planned=%s bank=%s",
+        session.id,
+        result.id,
+        max_questions,
+        len(source_questions),
+    )
+
+    created: list[InterviewQuestion] = []
+    existing_texts = {str(q.text or "").strip().lower() for q in existing} if existing else set()
+    start_index = len(existing) if existing else 0
+
+    for index in range(start_index, len(planned)):
+        item = planned[index]
+        dynamic_seconds = compute_dynamic_seconds(
+            base_seconds=int(session.per_question_seconds or 60),
+            question_index=index,
+            last_answer="",
+            max_questions=max_questions,
+        )
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        if text.lower() in existing_texts:
+            continue
+        question = InterviewQuestion(
+            session_id=session.id,
+            text=text,
+            difficulty=str(item.get("difficulty") or "medium"),
+            topic=str(item.get("topic") or "general"),
+            question_type=str(item.get("type") or "project"),
+            intent=item.get("intent"),
+            focus_skill=item.get("focus_skill"),
+            project_name=item.get("project_name"),
+            reference_answer=item.get("reference_answer"),
+            allotted_seconds=int(dynamic_seconds),
+        )
+        existing_texts.add(text.lower())
+        created.append(question)
+        db.add(question)
+
+    if not (existing or created):
+        raise HTTPException(status_code=400, detail=f"Interview questions could not be prepared for {job_title}.")
+
+    db.flush()
+    logger.info(
+        "interview_session_questions_materialize_success session_id=%s existing=%s created=%s total=%s",
+        session.id,
+        len(existing),
+        len(created),
+        len(existing) + len(created),
+    )
+    return _ordered_questions(db, session.id)
 
 
 def _serialize_question(question: InterviewQuestion | None) -> dict[str, object] | None:
@@ -265,7 +351,12 @@ def _latest_interview_session(db: Session, result: Result) -> InterviewSession |
 
 def _job_title_for_result(db: Session, result: Result) -> str:
     job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
-    return str(getattr(job, "title", None) or getattr(job, "job_title", None) or "Interview")
+    return str(
+        getattr(job, "jd_title", None)
+        or getattr(job, "title", None)
+        or getattr(job, "job_title", None)
+        or "Interview"
+    )
 
 
 def _create_next_question(
@@ -274,63 +365,15 @@ def _create_next_question(
     result: Result,
     last_answer: str,
 ) -> InterviewQuestion | None:
-    existing = _ordered_questions(db, session.id)
-    max_questions = int(session.max_questions or 8)
-    if len(existing) >= max_questions:
-        return None
-
+    _ = last_answer
+    ordered = _ordered_questions(db, session.id)
     remaining_total = int(session.remaining_time_seconds or session.total_time_seconds or 1200)
     if remaining_total <= 0:
         return None
-
-    asked_questions = [item.text for item in existing]
-    source_questions = normalize_result_questions(result.interview_questions)
-    if not source_questions:
-        raise HTTPException(
-            status_code=400,
-            detail="Interview questions are not available for this session yet. Please reopen the interview from pre-check.",
-        )
-
-    job_title = _job_title_for_result(db, result)
-
-    try:
-        generated = next_question_payload(
-            source_questions=source_questions,
-            asked_questions=asked_questions,
-            question_index=len(existing),
-            last_answer=last_answer,
-            jd_title=job_title,
-        )
-    except RuntimeError as exc:
-        logger.warning(
-            "Interview question bank exhausted for session_id=%s result_id=%s existing=%s source=%s: %s",
-            session.id,
-            result.id,
-            len(existing),
-            len(source_questions),
-            exc,
-        )
-        return None
-    dynamic_seconds = compute_dynamic_seconds(
-        base_seconds=int(session.per_question_seconds or 60),
-        question_index=len(existing),
-        last_answer=last_answer,
-    )
-    question = InterviewQuestion(
-        session_id=session.id,
-        text=generated["text"],
-        difficulty=generated["difficulty"],
-        topic=generated["topic"],
-        question_type=str(generated.get("type") or "project"),
-        intent=generated.get("intent"),
-        focus_skill=generated.get("focus_skill"),
-        project_name=generated.get("project_name"),
-        reference_answer=generated.get("reference_answer"),
-        allotted_seconds=dynamic_seconds,
-    )
-    db.add(question)
-    db.flush()
-    return question
+    for item in ordered:
+        if item.time_taken_seconds is None:
+            return item
+    return None
 
 
 def _ensure_question_bank(
@@ -342,8 +385,18 @@ def _ensure_question_bank(
     question_count: int,
 ) -> list[dict[str, object]]:
     questions = normalize_result_questions(result.interview_questions)
-    if questions:
+    if questions and len(questions) >= int(question_count or 0 or 8):
         return questions
+
+    # If a question bank exists but is too small (e.g., older runs, partial saves,
+    # or previously stubbed generation), regenerate to match the configured count.
+    if questions and len(questions) < int(question_count or 8):
+        logger.info(
+            "interview_question_bank_regenerate_short_bank result_id=%s existing=%s desired=%s",
+            result.id,
+            len(questions),
+            int(question_count or 8),
+        )
     if not candidate.resume_path:
         raise HTTPException(status_code=400, detail="Resume is required before interview questions can be prepared.")
 
@@ -351,12 +404,16 @@ def _ensure_question_bank(
     if not resume_text.strip():
         raise HTTPException(status_code=400, detail="Candidate resume text could not be extracted for interview question generation.")
 
+    config = db.query(JobDescriptionConfig).filter(JobDescriptionConfig.id == result.job_id).first()
+    project_ratio = float(config.project_question_ratio) if config and config.project_question_ratio is not None else None
+
     logger.info("interview_question_bank_generate_start result_id=%s candidate_id=%s", result.id, candidate.id)
     bundle = build_question_bundle(
         resume_text=resume_text,
         jd_title=(job.jd_title if job else None),
         jd_skill_scores=(job.skill_scores if job else {}) or {},
         question_count=int(question_count or 8),
+        project_ratio=project_ratio,
     )
     questions = normalize_result_questions(bundle.get("questions") or [])
     if not questions:
@@ -493,6 +550,13 @@ def interview_start(
         db.add(session)
         db.commit()
         db.refresh(session)
+        logger.info(
+            "interview_session_created session_id=%s result_id=%s candidate_id=%s max_questions=%s",
+            session.id,
+            result.id,
+            candidate.id,
+            session.max_questions,
+        )
     elif payload.consent_given and not session.consent_given:
         session.consent_given = True
         db.commit()
@@ -504,15 +568,18 @@ def interview_start(
             detail="Please complete consent in pre-check before starting interview.",
         )
 
+    _ensure_session_questions(db, session=session, result=result)
+    db.commit()
     ordered = _ordered_questions(db, session.id)
     answered_count = sum(1 for item in ordered if item.time_taken_seconds is not None)
     current_question = next((item for item in ordered if item.time_taken_seconds is None), None)
-
-    if not current_question:
-        current_question = _create_next_question(db, session, result, last_answer="")
-        if current_question:
-            db.commit()
-            db.refresh(current_question)
+    logger.info(
+        "interview_start_serving session_id=%s answered=%s max=%s has_current=%s",
+        session.id,
+        answered_count,
+        int(session.max_questions or 0),
+        bool(current_question),
+    )
 
     if not current_question:
         session.status = "completed"
@@ -569,6 +636,10 @@ def interview_answer(
     if not result:
         raise HTTPException(status_code=404, detail="Interview result not found")
 
+    # Safety: make sure the full session question rows exist (prevents early completion
+    # if a session was created before materialization or the bank was regenerated).
+    _ensure_session_questions(db, session=session, result=result)
+
     job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
     summary, relevance_score, score_breakdown = summarize_and_score(
         question.text,
@@ -616,6 +687,15 @@ def interview_answer(
 
     ordered = _ordered_questions(db, session.id)
     answered_count = sum(1 for item in ordered if item.time_taken_seconds is not None)
+    logger.info(
+        "interview_answer_saved session_id=%s question_id=%s answered=%s max=%s remaining_total=%s skipped=%s",
+        session.id,
+        question.id,
+        answered_count,
+        int(session.max_questions or 0),
+        int(session.remaining_time_seconds or 0),
+        bool(payload.skipped),
+    )
 
     interview_completed = False
     next_question = None
@@ -631,6 +711,12 @@ def interview_answer(
         session.ended_at = now
         session.llm_eval_status = "pending"
         db.commit()
+        logger.info(
+            "interview_completed session_id=%s answered=%s max=%s",
+            session.id,
+            answered_count,
+            int(session.max_questions or 0),
+        )
         return {
             "ok": True,
             "interview_completed": True,
@@ -644,6 +730,12 @@ def interview_answer(
 
     db.commit()
     db.refresh(next_question)
+    logger.info(
+        "interview_next_served session_id=%s next_question_id=%s question_number=%s",
+        session.id,
+        next_question.id,
+        answered_count + 1,
+    )
     return {
         "ok": True,
         "interview_completed": False,
@@ -741,6 +833,47 @@ def interview_event(
     if len(existing_events) > 500:
         existing_events = existing_events[-500:]
 
+    result.events_json = existing_events
+    db.commit()
+    return {"ok": True, "event_count": len(existing_events), "event": event_payload}
+
+
+@router.post("/interview/{session_id}/event")
+def interview_event_by_session(
+    session_id: int,
+    payload: InterviewEventBody,
+    current_user: SessionUser = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Frontend proctoring hook uses session-id-based event routing."""
+    session = _get_candidate_session_or_403(db, session_id, current_user)
+    result = db.query(Result).filter(Result.id == session.result_id).first()
+    if not result:
+        raise HTTPException(status_code=404, detail="Interview result not found")
+
+    normalized_event_type = (payload.event_type or "").strip().lower()
+    if not normalized_event_type:
+        raise HTTPException(status_code=400, detail="event_type is required")
+
+    event_payload: dict[str, object] = {
+        "event_type": normalized_event_type,
+        "detail": (payload.detail or "").strip() or None,
+        "timestamp": (payload.timestamp or "").strip() or datetime.utcnow().isoformat(),
+        "meta": payload.meta if isinstance(payload.meta, dict) else {},
+        "session_id": session.id,
+    }
+
+    existing_events: list[dict[str, object]]
+    if isinstance(result.events_json, list):
+        existing_events = [item for item in result.events_json if isinstance(item, dict)]
+    elif isinstance(result.events_json, dict):
+        existing_events = [result.events_json]
+    else:
+        existing_events = []
+
+    existing_events.append(event_payload)
+    if len(existing_events) > 500:
+        existing_events = existing_events[-500:]
     result.events_json = existing_events
     db.commit()
     return {"ok": True, "event_count": len(existing_events), "event": event_payload}

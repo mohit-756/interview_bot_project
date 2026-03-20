@@ -41,9 +41,6 @@ export default function HRCandidateDetailPage() {
   const [error, setError] = useState("");
   const [activeTabId, setActiveTabId] = useState("resume");
 
-  const [generatingQuestions, setGeneratingQuestions] = useState(false);
-  const [message, setMessage] = useState("");
-
   const [skillGapData, setSkillGapData] = useState(null);
   const [loadingSkillGap, setLoadingSkillGap] = useState(false);
 
@@ -53,7 +50,6 @@ export default function HRCandidateDetailPage() {
     try {
       const response = await hrApi.candidateDetail(candidateUid);
       setData(response);
-      setMessage("");
     } catch (loadError) {
       setError(loadError.message || "Failed to load candidate details.");
     } finally {
@@ -89,24 +85,6 @@ export default function HRCandidateDetailPage() {
       loadSkillGap();
     }
   }, [candidateUid, latestApplication, data]);
-
-  async function handleGenerateQuestions() {
-    if (!data?.candidate?.id) return;
-
-    setGeneratingQuestions(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const response = await hrApi.generateQuestions(data.candidate.id);
-      setMessage(`Generated ${response.total_questions} questions for this candidate.`);
-      await loadCandidate();
-    } catch (actionError) {
-      setError(actionError.message || "Failed to generate questions.");
-    } finally {
-      setGeneratingQuestions(false);
-    }
-  }
 
   const tabs = [
     { id: "resume", label: "Resume Analysis", icon: Briefcase },
@@ -150,25 +128,10 @@ export default function HRCandidateDetailPage() {
               <span>Open Resume</span>
             </a>
           ) : null}
-
-          <button
-            type="button"
-            onClick={handleGenerateQuestions}
-            disabled={generatingQuestions}
-            className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-all shadow-lg shadow-blue-200 dark:shadow-none disabled:opacity-60"
-          >
-            {generatingQuestions ? "Generating..." : "Generate Questions"}
-          </button>
         </div>
       </div>
 
       {error ? <p className="alert error">{error}</p> : null}
-
-      {message ? (
-        <p className="rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3">
-          {message}
-        </p>
-      ) : null}
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
         <div className="h-32 bg-gradient-to-r from-blue-600 to-indigo-700" />
@@ -504,17 +467,8 @@ export default function HRCandidateDetailPage() {
             <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <div className="flex items-center justify-between gap-4 flex-wrap mb-6">
                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                  Generated Question Set
+                  Question Set
                 </h3>
-
-                <button
-                  type="button"
-                  onClick={handleGenerateQuestions}
-                  disabled={generatingQuestions}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-60"
-                >
-                  {generatingQuestions ? "Generating..." : "Regenerate"}
-                </button>
               </div>
 
               {(data.generated_questions || []).length ? (
@@ -538,8 +492,8 @@ export default function HRCandidateDetailPage() {
                 </div>
               ) : (
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  No questions stored yet. Use Generate Questions to create them from the
-                  resume and selected JD.
+                  No questions stored yet. Questions are generated automatically after resume upload
+                  (and also on-demand when the candidate starts the interview).
                 </p>
               )}
             </div>

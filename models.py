@@ -28,7 +28,6 @@ class Candidate(Base):
     gender = Column(String(20))
     resume_path = Column(String(300))
     selected_jd_id = Column(Integer, ForeignKey("job_descriptions.id"), nullable=True, index=True)
-    questions_json = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True, index=True)
 
     results = relationship("Result", back_populates="candidate")

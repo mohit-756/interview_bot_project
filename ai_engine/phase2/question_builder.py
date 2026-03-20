@@ -15,6 +15,7 @@ INTERVIEW_CONFIG: dict[str, object] = {
     "intro_question_count": 1,
     "project_question_ratio": 0.80,
     "hr_question_ratio": 0.20,
+    "max_total_questions": 20,
     "tone": "natural_interviewer",
     "audience": "fresher_junior",
     "difficulty": "medium",
@@ -76,6 +77,9 @@ _TECH_KEYWORDS = {
     "express", "spring", "spring boot", "django", "flask", "fastapi", "hibernate", "jpa", "bootstrap", "tailwind",
     "docker", "kubernetes", "aws", "azure", "gcp", "git", "github", "rest", "rest api", "microservices", "jwt",
     "linux", "pandas", "numpy", "scikit-learn", "tensorflow", "pytorch", "opencv", "firebase", "supabase",
+    "machine learning", "deep learning", "artificial intelligence", "ai", "ml", "nlp", "computer vision",
+    "llm", "rag", "genai", "generative ai", "cnn", "rnn", "lstm", "bert", "transformer",
+    "sagemaker", "ec2", "lambda", "s3", "rds", "dynamodb", "api gateway", "cloudwatch", "iam", "terraform",
 }
 _SKILL_QUESTION_BLUEPRINTS = [
     {
@@ -91,6 +95,87 @@ _SKILL_QUESTION_BLUEPRINTS = [
         "reference_answer": "A strong answer explains the role of the skill in the system design and gives a practical rationale for the chosen approach.",
     },
 ]
+
+_TECH_CATEGORY_RULES = {
+    "ml_ai": {
+        "keywords": {
+            "ai", "ml", "machine learning", "deep learning", "tensorflow", "pytorch", "scikit-learn",
+            "llm", "rag", "nlp", "computer vision", "bert", "transformer", "cnn", "rnn", "lstm",
+            "genai", "generative ai",
+        },
+        "facets": [
+            "model choice and representation trade-offs",
+            "training data quality, leakage, and bias control",
+            "feature engineering or context construction",
+            "evaluation metrics and production failure modes",
+            "drift monitoring, retraining strategy, and guardrails",
+        ],
+    },
+    "cloud": {
+        "keywords": {
+            "aws", "azure", "gcp", "s3", "ec2", "lambda", "cloudwatch", "rds", "dynamodb", "iam",
+            "terraform", "api gateway", "sagemaker",
+        },
+        "facets": [
+            "service decomposition and why those cloud services fit the workload",
+            "security boundaries, IAM, and data protection decisions",
+            "scaling, latency, and reliability trade-offs",
+            "observability, alerting, and incident diagnosis",
+            "cost control and architecture efficiency decisions",
+        ],
+    },
+    "backend": {
+        "keywords": {
+            "python", "java", "fastapi", "flask", "django", "spring", "spring boot", "node", "node.js",
+            "express", "microservices", "rest", "rest api", "jwt",
+        },
+        "facets": [
+            "API design and contract decisions",
+            "state management, validation, and error handling",
+            "concurrency, idempotency, and consistency",
+            "performance bottlenecks and reliability safeguards",
+            "authorization, security, and edge-case handling",
+        ],
+    },
+    "data": {
+        "keywords": {
+            "sql", "postgresql", "mysql", "mongodb", "sqlite", "oracle", "redis", "pandas", "numpy",
+            "postgres", "database",
+        },
+        "facets": [
+            "schema design and data modeling trade-offs",
+            "query performance, indexing, and access patterns",
+            "consistency, freshness, and data correctness",
+            "batch versus realtime data flow choices",
+            "data quality checks, backfills, and recovery strategy",
+        ],
+    },
+    "frontend": {
+        "keywords": {
+            "react", "angular", "angularjs", "vue", "javascript", "typescript", "html", "css", "tailwind",
+            "bootstrap",
+        },
+        "facets": [
+            "state management and component boundary decisions",
+            "user flow, rendering, and responsiveness trade-offs",
+            "error recovery and degraded UX handling",
+            "integration boundaries between frontend and backend",
+            "performance, caching, and maintainability choices",
+        ],
+    },
+    "devops": {
+        "keywords": {
+            "docker", "kubernetes", "linux", "git", "github",
+        },
+        "facets": [
+            "deployment design and environment isolation",
+            "release reliability and rollback strategy",
+            "runtime debugging and operational visibility",
+            "resource efficiency and scaling controls",
+            "configuration safety and automation trade-offs",
+        ],
+    },
+}
 
 
 def _normalize(value: str) -> str:
@@ -159,6 +244,28 @@ def _dedupe_keep_order(values: Sequence[str], *, limit: int | None = None) -> li
         if limit and len(result) >= limit:
             break
     return result
+
+
+def _question_signature(text: str) -> str:
+    normalized = _normalize(text)
+    normalized = re.sub(r"\b(how|what|why|when|where|tell me about|can you|please|did you)\b", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _append_unique_question(
+    questions: list[dict[str, object]],
+    seen_signatures: set[str],
+    payload: Mapping[str, object],
+) -> bool:
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        return False
+    signature = _question_signature(text)
+    if not signature or signature in seen_signatures:
+        return False
+    seen_signatures.add(signature)
+    questions.append(dict(payload))
+    return True
 
 
 def _extract_tech_from_text(text: str, known_skills: Mapping[str, int] | None = None) -> list[str]:
@@ -295,7 +402,7 @@ def extract_projects_from_resume(resume_text: str, *, known_skills: Mapping[str,
     return ranked[:max_projects]
 
 
-def _section_counts(total_questions: int, project_ratio: float | None = None) -> dict[str, int]:
+def _section_counts(total_questions: int, *, project_ratio: float | None = None, project_coverage_target: int = 0) -> dict[str, int]:
     total = max(4, int(total_questions or INTERVIEW_CONFIG["total_questions"]))
     intro_count = int(INTERVIEW_CONFIG["intro_question_count"])
     remaining = max(1, total - intro_count)
@@ -303,6 +410,9 @@ def _section_counts(total_questions: int, project_ratio: float | None = None) ->
     p_ratio = max(0.0, min(1.0, p_ratio))
     project_count = max(1, int(round(remaining * p_ratio)))
     hr_count = max(1, remaining - project_count)
+    if project_coverage_target > 0 and remaining >= 2:
+        project_count = max(project_count, min(project_coverage_target, remaining - 1))
+        hr_count = max(1, remaining - project_count)
     while intro_count + project_count + hr_count > total:
         if project_count > hr_count and project_count > 1:
             project_count -= 1
@@ -322,6 +432,12 @@ def _sorted_jd_skills(jd_skill_scores: Mapping[str, int]) -> list[str]:
     return [skill for skill, _ in sorted((jd_skill_scores or {}).items(), key=lambda item: (-int(item[1]), item[0])) if str(skill).strip()]
 
 
+def _desired_total_questions(requested_total: int, project_count: int) -> int:
+    minimum_for_full_project_coverage = int(INTERVIEW_CONFIG["intro_question_count"]) + max(1, project_count) + 1
+    desired = max(4, int(requested_total or INTERVIEW_CONFIG["total_questions"]), minimum_for_full_project_coverage)
+    return min(int(INTERVIEW_CONFIG["max_total_questions"]), desired)
+
+
 def _project_to_structured_context(project: Mapping[str, object]) -> dict[str, object]:
     return {
         "project_name": str(project.get("title") or "").strip(),
@@ -337,58 +453,143 @@ def _structured_projects_payload(projects: list[dict[str, object]]) -> list[dict
     return [_project_to_structured_context(project) for project in projects]
 
 
+def _infer_project_categories(project: Mapping[str, object]) -> list[str]:
+    tech_stack = [_normalize(str(value)) for value in project.get("tech_stack", []) if value]
+    combined = " ".join([
+        str(project.get("title") or ""),
+        str(project.get("summary") or ""),
+        " ".join(str(value) for value in project.get("implementation_details", []) if value),
+        " ".join(str(value) for value in project.get("notable_features", []) if value),
+    ])
+    normalized_text = _normalize(combined)
+
+    categories: list[str] = []
+    for category, config in _TECH_CATEGORY_RULES.items():
+        keywords = {_normalize(str(keyword)) for keyword in config["keywords"]}
+        if any(skill in keywords for skill in tech_stack):
+            categories.append(category)
+            continue
+        if any(keyword and keyword in normalized_text for keyword in keywords):
+            categories.append(category)
+    return categories or ["backend"]
+
+
+def _project_anchor_phrase(project: Mapping[str, object]) -> str:
+    details = list(project.get("implementation_details", []) or [])
+    features = list(project.get("notable_features", []) or [])
+    summary = str(project.get("summary") or "").strip()
+    anchor = _trim_project_phrase(features[0] if features else (details[0] if details else summary))
+    return anchor or "the core workflow"
+
+
+def _project_focus_skills(project: Mapping[str, object], jd_skill_scores: Mapping[str, int], limit: int = 3) -> list[str]:
+    project_skills = [str(value) for value in project.get("tech_stack", []) if str(value).strip()]
+    jd_sorted = _sorted_jd_skills(jd_skill_scores)
+
+    matched = [
+        skill for skill in jd_sorted
+        if any(_normalize(skill) == _normalize(project_skill) for project_skill in project_skills)
+    ]
+    if matched:
+        return matched[:limit]
+    return _dedupe_keep_order(project_skills, limit=limit)
+
+
+def _project_concept_targets(project: Mapping[str, object], jd_skill_scores: Mapping[str, int]) -> list[dict[str, str | None]]:
+    focus_skills = _project_focus_skills(project, jd_skill_scores, limit=3)
+    categories = _infer_project_categories(project)
+    anchor = _project_anchor_phrase(project)
+    targets: list[dict[str, str | None]] = []
+
+    if focus_skills:
+        for index, skill in enumerate(focus_skills):
+            category = categories[index % len(categories)]
+            facets = list(_TECH_CATEGORY_RULES[category]["facets"])
+            targets.append({
+                "skill": skill,
+                "category": category,
+                "facet": facets[index % len(facets)],
+                "anchor": anchor,
+            })
+        return targets
+
+    for category in categories:
+        facets = list(_TECH_CATEGORY_RULES[category]["facets"])
+        targets.append({
+            "skill": None,
+            "category": category,
+            "facet": facets[0],
+            "anchor": anchor,
+        })
+    return targets
+
+
 def _build_project_question_from_context(project: Mapping[str, object], focus_skill: str | None, angle_index: int) -> tuple[str, str, str]:
     context = _project_to_structured_context(project)
     project_name = str(context["project_name"] or "this project")
-    summary = str(context["what_it_does"] or "").strip()
-    tech_stack = list(context["tech_stack"] or [])
-    features = list(context["notable_features"] or [])
-    details = list(context["implementation_details"] or [])
     contribution = str(context.get("candidate_contribution") or "").strip()
-    stack_phrase = ", ".join(tech_stack[:3]) if tech_stack else None
-    detail = details[0] if details else summary
-    feature = features[0] if features else None
-    focus_area = _trim_project_phrase(feature or detail or 'the core workflow') or 'the core workflow'
+    targets = _project_concept_targets(project, {str(focus_skill): 1} if focus_skill else {})
+    selected_target = targets[angle_index % len(targets)] if targets else {
+        "skill": focus_skill,
+        "category": "backend",
+        "facet": "architecture and implementation trade-offs",
+        "anchor": _project_anchor_phrase(project),
+    }
+    skill = str(selected_target.get("skill") or focus_skill or "the stack")
+    category = str(selected_target.get("category") or "backend")
+    facet = str(selected_target.get("facet") or "architecture and implementation trade-offs")
+    anchor = str(selected_target.get("anchor") or _project_anchor_phrase(project))
 
-    question_templates = [
+    prompts = [
         (
-            f"In {project_name}, how did you design and implement {focus_area}, and what trade-offs did you make along the way?",
-            "Assess architecture and implementation depth using the candidate's real project context.",
-            "A strong answer explains the end-to-end implementation, why specific components or flows were chosen, and the trade-offs involved.",
+            f"In {project_name}, how did {skill} shape the design of {anchor}, and what trade-offs did you make around {facet}?",
+            "Assess whether the candidate can explain how an actual technology choice changed the architecture of a real project.",
+            "A strong answer connects the technology choice to the project architecture, explains the trade-offs, and justifies the final design.",
         ),
         (
-            f"You mentioned {project_name}" + (f" using {stack_phrase}" if stack_phrase else "") + f" — how did you split responsibilities across the system and make sure {focus_area} worked reliably?",
-            "Assess understanding of component boundaries, system responsibilities, and reliability decisions.",
-            "A strong answer breaks down the frontend/backend or module responsibilities and explains how the core feature was validated or stabilized.",
+            f"In {project_name}, what was the deepest conceptual challenge in getting {anchor} right, especially around {skill} and {facet}?",
+            "Assess conceptual depth, not just implementation narration, in the candidate's own project context.",
+            "A strong answer explains the underlying concept, the hardest design constraint, and why the chosen approach worked better than alternatives.",
         ),
         (
-            f"What was the trickiest technical decision in {project_name}, especially around {focus_skill or feature or 'the main implementation'}, and how did you resolve it?",
-            "Assess decision-making, technical judgment, and practical problem solving in a real project.",
-            "A strong answer identifies a genuine decision point, compares options, and explains why the chosen solution fit the project best.",
+            f"When building {project_name}, how did you reason about {facet} for {skill}, and what failure mode or edge case forced you to refine the design of {anchor}?",
+            "Assess whether the candidate can reason about failure modes, not just happy-path implementation.",
+            "A strong answer identifies a realistic failure mode, explains how it exposed a conceptual weakness, and shows how the design was improved.",
         ),
         (
-            f"If you had to extend {project_name} further, what would you improve first in the current design or implementation, and why?",
-            "Assess whether the candidate can reason about bottlenecks, maintainability, and next-step improvements.",
-            "A strong answer identifies a concrete limitation and proposes a realistic improvement grounded in the actual project design.",
-        ),
-        (
-            f"While building {project_name}, what debugging or edge-case issue came up around {focus_area if focus_area else (focus_skill or 'the core flow')}, and how did you verify the fix?",
-            "Assess debugging process, edge-case handling, and quality mindset.",
-            "A strong answer describes a real issue, the diagnosis process, the fix, and how the outcome was verified.",
+            f"If {project_name} had to operate at higher scale or stricter production expectations, what would you revisit first in {anchor} because of {skill} and {facet}?",
+            "Assess ability to generalize the current design toward production-grade constraints.",
+            "A strong answer identifies the likely bottleneck or risk, explains why it matters, and proposes a principled redesign.",
         ),
     ]
 
     if contribution:
-        question_templates.insert(
-            1,
+        prompts.append(
             (
-                f"In {project_name}, your contribution included {contribution}. How did that piece fit into the overall system, and what implementation choices mattered most?",
-                "Assess ownership and implementation depth based on the candidate's stated contribution.",
-                "A strong answer clearly explains the candidate's exact ownership, the surrounding system context, and the important engineering choices.",
+                f"In {project_name}, your contribution was {contribution}. What conceptual decisions inside that area were the hardest, especially around {skill} and {facet}?",
+                "Assess ownership depth using the candidate's stated contribution and its technical concepts.",
+                "A strong answer explains the candidate's own design decisions, the concepts they had to understand deeply, and the trade-offs in that owned area.",
             ),
         )
 
-    return question_templates[angle_index % len(question_templates)]
+    if category == "ml_ai":
+        prompts.append(
+            (
+                f"In {project_name}, how did you decide whether the {skill} approach was actually the right modeling strategy for {anchor}, and how did you validate that it generalized instead of just fitting the dataset?",
+                "Assess whether the candidate understands ML/AI model suitability and generalization, not just training steps.",
+                "A strong answer compares modeling options, explains validation logic, and discusses overfitting, evaluation, and production behavior.",
+            ),
+        )
+    elif category == "cloud":
+        prompts.append(
+            (
+                f"In {project_name}, why was {skill} the right cloud building block for {anchor}, and what would break first if your assumptions about scale, latency, or security changed?",
+                "Assess whether the candidate understands cloud architecture decisions under changing constraints.",
+                "A strong answer explains why the service fit the workload, what assumptions it depended on, and how the design would evolve when those assumptions change.",
+            ),
+        )
+
+    return prompts[angle_index % len(prompts)]
 
 
 def _select_relevant_projects(projects: list[dict[str, object]], jd_skill_scores: Mapping[str, int], count: int) -> list[dict[str, object]]:
@@ -399,31 +600,69 @@ def _select_relevant_projects(projects: list[dict[str, object]], jd_skill_scores
 def _build_skill_question(skill: str, project: Mapping[str, object] | None, variant_index: int) -> tuple[str, str, str]:
     blueprint = _SKILL_QUESTION_BLUEPRINTS[variant_index % len(_SKILL_QUESTION_BLUEPRINTS)]
     project_name = str((project or {}).get("title") or "").strip()
-    details = list((project or {}).get("implementation_details", []) or [])
-    features = list((project or {}).get("notable_features", []) or [])
-    detail = _trim_project_phrase(details[0] if details else (features[0] if features else None)) if (details or features) else None
+    anchor = _project_anchor_phrase(project or {})
+    categories = _infer_project_categories(project or {})
+    category = categories[variant_index % len(categories)] if categories else "backend"
+    facets = list(_TECH_CATEGORY_RULES[category]["facets"])
+    facet = facets[variant_index % len(facets)]
 
     if project_name:
         prompts = [
-            f"In {project_name}, where did {skill} matter most in the implementation, and what did it help you solve in practice?",
-            f"Think about your work on {project_name}: what problem did you hit while using {skill}, and how did you debug or improve that part of the system?",
-            f"In {project_name}, how did {skill} influence your design choices" + (f" around {detail}" if detail else "") + "?",
+            f"In {project_name}, where did {skill} become conceptually difficult in {anchor}, especially around {facet}, and how did you reason through it?",
+            f"Think about {project_name}: what non-obvious trade-off did {skill} introduce in {anchor}, and how did you decide which side of that trade-off mattered more?",
+            f"In {project_name}, what failure mode or design limitation forced you to understand {skill} more deeply while building {anchor}?",
         ]
     else:
         prompts = [
-            f"You have {skill} in your resume — can you describe a real feature or implementation where you used it and what design decision depended on it?",
-            f"Tell me about a practical issue you handled using {skill}. What was happening, and how did you solve it?",
-            f"Where have you applied {skill} in a real build, and how did it affect the performance, maintainability, or correctness of the solution?",
+            f"You list {skill} in your resume. Describe the deepest architectural or conceptual decision where {skill} mattered, especially around {facet}.",
+            f"What is a practical system-design mistake people make when using {skill}, and how did your own project experience make that clearer to you?",
+            f"When {skill} shows up in a real build, what trade-off becomes most important first, and how did you see that in your own implementation work?",
         ]
 
     return prompts[variant_index % len(prompts)], blueprint["intent"], blueprint["reference_answer"]
+
+
+def _build_cross_project_question(
+    primary: Mapping[str, object],
+    secondary: Mapping[str, object],
+    focus_skill: str | None,
+    angle_index: int,
+) -> tuple[str, str, str]:
+    first_name = str(primary.get("title") or "the first project").strip()
+    second_name = str(secondary.get("title") or "the second project").strip()
+    first_anchor = _project_anchor_phrase(primary)
+    second_anchor = _project_anchor_phrase(secondary)
+    first_categories = _infer_project_categories(primary)
+    second_categories = _infer_project_categories(secondary)
+    shared_categories = [category for category in first_categories if category in second_categories]
+    category = shared_categories[0] if shared_categories else first_categories[0]
+    facet = _TECH_CATEGORY_RULES[category]["facets"][angle_index % len(_TECH_CATEGORY_RULES[category]["facets"])]
+    stack_phrase = focus_skill or ", ".join(_dedupe_keep_order([*primary.get("tech_stack", []), *secondary.get("tech_stack", [])], limit=3)) or "the technologies you used"
+    prompts = [
+        (
+            f"{first_name} and {second_name} both rely on {stack_phrase}. How did the conceptual trade-offs differ between {first_anchor} in the first project and {second_anchor} in the second, especially around {facet}?",
+            "Assess whether the candidate can compare technical trade-offs across projects instead of answering each project in isolation.",
+            "A strong answer contrasts the constraints, explains why the design choices diverged, and ties those differences back to the underlying concept.",
+        ),
+        (
+            f"If you had to merge the strongest ideas from {first_name} and {second_name} into one production-ready system, which assumptions about {stack_phrase} would you keep, and which would you redesign because of {facet}?",
+            "Assess synthesis across projects and the ability to redesign under stronger production constraints.",
+            "A strong answer identifies reusable design ideas, weak assumptions, and the conceptual reason some pieces should be redesigned.",
+        ),
+        (
+            f"When you compare {first_name} with {second_name}, what deeper lesson about {stack_phrase} became clearer only after doing both projects, particularly around {facet}?",
+            "Assess reflection, conceptual growth, and the ability to generalize engineering lessons across projects.",
+            "A strong answer extracts a concrete conceptual lesson from both projects and shows how that lesson changed the candidate's design judgment.",
+        ),
+    ]
+    return prompts[angle_index % len(prompts)]
 
 
 def _build_practical_questions(projects: list[dict[str, object]], jd_skill_scores: Mapping[str, int], count: int) -> list[dict[str, object]]:
     if count <= 0:
         return []
 
-    selected_projects = _select_relevant_projects(projects, jd_skill_scores, count)
+    selected_projects = _select_relevant_projects(projects, jd_skill_scores, max(count, len(projects)))
     if not selected_projects:
         return []
 
@@ -439,24 +678,18 @@ def _build_practical_questions(projects: list[dict[str, object]], jd_skill_score
         if any(skill_key == _normalize(resume_skill) for resume_skill in resume_skills):
             matched_skills.append(skill)
 
-    practical_skill_targets = matched_skills or [skill for skill in resume_skills if skill][: max(1, min(4, len(resume_skills)))]
-    project_question_target = max(1, count - min(len(practical_skill_targets), max(1, count // 2)))
-    skill_question_target = max(0, count - project_question_target)
+    practical_skill_targets = matched_skills or [skill for skill in resume_skills if skill][: max(1, min(8, len(resume_skills)))]
 
     questions: list[dict[str, object]] = []
-    used_texts: set[str] = set()
+    seen_signatures: set[str] = set()
 
-    for index in range(project_question_target):
-        project = selected_projects[index % len(selected_projects)]
-        project_skills = list(project.get("tech_stack", []) or [])
-        focus_skill = next((skill for skill in jd_skills if any(_normalize(skill) == _normalize(project_skill) for project_skill in project_skills)), None)
-        if not focus_skill and project_skills:
-            focus_skill = project_skills[0]
+    project_rotation = selected_projects[: min(len(selected_projects), max(1, count))]
+    for index, project in enumerate(project_rotation):
+        concept_targets = _project_concept_targets(project, jd_skill_scores or {})
+        preferred_target = concept_targets[index % len(concept_targets)] if concept_targets else {"skill": None}
+        focus_skill = str(preferred_target.get("skill") or "") or None
         text, intent, reference_answer = _build_project_question_from_context(project, focus_skill, index)
-        if text in used_texts:
-            continue
-        used_texts.add(text)
-        questions.append({
+        _append_unique_question(questions, seen_signatures, {
             "text": text if text.endswith("?") else f"{text}?",
             "type": "project",
             "topic": f"project:{_normalize(focus_skill or project.get('title') or 'implementation')}",
@@ -464,20 +697,42 @@ def _build_practical_questions(projects: list[dict[str, object]], jd_skill_score
             "focus_skill": focus_skill,
             "project_name": project.get("title"),
             "reference_answer": reference_answer,
-            "difficulty": str(INTERVIEW_CONFIG["difficulty"]),
+            "difficulty": "hard" if focus_skill and _normalize(focus_skill) in {"aws", "ai", "ml", "machine learning", "deep learning", "tensorflow", "pytorch", "rag", "llm"} else str(INTERVIEW_CONFIG["difficulty"]),
         })
 
-    for index in range(skill_question_target):
+    cross_project_target = 1 if len(selected_projects) >= 2 and len(questions) < count else 0
+    cross_project_target = min(max(0, count - len(questions)), max(cross_project_target, max(0, len(selected_projects) - 1)))
+    for index in range(cross_project_target):
+        primary = selected_projects[index % len(selected_projects)]
+        secondary = selected_projects[(index + 1) % len(selected_projects)]
+        shared_skills = [
+            skill for skill in practical_skill_targets
+            if any(_normalize(skill) == _normalize(project_skill) for project_skill in primary.get("tech_stack", []))
+            and any(_normalize(skill) == _normalize(project_skill) for project_skill in secondary.get("tech_stack", []))
+        ]
+        focus_skill = shared_skills[0] if shared_skills else (practical_skill_targets[0] if practical_skill_targets else None)
+        text, intent, reference_answer = _build_cross_project_question(primary, secondary, focus_skill, index)
+        _append_unique_question(questions, seen_signatures, {
+            "text": text if text.endswith("?") else f"{text}?",
+            "type": "project",
+            "topic": f"cross_project:{_normalize(focus_skill or primary.get('title') or 'comparison')}",
+            "intent": intent,
+            "focus_skill": focus_skill,
+            "project_name": f"{primary.get('title')} | {secondary.get('title')}",
+            "reference_answer": reference_answer,
+            "difficulty": "hard",
+        })
+
+    remaining_slots = max(0, count - len(questions))
+    for index in range(remaining_slots):
         skill = practical_skill_targets[index % len(practical_skill_targets)]
         attached_project = next(
             (project for project in selected_projects if any(_normalize(skill) == _normalize(project_skill) for project_skill in project.get("tech_stack", []))),
             selected_projects[index % len(selected_projects)],
         )
         text, intent, reference_answer = _build_skill_question(skill, attached_project, index)
-        if text in used_texts:
-            continue
-        used_texts.add(text)
-        questions.append({
+        difficulty = "hard" if _normalize(skill) in {"aws", "ai", "ml", "machine learning", "deep learning", "tensorflow", "pytorch", "rag", "llm"} else str(INTERVIEW_CONFIG["difficulty"])
+        _append_unique_question(questions, seen_signatures, {
             "text": text if text.endswith("?") else f"{text}?",
             "type": "project",
             "topic": f"skill:{_normalize(skill)}",
@@ -485,27 +740,53 @@ def _build_practical_questions(projects: list[dict[str, object]], jd_skill_score
             "focus_skill": skill,
             "project_name": attached_project.get("title") if attached_project else None,
             "reference_answer": reference_answer,
-            "difficulty": str(INTERVIEW_CONFIG["difficulty"]),
+            "difficulty": difficulty,
         })
 
     fill_index = 0
     while len(questions) < count and selected_projects:
         project = selected_projects[fill_index % len(selected_projects)]
-        fallback_skill = (project.get("tech_stack") or [None])[0]
+        fallback_targets = _project_concept_targets(project, jd_skill_scores or {})
+        fallback_target = fallback_targets[(fill_index + len(questions)) % len(fallback_targets)] if fallback_targets else {"skill": None}
+        fallback_skill = str(fallback_target.get("skill") or "") or (project.get("tech_stack") or [None])[0]
         text, intent, reference_answer = _build_project_question_from_context(project, fallback_skill, fill_index + len(questions))
-        if text not in used_texts:
-            used_texts.add(text)
-            questions.append({
-                "text": text if text.endswith("?") else f"{text}?",
-                "type": "project",
-                "topic": f"project:{_normalize(fallback_skill or project.get('title') or 'implementation')}",
-                "intent": intent,
-                "focus_skill": fallback_skill,
-                "project_name": project.get("title"),
-                "reference_answer": reference_answer,
-                "difficulty": str(INTERVIEW_CONFIG["difficulty"]),
-            })
+        _append_unique_question(questions, seen_signatures, {
+            "text": text if text.endswith("?") else f"{text}?",
+            "type": "project",
+            "topic": f"project:{_normalize(fallback_skill or project.get('title') or 'implementation')}",
+            "intent": intent,
+            "focus_skill": fallback_skill,
+            "project_name": project.get("title"),
+            "reference_answer": reference_answer,
+            "difficulty": str(INTERVIEW_CONFIG["difficulty"]),
+        })
         fill_index += 1
+
+    has_cross_project = any("|" in str(question.get("project_name") or "") for question in questions)
+    if count > len(selected_projects) and len(selected_projects) >= 2 and not has_cross_project:
+        primary = selected_projects[0]
+        secondary = selected_projects[1]
+        shared_skills = [
+            skill for skill in practical_skill_targets
+            if any(_normalize(skill) == _normalize(project_skill) for project_skill in primary.get("tech_stack", []))
+            and any(_normalize(skill) == _normalize(project_skill) for project_skill in secondary.get("tech_stack", []))
+        ]
+        focus_skill = shared_skills[0] if shared_skills else (practical_skill_targets[0] if practical_skill_targets else None)
+        text, intent, reference_answer = _build_cross_project_question(primary, secondary, focus_skill, len(questions))
+        cross_payload = {
+            "text": text if text.endswith("?") else f"{text}?",
+            "type": "project",
+            "topic": f"cross_project:{_normalize(focus_skill or primary.get('title') or 'comparison')}",
+            "intent": intent,
+            "focus_skill": focus_skill,
+            "project_name": f"{primary.get('title')} | {secondary.get('title')}",
+            "reference_answer": reference_answer,
+            "difficulty": "hard",
+        }
+        if len(questions) >= count and questions:
+            questions[-1] = cross_payload
+        else:
+            questions.append(cross_payload)
 
     return questions[:count]
 
@@ -527,13 +808,53 @@ def _build_hr_questions(count: int) -> list[dict[str, object]]:
     return questions
 
 
+def _ensure_cross_project_presence(
+    questions: list[dict[str, object]],
+    projects: list[dict[str, object]],
+    jd_skill_scores: Mapping[str, int],
+) -> list[dict[str, object]]:
+    if len(questions) <= len(projects) or len(projects) < 2:
+        return questions
+    if any("|" in str(question.get("project_name") or "") for question in questions):
+        return questions
+
+    primary = projects[0]
+    secondary = projects[1]
+    practical_skill_targets = _dedupe_keep_order(
+        [
+            skill for skill in _sorted_jd_skills(jd_skill_scores)
+            if any(_normalize(skill) == _normalize(project_skill) for project_skill in primary.get("tech_stack", []))
+            or any(_normalize(skill) == _normalize(project_skill) for project_skill in secondary.get("tech_stack", []))
+        ]
+        or [skill for project in projects[:2] for skill in project.get("tech_stack", []) if skill],
+        limit=6,
+    )
+    focus_skill = practical_skill_targets[0] if practical_skill_targets else None
+    text, intent, reference_answer = _build_cross_project_question(primary, secondary, focus_skill, len(questions))
+    cross_payload = {
+        "text": text if text.endswith("?") else f"{text}?",
+        "type": "project",
+        "topic": f"cross_project:{_normalize(focus_skill or primary.get('title') or 'comparison')}",
+        "intent": intent,
+        "focus_skill": focus_skill,
+        "project_name": f"{primary.get('title')} | {secondary.get('title')}",
+        "reference_answer": reference_answer,
+        "difficulty": "hard",
+    }
+    if questions:
+        questions[-1] = cross_payload
+    else:
+        questions.append(cross_payload)
+    return questions
+
+
 def _build_llm_prompt(*, resume_text: str, jd_title: str | None, jd_skill_scores: Mapping[str, int], projects: list[dict[str, object]], counts: Mapping[str, int]) -> str:
     jd_skills = [
         {"skill": str(skill), "weight": int(weight)}
         for skill, weight in sorted((jd_skill_scores or {}).items(), key=lambda x: -x[1])[:12]
         if str(skill).strip()
     ]
-    structured_projects = _structured_projects_payload(projects[:4])
+    structured_projects = _structured_projects_payload(projects[:6])
     resume_snippet = re.sub(r"\s+", " ", (resume_text or "").strip())[:2200]
     response_schema = [
         {
@@ -566,16 +887,26 @@ Structured extracted projects:
 {json.dumps(structured_projects, ensure_ascii=False, indent=2)}
 
 Hard requirements:
+- The first question must be the introduction question.
+- The last questions must be HR / behavioral questions.
+- The middle block must be only technical project or skill questions derived from the resume and JD.
 - Keep self-intro and HR questions natural; do not rewrite them into robotic wording.
 - Every project question must mention the exact extracted project_name.
+- Cover every extracted project at least once when enough slots exist.
+- If there are at least 2 extracted projects, include at least one cross-project comparison or interlinking question.
 - Never use placeholder phrases like 'main project', 'one of your projects', 'your project', or 'tell me about your main project'.
-- Skill questions must be practical and tied to actual project usage, implementation decisions, debugging, architecture, database design, backend logic, validations, performance, concurrency, edge cases, integrations, or deployment choices.
+- Skill questions must be practical and tied to actual project usage, implementation decisions, debugging, architecture, database design, backend logic, validations, performance, concurrency, edge cases, integrations, deployment choices, reliability, scalability, or failure handling.
+- If the project uses AI/ML, AWS, cloud, data, backend, or frontend technologies, ask very deep conceptual questions about how those choices worked in the actual implementation.
+- For AI/ML projects, prefer concepts like model choice, validation strategy, leakage, drift, inference design, failure modes, and production trade-offs over textbook definitions.
+- For cloud/AWS projects, prefer concepts like service fit, IAM/security boundaries, observability, scaling assumptions, latency, failure handling, and cost trade-offs.
+- For data/backend projects, prefer concepts like consistency, concurrency, idempotency, query patterns, validation, reliability, and edge-case handling.
 - Do NOT ask textbook questions like 'What is Java?', 'Explain SQL joins', or 'What is Spring Boot?'
 - Prefer the strongest and most JD-relevant projects first.
 - Questions should become progressively deeper: project understanding -> implementation -> trade-offs/challenges.
-- Avoid repeated angles across questions.
+- Avoid repeated angles across questions and never repeat the same question in different wording.
 - If project details are limited, still anchor the question to the real project name and known stack.
 - Use stack names naturally when present.
+- The technical questions should feel fully generated from the resume and JD, not like a generic template list.
 
 Quality bar examples:
 - Good: 'In Movie Ticket Booking System, how did you implement seat selection and prevent users from booking invalid or expired shows?'
@@ -619,6 +950,7 @@ def _call_llm_for_questions(*, resume_text: str, jd_title: str | None, jd_skill_
         if not isinstance(data, list):
             return None
         result: list[dict[str, object]] = []
+        seen_signatures: set[str] = set()
         project_names = {str(project.get("title") or "").strip().lower() for project in projects if str(project.get("title") or "").strip()}
         for item in data:
             if not isinstance(item, dict):
@@ -636,7 +968,7 @@ def _call_llm_for_questions(*, resume_text: str, jd_title: str | None, jd_skill_
                 mentions_real_project = any(name and name in lowered_text for name in project_names)
                 if not mentions_real_project and resolved_project_name not in project_names:
                     continue
-            result.append({
+            _append_unique_question(result, seen_signatures, {
                 "text": text if text.endswith("?") else f"{text}?",
                 "type": q_type,
                 "topic": str(item.get("topic") or "general"),
@@ -646,16 +978,20 @@ def _call_llm_for_questions(*, resume_text: str, jd_title: str | None, jd_skill_
                 "reference_answer": str(item.get("reference_answer") or "A strong answer should be relevant, practical, and clearly explained."),
                 "difficulty": str(item.get("difficulty") or INTERVIEW_CONFIG["difficulty"]),
             })
-        return result if len(result) >= sum(counts.values()) else None
+        intro_questions = [item for item in result if str(item.get("type") or "").strip().lower() == "intro"]
+        project_questions = [item for item in result if str(item.get("type") or "").strip().lower() == "project"]
+        hr_questions = [item for item in result if str(item.get("type") or "").strip().lower() == "hr"]
+        ordered = intro_questions[:counts["intro"]] + project_questions[:counts["project"]] + hr_questions[:counts["hr"]]
+        return ordered if len(ordered) >= sum(counts.values()) else None
     except Exception as exc:
         logger.warning("LLM question generation failed (%s). Using deterministic generator.", exc)
         return None
 
 
 def build_question_bundle(*, resume_text: str, jd_title: str | None, jd_skill_scores: Mapping[str, int] | None, question_count: int | None = None, project_ratio: float | None = None) -> dict[str, object]:
-    total = int(question_count or INTERVIEW_CONFIG["total_questions"])
-    counts = _section_counts(total, project_ratio=project_ratio)
     projects = extract_projects_from_resume(resume_text, known_skills=jd_skill_scores or {})
+    total = _desired_total_questions(int(question_count or INTERVIEW_CONFIG["total_questions"]), len(projects))
+    counts = _section_counts(total, project_ratio=project_ratio, project_coverage_target=len(projects))
     questions = _call_llm_for_questions(
         resume_text=resume_text,
         jd_title=jd_title,

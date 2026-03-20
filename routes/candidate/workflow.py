@@ -33,36 +33,19 @@ from utils.email_service import send_interview_email
 router = APIRouter()
 
 
-# NOTE: Keep Result.interview_questions as the active source of truth for the
-# interview question bank. Generate it immediately after resume-vs-JD screening.
-def _persist_result_question_bank(
-    *,
-    result: Result,
-    resume_text: str,
-    job: JobDescription,
-) -> list[dict[str, object]]:
-    bundle = build_question_bundle(
-        resume_text=resume_text,
-        jd_title=job.jd_title,
-        jd_skill_scores=(job.skill_scores or {}),
-        question_count=int(job.question_count if job.question_count is not None else 8),
-    )
-    questions = bundle.get("questions") or []
-    result.interview_questions = questions
-    return questions
-
-
 def _generate_result_question_bank(
     *,
     result: Result,
     resume_text: str,
     job: JobDescription,
+    project_ratio: float | None = None,
 ) -> list[dict[str, object]]:
     bundle = build_question_bundle(
         resume_text=resume_text,
         jd_title=job.jd_title,
         jd_skill_scores=(job.skill_scores or {}),
         question_count=int(job.question_count if job.question_count is not None else 8),
+        project_ratio=project_ratio,
     )
     questions = bundle.get("questions") or []
     result.interview_questions = questions
@@ -273,7 +256,12 @@ def upload_resume(
     # Main restored flow: generate and persist interview questions immediately
     # after resume-vs-JD screening. Result.interview_questions is the source of truth.
     resume_text = extract_text_from_file(candidate.resume_path)
-    questions = _generate_result_question_bank(result=result, resume_text=resume_text, job=selected_job)
+    questions = _generate_result_question_bank(
+        result=result,
+        resume_text=resume_text,
+        job=selected_job,
+        project_ratio=float(getattr(selected_jd, "project_question_ratio", None)) if getattr(selected_jd, "project_question_ratio", None) is not None else None,
+    )
     db.commit()
     db.refresh(result)
 

@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
 
-from ai_engine.phase2.question_builder import build_question_bundle
 from ai_engine.phase1.scoring import compute_interview_scoring, compute_resume_skill_match
 from ai_engine.phase1.matching import extract_skills_from_jd, extract_text_from_file
 from database import get_db
@@ -239,67 +238,6 @@ def _get_hr_owned_jd_or_404(db: Session, jd_id: int, hr_id: int) -> JobDescripti
     if not jd:
         jd = sync_config_from_legacy_job(db, legacy)
     return jd
-
-
-def _generated_questions_payload(candidate: Candidate) -> tuple[list[dict[str, object]], dict[str, object]]:
-    stored = candidate.questions_json
-    if isinstance(stored, dict):
-        questions = stored.get("questions")
-        meta = stored.get("meta") if isinstance(stored.get("meta"), dict) else {}
-    elif isinstance(stored, list):
-        questions = stored
-        meta = {}
-    else:
-        questions = []
-        meta = {}
-
-    normalized: list[dict[str, object]] = []
-    if isinstance(questions, list):
-        for idx, item in enumerate(questions, start=1):
-            if not isinstance(item, dict):
-                continue
-            text = str(item.get("text") or "").strip()
-            if not text:
-                continue
-            normalized.append(
-                {
-                    "index": idx,
-                    "text": text,
-                    "type": str(item.get("type") or "unknown"),
-                    "topic": str(item.get("topic") or "general"),
-                    "difficulty": str(item.get("difficulty") or "medium"),
-                }
-            )
-    return normalized, meta
-
-
-def _resolve_candidate_jd_for_generation(
-    db: Session,
-    candidate: Candidate,
-    hr_id: int,
-) -> JobDescriptionConfig:
-    if candidate.selected_jd_id:
-        selected = db.query(JobDescriptionConfig).filter(JobDescriptionConfig.id == candidate.selected_jd_id).first()
-        if selected:
-            return selected
-
-    latest_result = (
-        _candidate_result_scope(db, hr_id)
-        .filter(Result.candidate_id == candidate.id)
-        .order_by(Result.id.desc())
-        .first()
-    )
-    if not latest_result:
-        raise HTTPException(status_code=404, detail="No JD context found for candidate")
-
-    selected = db.query(JobDescriptionConfig).filter(JobDescriptionConfig.id == latest_result.job_id).first()
-    if selected:
-        return selected
-
-    legacy_job = latest_result.job
-    if not legacy_job:
-        raise HTTPException(status_code=404, detail="Candidate JD not found")
-    return sync_config_from_legacy_job(db, legacy_job)
 
 
 # 1) What this does: creates one JD config row for HR and syncs scoring table.
@@ -688,10 +626,28 @@ def hr_candidate_detail(
         )
 
     latest_application = applications[0]
-    generated_questions, generated_questions_meta = _generated_questions_payload(candidate)
     latest_result = results[0]
     latest_job = latest_result.job
     resume_text = extract_text_from_file(candidate.resume_path or "")
+    # Keep frontend "Question Set" tab working, but source questions from the
+    # real runtime bank stored on the latest Result (not manual HR generation).
+    generated_questions = []
+    try:
+        from ai_engine.phase3.question_flow import normalize_result_questions
+
+        generated_questions = [
+            {
+                "index": idx,
+                "text": str(item.get("text") or "").strip(),
+                "type": str(item.get("type") or "unknown"),
+                "topic": str(item.get("topic") or "general"),
+                "difficulty": str(item.get("difficulty") or "medium"),
+            }
+            for idx, item in enumerate(normalize_result_questions(latest_result.interview_questions), start=1)
+            if str(item.get("text") or "").strip()
+        ]
+    except Exception:
+        generated_questions = []
     skill_gap = None
     resume_advice = None
     if latest_job and resume_text.strip():
@@ -715,7 +671,12 @@ def hr_candidate_detail(
         },
         "applications": applications,
         "generated_questions": generated_questions,
-        "generated_questions_meta": generated_questions_meta,
+        "generated_questions_meta": {
+            "source": "result.interview_questions",
+            "result_id": latest_result.id,
+            "job_id": latest_job.id if latest_job else None,
+            "total_questions": len(generated_questions),
+        },
         "skill_gap": (
             {
                 "ok": True,
@@ -731,63 +692,6 @@ def hr_candidate_detail(
             else None
         ),
         "resume_advice": resume_advice,
-    }
-
-
-# 1) What this does: generates interview questions from selected JD + resume and stores on candidate row.
-# 2) Why needed: HR triggers controlled question generation; candidate UI should not access this.
-# 3) How it works: enforces HR ownership, builds weighted 80/20 questions, stores in candidates.questions_json.
-@router.post("/hr/candidate/{candidate_id}/generate-questions")
-def hr_generate_candidate_questions(
-    candidate_id: int,
-    current_user: SessionUser = Depends(require_role("hr")),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-    if not candidate.resume_path:
-        raise HTTPException(status_code=400, detail="Candidate has no resume to generate questions from")
-
-    owns_candidate = (
-        _candidate_result_scope(db, current_user.user_id)
-        .filter(Result.candidate_id == candidate.id)
-        .first()
-    )
-    if not owns_candidate:
-        raise HTTPException(status_code=403, detail="Not allowed to generate questions for this candidate")
-
-    jd_config = _resolve_candidate_jd_for_generation(db, candidate, current_user.user_id)
-    resume_text = extract_text_from_file(candidate.resume_path or "")
-    if not resume_text.strip():
-        raise HTTPException(status_code=400, detail="Resume text could not be extracted")
-
-    bundle = build_question_bundle(
-        resume_text=resume_text,
-        jd_title=jd_config.title,
-        jd_skill_scores=jd_config.weights_json or {},
-        question_count=int(jd_config.total_questions if jd_config.total_questions is not None else 8),
-        project_ratio=float(jd_config.project_question_ratio if jd_config.project_question_ratio is not None else 0.8),
-    )
-    candidate.questions_json = {
-        "questions": bundle["questions"],
-        "meta": {
-            "candidate_id": candidate.id,
-            "jd_id": jd_config.id,
-            "jd_title": jd_config.title,
-            "total_questions": int(bundle["total_questions"]),
-            "project_questions_count": int(bundle["project_questions_count"]),
-            "theory_questions_count": int(bundle["theory_questions_count"]),
-            "generated_at": datetime.utcnow().isoformat(),
-        },
-    }
-    db.commit()
-
-    return {
-        "candidate_id": candidate.id,
-        "total_questions": int(bundle["total_questions"]),
-        "project_questions_count": int(bundle["project_questions_count"]),
-        "theory_questions_count": int(bundle["theory_questions_count"]),
     }
 
 
@@ -922,6 +826,7 @@ def upload_jd(
     experience_requirement: str = Form(""),
     cutoff_score: str = Form("65"),
     question_count: str = Form("8"),
+    project_question_ratio: str = Form("0.8"),
     current_user: SessionUser = Depends(require_role("hr")),
 ) -> dict[str, object]:
     _ = gender_requirement
@@ -939,6 +844,12 @@ def upload_jd(
     except ValueError:
         questions = 8
     questions = max(3, min(20, questions))
+
+    try:
+        ratio = float(project_question_ratio) if project_question_ratio else 0.8
+    except ValueError:
+        ratio = 0.8
+    ratio = max(0.0, min(1.0, ratio))
 
     safe_filename = Path(jd_file.filename or "job_description").name
     jd_path = UPLOAD_DIR / f"jd_{current_user.user_id}_{uuid.uuid4().hex}_{safe_filename}"
@@ -963,6 +874,7 @@ def upload_jd(
         "experience_requirement": years,
         "cutoff_score": cutoff,
         "question_count": questions,
+        "project_question_ratio": ratio,
     }
 
     return {
@@ -973,6 +885,7 @@ def upload_jd(
         "ai_skills": ai_skills,
         "cutoff_score": cutoff,
         "question_count": questions,
+        "project_question_ratio": ratio,
     }
 
 
@@ -1014,7 +927,9 @@ def confirm_jd(
     db.commit()
     db.refresh(job)
 
-    sync_config_from_legacy_job(db, job)
+    jd_config = sync_config_from_legacy_job(db, job)
+    jd_config.total_questions = int(temp_jd.get("question_count", 8))
+    jd_config.project_question_ratio = float(temp_jd.get("project_question_ratio", 0.8))
     db.commit()
 
     candidates = db.query(Candidate).all()

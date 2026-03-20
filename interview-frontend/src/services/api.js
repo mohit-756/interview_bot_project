@@ -185,7 +185,6 @@ export const hrApi = {
   },
   skillGap: (candidateUid, jobId) => request({ method: "get", url: `/hr/candidates/${candidateUid}/skill-gap`, params: jobId ? { job_id: jobId } : undefined }),
   deleteCandidate: (candidateUid) => request({ method: "post", url: `/hr/candidates/${candidateUid}/delete` }),
-  generateQuestions: (candidateId) => request({ method: "post", url: `/hr/candidate/${candidateId}/generate-questions` }),
 
   // Interviews
   interviews: () => request({ method: "get", url: "/hr/interviews" }),

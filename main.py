@@ -98,8 +98,6 @@ def ensure_schema() -> None:
                 conn.execute(text("ALTER TABLE candidates ADD COLUMN created_at DATETIME"))
             if "selected_jd_id" not in candidate_cols:
                 conn.execute(text("ALTER TABLE candidates ADD COLUMN selected_jd_id INTEGER"))
-            if "questions_json" not in candidate_cols:
-                conn.execute(text("ALTER TABLE candidates ADD COLUMN questions_json TEXT"))
 
             # ── results ───────────────────────────────────────────────────
             # One interview attempt per (candidate, JD)
