@@ -70,19 +70,24 @@ function normalizeCandidateSummary(item) {
   const decision = item?.recommendation
     ? { key: String(item.recommendation).toLowerCase().replace(/\s+/g, "_"), label: item.recommendation, tone: item.recommended ? "success" : "primary" }
     : deriveDecision({ status, shortlisted: false, sessionStatus: status.key, finalScore: item?.final_score ?? item?.score });
+  const resumeScore = Number(item?.score || 0);
+  const finalAIScore = Number((item?.final_score ?? item?.score) || 0);
   return {
     ...item,
     uid: item?.candidate_uid,
     candidate_uid: item?.candidate_uid,
     avatar: buildAvatar(item?.name),
-    role: item?.job?.title || "Candidate",
-    resumeScore: Number(item?.score || 0),
-    score: Number(item?.score || 0),
-    finalAIScore: Number((item?.final_score ?? item?.score) || 0),
+    role: item?.job?.title || item?.assigned_jd?.title || "Candidate",
+    assignedJd: item?.assigned_jd || null,
+    resumeScore,
+    score: resumeScore,
+    finalAIScore,
+    matchPercent: Math.round(Number(item?.score ?? item?.final_score ?? 0) || 0),
     interviewStatus: status,
     status,
     finalDecision: decision,
     recommendationTag: item?.recommendation || decision?.label,
+    hrNotes: item?.hr_notes || "",
   };
 }
 
@@ -111,7 +116,10 @@ function normalizeApplication(application) {
 }
 
 function normalizeCandidateDetail(data) {
-  const applications = (data?.applications || []).map(normalizeApplication);
+  const applications = (data?.applications || []).map(normalizeApplication).map((application) => ({
+    ...application,
+    hrNotes: application?.hr_notes || "",
+  }));
   const latestApplication = applications[0] || null;
   const candidate = data?.candidate || {};
   const skillGap = data?.skill_gap || null;
@@ -122,7 +130,7 @@ function normalizeCandidateDetail(data) {
       ...candidate,
       uid: candidate?.candidate_uid,
       avatar: buildAvatar(candidate?.name),
-      role: latestApplication?.job?.title || "Candidate",
+      role: latestApplication?.job?.title || candidate?.assigned_jd?.title || "Candidate",
       finalDecision: latestApplication?.finalDecision || deriveDecision({ status: candidate?.current_stage || candidate?.current_status }),
       currentStage: toStatusObject(candidate?.current_stage || candidate?.current_status),
       resumeScore: latestApplication?.resumeScore ?? 0,
@@ -131,12 +139,15 @@ function normalizeCandidateDetail(data) {
       interviewScore: latestApplication?.interviewScore ?? null,
       communicationScore: latestApplication?.communicationScore ?? null,
       finalAIScore: latestApplication?.finalAIScore ?? candidate?.final_score ?? 0,
+      matchPercent: Math.round(Number(skillGap?.match_percentage ?? latestApplication?.score ?? latestApplication?.finalAIScore ?? 0) || 0),
       matchedSkills: skillGap?.matched_skills || latestApplication?.explanation?.matched_skills || [],
       missingSkills: skillGap?.missing_skills || latestApplication?.explanation?.missing_skills || [],
       strengths: resumeAdvice?.strengths || [],
       rewriteTips: resumeAdvice?.rewrite_tips || [],
       parsedResume: candidate?.parsed_resume || {},
       recommendationTag: candidate?.recommendation || latestApplication?.recommendationTag || latestApplication?.finalDecision?.label,
+      assignedJd: candidate?.assigned_jd || null,
+      hrNotes: candidate?.hr_notes || latestApplication?.hrNotes || "",
     },
     applications,
     resume_advice: resumeAdvice,
@@ -203,6 +214,7 @@ export const hrApi = {
   rankedCandidates: (params) => request({ method: "get", url: "/hr/candidates/ranked", params }),
   compareCandidates: (resultIds) => request({ method: "post", url: "/hr/candidates/compare", data: { result_ids: resultIds } }),
   assignCandidateToJd: (candidateUid, jdId) => request({ method: "post", url: `/hr/candidates/${candidateUid}/assign-jd`, data: { jd_id: jdId } }),
+  updateCandidateNotes: (resultId, notes) => request({ method: "post", url: `/hr/results/${resultId}/notes`, data: { notes } }),
 
   // Interviews
   interviews: () => request({ method: "get", url: "/hr/interviews" }),

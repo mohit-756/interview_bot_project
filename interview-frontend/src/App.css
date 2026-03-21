@@ -334,6 +334,20 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+.empty-state-card {
+  align-items: flex-start;
+}
+
+.ats-compare-card {
+  min-height: 100%;
+}
+
+.candidate-summary-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 @media (max-width: 768px) {
   .page-header {
     align-items: stretch;

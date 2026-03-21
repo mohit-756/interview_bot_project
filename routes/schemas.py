@@ -109,3 +109,7 @@ class CandidateCompareBody(BaseModel):
 
 class CandidateAssignJDBody(BaseModel):
     jd_id: int
+
+
+class HrCandidateNotesBody(BaseModel):
+    notes: str = Field(default="", max_length=5000)

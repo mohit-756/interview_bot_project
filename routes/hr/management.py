@@ -25,7 +25,7 @@ from routes.common import (
     upsert_result,
 )
 from routes.dependencies import SessionUser, require_role
-from routes.schemas import HrJDCreateBody, HrJDUpdateBody, InterviewScoreBody, SkillWeightsBody, StageUpdateBody, CandidateCompareBody, CandidateAssignJDBody
+from routes.schemas import HrJDCreateBody, HrJDUpdateBody, InterviewScoreBody, SkillWeightsBody, StageUpdateBody, CandidateCompareBody, CandidateAssignJDBody, HrCandidateNotesBody
 from services.hr_dashboard import build_hr_dashboard_analytics
 from services.pipeline import normalize_stage, record_stage_change, stage_payload
 from services.jd_sync import normalize_skill_map, sync_config_from_legacy_job, sync_legacy_job_from_config
@@ -103,7 +103,12 @@ def _serialize_candidate_summary(candidate: Candidate, result: Result | None) ->
             "id": result.job.id if result and result.job else None,
             "title": (result.job.jd_title or Path(result.job.jd_text).name) if result and result.job else None,
         },
+        "assigned_jd": {
+            "id": candidate.selected_jd_id,
+            "title": candidate.selected_jd.title if candidate.selected_jd else None,
+        },
         "interview_date": result.interview_date if result else None,
+        "hr_notes": result.hr_notes if result else None,
     }
 
 
@@ -684,6 +689,7 @@ def hr_candidate_detail(
                 }
                 if latest_session
                 else None,
+                "hr_notes": result.hr_notes,
             }
         )
 
@@ -735,6 +741,11 @@ def hr_candidate_detail(
             "current_score": latest_application["score"],
             "final_score": latest_application.get("final_score"),
             "recommendation": latest_application.get("recommendation"),
+            "assigned_jd": {
+                "id": candidate.selected_jd_id,
+                "title": candidate.selected_jd.title if candidate.selected_jd else None,
+            },
+            "hr_notes": latest_result.hr_notes,
         },
         "applications": applications,
         "generated_questions": generated_questions,
@@ -802,6 +813,27 @@ def hr_assign_candidate_to_jd(
     }
 
 
+@router.post("/hr/results/{result_id}/notes")
+def hr_update_candidate_notes(
+    result_id: int,
+    payload: HrCandidateNotesBody,
+    current_user: SessionUser = Depends(require_role("hr")),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    result = (
+        _candidate_result_scope(db, current_user.user_id)
+        .filter(Result.id == result_id)
+        .first()
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    result.hr_notes = (payload.notes or "").strip() or None
+    db.commit()
+    db.refresh(result)
+    return {"ok": True, "result_id": result.id, "hr_notes": result.hr_notes or ""}
+
+
 @router.post("/hr/results/{result_id}/stage")
 def hr_update_candidate_stage(
     result_id: int,
@@ -866,6 +898,11 @@ def hr_compare_candidates(
                 "score_breakdown": result.score_breakdown_json or {},
                 "parsed_resume": (result.candidate.parsed_resume_json or {}) if result.candidate else {},
                 "interview_summary": (latest_session.evaluation_summary_json if latest_session else {}) or {},
+                "assigned_jd": {
+                    "id": result.candidate.selected_jd_id if result.candidate else None,
+                    "title": result.candidate.selected_jd.title if result.candidate and result.candidate.selected_jd else None,
+                },
+                "hr_notes": result.hr_notes,
             }
         )
     comparisons.sort(key=lambda item: float(item.get("final_score") or item.get("score") or 0), reverse=True)
