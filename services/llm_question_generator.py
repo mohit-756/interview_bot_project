@@ -14,30 +14,36 @@ from services.resume_parser import parse_resume_text
 
 logger = logging.getLogger(__name__)
 
-LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer creating a high-quality interview question bank.
-Your job is to generate sharp, resume-aware, JD-aware interview questions for ANY role, ANY tech stack, ANY seniority.
+LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer and hiring panelist.
+Your task is to generate high-quality interview questions using a job description and a candidate resume.
 
 Priority order for question selection:
 1. Recent role achievements and concrete ownership from the resume
 2. Named resume projects and implementations
 3. Measurable impact from the resume
 4. High-priority JD core skills and responsibilities
-5. Behavioral or leadership coverage only when needed for the role
+5. Behavioral coverage only when needed for the role
 
-Mandatory generation rules:
+Hard rules:
 - Return ONLY valid JSON.
-- Produce interviewer-style questions, not generic study prompts.
-- Ground each non-intro question in resume evidence or a high-priority JD requirement.
-- Resume projects and recent experience must be the strongest signals.
-- Prefer ownership, decisions, trade-offs, debugging, architecture, delivery impact, stakeholder handling, leadership, and prioritization.
-- Avoid generic prompts like 'walk me through your most relevant project', 'end to end', or vague textbook asks.
-- Do not ask duplicate or near-duplicate questions.
-- Vary the opening pattern of the questions. Do not repeat the same opener more than twice.
-- Include at least one project-grounded question tied to a named project, implementation, or recent role achievement.
-- For senior, lead, manager, director, head, VP, or practice-head profiles, include leadership/stakeholder/practice-building coverage.
-- For architect or architecture-heavy roles, include design/trade-off/scalability questions.
-- Keep behavioral questions limited and role-relevant. Most questions should still be technical, project, architecture, or leadership-depth questions.
-- If resume evidence is weak for a critical JD skill, include at most one practical transfer/gap question and make it scenario-based.
+- Questions must be grounded in the candidate's actual resume projects, recent work, leadership experience, or measurable impact.
+- Prioritize JD core skills only when they are supported by the resume OR central to the role.
+- Ask about actual resume projects before asking generic skill questions.
+- If a question is project-related, it must include either a project name or a concrete metric, scale, latency, users, throughput, percentage, cost, or impact signal.
+- For each strong project or major role achievement, aim to cover execution, decision/trade-off, and debugging/failure angles across the set.
+- At least one question must explore failure, debugging, trade-offs, or something that did not work.
+- Match role family and seniority:
+  - Engineer -> implementation, debugging, APIs, project execution
+  - Architect -> system design, trade-offs, scalability, governance
+  - Lead/Head/Manager -> strategy, stakeholder alignment, delivery quality, practice/team building
+- For senior roles, include leadership, stakeholder, and scaling questions.
+- Use natural, human interviewer phrasing.
+- Prefer specific prompts like 'Walk me through...', 'How did you decide...', 'What trade-offs did you consider...', 'Tell me about a time...'
+- Avoid generic phrasing like 'used X end to end' or 'most relevant project'.
+- Reject weak language such as 'what is your experience with' or 'explain what is'.
+- Avoid duplicate question patterns, and do not start more than two questions with the same opening pattern.
+- Use only 1-2 behavioral questions maximum.
+- Never ask about a minor skill unless it is clearly important for the role.
 - Reject questions that could apply unchanged to almost any candidate.
 
 Return a JSON object with this exact shape:
@@ -243,7 +249,7 @@ def _is_senior_profile(structured_input: StructuredQuestionInput) -> bool:
         structured_input.experience_level,
         structured_input.role_title,
     ]).lower()
-    return any(term in seniority_blob for term in ("lead", "manager", "head", "director", "vp", "practice", "architect", "staff", "principal", "senior", "executive"))
+    return any(term in seniority_blob for term in ("senior", "lead", "manager", "head", "director", "vp", "practice", "staff", "principal", "executive")) or structured_input.role_family in {"lead", "manager", "practice_head"}
 
 
 def _is_architect_profile(structured_input: StructuredQuestionInput) -> bool:
@@ -330,10 +336,13 @@ def _llm_user_prompt(structured_input: StructuredQuestionInput, question_count: 
         "The first question should be a concise intro/background opener.",
         "The remaining questions must mostly be project, implementation, architecture, leadership, or high-signal JD-depth questions.",
         "At least one question must be explicitly grounded in a named project or recent role achievement.",
+        "Every project-related question must include a project name or a measurable metric/scale detail.",
+        "Across the set, strong projects should be explored from execution, decision/trade-off, and debugging/failure angles.",
+        "At least one question must explore failure, debugging, trade-offs, or something that did not work.",
         "Prefer concrete resume evidence over generic skills.",
         "Include at most one JD gap-probe question, only for a critical missing skill.",
         "Reference answers should describe what a strong answer should cover, not a memorized script.",
-        "Do not use weak phrasing such as 'end to end' or 'most relevant project'.",
+        "Do not use weak phrasing such as 'end to end', 'most relevant project', 'what is your experience with', or 'explain what is'.",
         "Do not produce questions that can apply unchanged to almost any candidate.",
     ]
     if _is_senior_profile(structured_input):
@@ -462,6 +471,44 @@ def _is_project_grounded(question: dict[str, object], structured_input: Structur
     return bool(_clean(question.get("project_name"))) or question.get("category") in {"project", "architecture", "leadership"} and bool(_clean((question.get("metadata") or {}).get("evidence_excerpt")))
 
 
+def _contains_metric_or_scale(text: str | None) -> bool:
+    raw = _clean(text)
+    if not raw:
+        return False
+    metric_patterns = [
+        r"\b\d+[\d,.]*%\b",
+        r"\b\d+x\b",
+        r"\b\d+[\d,.]*\s*(ms|s|sec|seconds|minutes|hrs|hours|days|weeks|months)\b",
+        r"\b\d+[\d,.]*\s*(users|clients|customers|requests|rps|qps|pipelines|services|teams|engineers|accounts|stores|records|rows|events)\b",
+        r"\b(latency|throughput|scale|uptime|downtime|cost|savings|adoption|performance|accuracy|precision|recall)\b",
+    ]
+    return any(re.search(pattern, raw, re.IGNORECASE) for pattern in metric_patterns)
+
+
+def _is_project_question(question: dict[str, object]) -> bool:
+    category = str(question.get("category") or "")
+    return category == "project"
+
+
+def _has_project_anchor(question: dict[str, object], structured_input: StructuredQuestionInput) -> bool:
+    if not _is_project_question(question):
+        return True
+    if _clean(question.get("project_name")):
+        return True
+    text = " ".join([
+        _clean(question.get("text")),
+        _clean((question.get("metadata") or {}).get("evidence_excerpt")),
+    ])
+    if _contains_metric_or_scale(text):
+        return True
+    text_norm = _normalize_token(text)
+    for item in structured_input.resume_projects + structured_input.resume_recent_roles + structured_input.resume_measurable_impact:
+        token = _normalize_token(item)
+        if token and token in text_norm:
+            return True
+    return False
+
+
 def _opening_pattern_violations(questions: list[dict[str, object]]) -> bool:
     patterns: dict[str, int] = {}
     for item in questions:
@@ -485,10 +532,16 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
     project_grounded_count = 0
     leadership_count = 0
     architecture_count = 0
+    scaling_count = 0
     skill_only_count = 0
+    debugging_failure_count = 0
+    project_execution_count = 0
+    project_tradeoff_count = 0
+    project_debugging_count = 0
 
     for question in questions:
         text = _clean(question.get("text"))
+        text_norm = _normalize_token(text)
         similarity = _similarity_key(text)
         if similarity in similarity_seen:
             issues.append("duplicate_or_near_duplicate")
@@ -498,16 +551,31 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
             issues.append("weak_phrase_present")
         if question.get("category") == "behavioral":
             behavioral_count += 1
-        if question.get("category") == "leadership" or any(term in _normalize_token(text) for term in ("stakeholder", "mentor", "lead", "team", "practice", "governance", "delivery leader")):
+        if question.get("category") == "leadership" or any(term in text_norm for term in ("stakeholder", "mentor", "lead", "team", "practice", "governance", "delivery leader")):
             leadership_count += 1
-        if question.get("category") == "architecture":
+        if question.get("category") == "architecture" or any(term in text_norm for term in ("trade-off", "tradeoffs", "trade off", "scal", "governance", "design")):
             architecture_count += 1
-        if _is_project_grounded(question, structured_input):
+        if any(term in text_norm for term in ("scale", "scaling", "grow", "across accounts", "adoption", "capacity", "governance")):
+            scaling_count += 1
+        grounded = _is_project_grounded(question, structured_input)
+        if grounded:
             project_grounded_count += 1
         elif question.get("category") not in {"intro", "behavioral"} and str(question.get("priority_source") or "") != "jd_gap_probe":
             issues.append("question_not_grounded_in_resume_or_priority_jd")
-        if question.get("category") == "deep_dive" and not _is_project_grounded(question, structured_input):
+        if question.get("category") == "deep_dive" and not grounded:
             skill_only_count += 1
+        if _is_project_question(question) and not _has_project_anchor(question, structured_input):
+            issues.append("project_question_missing_name_or_metric_anchor")
+
+        if grounded:
+            if any(term in text_norm for term in ("what did you personally", "what exactly did you own", "what did you change", "did you personally drive", "how did you implement", "how did you build", "how did you deliver", "walk me through", "what problem were you solving")):
+                project_execution_count += 1
+            if any(term in text_norm for term in ("trade-off", "tradeoffs", "trade off", "how did you decide", "why did you choose", "what decisions", "why was that design", "balance consistency", "what would you revisit")):
+                project_tradeoff_count += 1
+            if any(term in text_norm for term in ("debug", "failure", "didn't work", "did not work", "root cause", "bottleneck", "incident", "wrong", "remediation", "what signals", "fixes were working")):
+                project_debugging_count += 1
+        if any(term in text_norm for term in ("failure", "debug", "trade-off", "tradeoffs", "trade off", "didn't work", "did not work", "root cause", "bottleneck", "what went wrong", "incident")):
+            debugging_failure_count += 1
 
     if _opening_pattern_violations(questions):
         issues.append("opening_pattern_repetition")
@@ -517,10 +585,18 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
         issues.append("too_many_generic_behavioral")
     if skill_only_count >= max(3, question_count - 2):
         issues.append("too_many_skill_only_questions")
-    if _is_senior_profile(structured_input) and leadership_count == 0 and not structured_input.resume_leadership_signals:
+    if debugging_failure_count == 0:
+        issues.append("missing_failure_debugging_tradeoff_question")
+    if project_grounded_count > 0 and project_execution_count == 0:
+        issues.append("missing_project_execution_question")
+    if project_grounded_count > 0 and project_tradeoff_count == 0:
+        issues.append("missing_project_tradeoff_question")
+    if structured_input.role_family in {"engineer", "senior_engineer", "architect"} and project_grounded_count > 0 and project_debugging_count == 0:
+        issues.append("missing_project_debugging_question")
+    if _is_senior_profile(structured_input) and leadership_count == 0:
         issues.append("senior_role_missing_leadership_or_stakeholder_question")
-    elif _is_senior_profile(structured_input) and leadership_count == 0:
-        issues.append("senior_role_missing_leadership_or_stakeholder_question")
+    if structured_input.role_family in {"lead", "manager", "practice_head"} and scaling_count == 0:
+        issues.append("senior_role_missing_scaling_question")
     if _is_architect_profile(structured_input) and architecture_count == 0:
         issues.append("architect_role_missing_design_tradeoff_question")
     return _dedupe_strings(issues)
@@ -660,9 +736,10 @@ def generate_llm_questions(
     if first_issues:
         retry_used = True
         stricter_note = (
-            "Your previous output failed quality checks: "
+            "Your previous output lacked depth and grounding. Regenerate using project-specific details and measurable outcomes. "
+            "Quality failures: "
             + ", ".join(first_issues)
-            + ". Regenerate a stronger set. Enforce: no duplicates, no weak phrases, at least one project-grounded question, leadership coverage for senior profiles, architecture/trade-off coverage for architect roles, and keep behavioral questions limited."
+            + ". Enforce: no duplicates, no weak phrases, every project-related question must include a project name or metric anchor, include project execution + trade-off + debugging/failure coverage, leadership and stakeholder plus scaling coverage for senior profiles, architecture/trade-off coverage for architect roles, and keep behavioral questions limited."
         )
         retry_attempt = _call_llm(structured_input, max(2, int(question_count)), retry_note=stricter_note)
         retry_issues = _validate_question_set(retry_attempt["questions"], structured_input, max(2, int(question_count)))
