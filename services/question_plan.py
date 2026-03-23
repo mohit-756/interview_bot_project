@@ -934,14 +934,34 @@ def build_question_plan(
         final_questions = _build_slot_set(slot_order, variant=2)
 
     if _has_duplicate_structure(final_questions):
-        rewrites = {
-            1: "Walk me through the most concrete project or system you worked on recently: what problem did it solve and what did you own?",
-            2: "What implementation trade-off from your recent work best shows how you make engineering decisions under constraints?",
-            3: "How did you organize the backend, services, or data flow in your recent work so the system remained maintainable?",
-            4: "Describe a debugging issue you investigated recently: what symptoms appeared first, how did you narrow the cause, and what fixed it?",
-            5: "How would you redesign the system you know best to improve scale, reliability, or observability without overcomplicating it?",
-            6: "Tell me about a time you had to take ownership, align people, or push a delivery decision forward when things were unclear.",
-        }
+        role_track = _role_track(context)
+        if role_family in {"manager", "practice_head", "lead"}:
+            rewrites = {
+                1: "Walk me through the platform or transformation program where your ownership had the clearest delivery or business impact.",
+                2: "Which operating-model, architecture, or delivery trade-off from that work best shows how you make leadership decisions under constraints?",
+                3: "How did you structure delivery, governance, or cross-team execution so the platform stayed scalable and maintainable across stakeholders?",
+                4: "Describe a platform, delivery, or stakeholder issue you had to debug: what signals surfaced first, how did you isolate the real cause, and what changed afterward?",
+                5: "If that program had to scale across more teams, accounts, or workloads, what architecture, governance, or capability changes would you make first?",
+                6: "Tell me about a time you had to align senior stakeholders, delivery leaders, or partner teams around a difficult decision and what outcome you drove.",
+            }
+        elif role_track == "frontend":
+            rewrites = {
+                1: "Walk me through the frontend product area or UI system where your ownership and user impact were clearest.",
+                2: "Which component, state-management, or implementation trade-off from that work best shows how you make frontend decisions under constraints?",
+                3: "How did you organize components, API integration, and state flow so the UI stayed maintainable as the product evolved?",
+                4: "Describe a tricky UI, browser, or API-state issue you debugged: what symptoms showed up first, how did you narrow the cause, and what stabilized the experience?",
+                5: "If that frontend had to support more features or heavier usage, what architecture or performance changes would you make first?",
+                6: "Tell me about a release where you had to align design, product, and engineering trade-offs while keeping the user experience stable.",
+            }
+        else:
+            rewrites = {
+                1: "Walk me through the most concrete project or system you worked on recently: what problem did it solve and what did you own?",
+                2: "What implementation trade-off from your recent work best shows how you make engineering decisions under constraints?",
+                3: "How did you organize the backend, services, or data flow in your recent work so the system remained maintainable?",
+                4: "Describe a debugging issue you investigated recently: what symptoms appeared first, how did you narrow the cause, and what fixed it?",
+                5: "How would you redesign the system you know best to improve scale, reliability, or observability without overcomplicating it?",
+                6: "Tell me about a time you had to take ownership, align people, or push a delivery decision forward when things were unclear.",
+            }
         for idx, text in rewrites.items():
             if idx < len(final_questions):
                 final_questions[idx]["text"] = text
