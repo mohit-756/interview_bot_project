@@ -21,10 +21,23 @@ def normalize_result_questions(payload: object) -> list[dict[str, object]]:
                     "difficulty": "medium",
                     "topic": "general",
                     "type": "project",
+                    "category": "project",
                     "intent": "Assess candidate understanding and communication.",
                     "focus_skill": None,
                     "project_name": None,
                     "reference_answer": None,
+                    "priority_source": "legacy",
+                    "role_alignment": 0.5,
+                    "resume_alignment": 0.5,
+                    "jd_alignment": 0.5,
+                    "metadata": {
+                        "category": "project",
+                        "priority_source": "legacy",
+                        "skill_or_topic": text,
+                        "role_alignment": 0.5,
+                        "resume_alignment": 0.5,
+                        "jd_alignment": 0.5,
+                    },
                 })
             continue
         if not isinstance(item, dict):
@@ -32,15 +45,29 @@ def normalize_result_questions(payload: object) -> list[dict[str, object]]:
         text = str(item.get("text") or item.get("question") or "").strip()
         if not text:
             continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         normalized.append({
             "text": text,
             "difficulty": str(item.get("difficulty") or "medium"),
             "topic": str(item.get("topic") or "general"),
             "type": str(item.get("type") or "project"),
+            "category": str(item.get("category") or metadata.get("category") or item.get("type") or "project"),
             "intent": str(item.get("intent") or "Assess candidate understanding and communication."),
             "focus_skill": item.get("focus_skill"),
             "project_name": item.get("project_name"),
             "reference_answer": item.get("reference_answer"),
+            "priority_source": item.get("priority_source") or metadata.get("priority_source") or "derived",
+            "role_alignment": item.get("role_alignment") if item.get("role_alignment") is not None else metadata.get("role_alignment"),
+            "resume_alignment": item.get("resume_alignment") if item.get("resume_alignment") is not None else metadata.get("resume_alignment"),
+            "jd_alignment": item.get("jd_alignment") if item.get("jd_alignment") is not None else metadata.get("jd_alignment"),
+            "metadata": metadata or {
+                "category": str(item.get("category") or item.get("type") or "project"),
+                "priority_source": item.get("priority_source") or "derived",
+                "skill_or_topic": str(item.get("focus_skill") or item.get("topic") or text),
+                "role_alignment": item.get("role_alignment"),
+                "resume_alignment": item.get("resume_alignment"),
+                "jd_alignment": item.get("jd_alignment"),
+            },
         })
     return normalized
 

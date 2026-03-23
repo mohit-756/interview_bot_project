@@ -161,6 +161,14 @@ def _ensure_session_questions(
             focus_skill=item.get("focus_skill"),
             project_name=item.get("project_name"),
             reference_answer=item.get("reference_answer"),
+            metadata_json=item.get("metadata") if isinstance(item.get("metadata"), dict) else {
+                "category": item.get("category") or item.get("type") or "project",
+                "priority_source": item.get("priority_source") or "derived",
+                "skill_or_topic": item.get("focus_skill") or item.get("topic") or text,
+                "role_alignment": item.get("role_alignment"),
+                "resume_alignment": item.get("resume_alignment"),
+                "jd_alignment": item.get("jd_alignment"),
+            },
             allotted_seconds=int(dynamic_seconds),
         )
         existing_texts.add(text.lower())
@@ -190,6 +198,7 @@ def _serialize_question(question: InterviewQuestion | None) -> dict[str, object]
         "difficulty": question.difficulty,
         "topic": question.topic,
         "allotted_seconds": int(question.allotted_seconds or 0),
+        "metadata": question.metadata_json or {},
     }
 
 

@@ -190,6 +190,7 @@ class InterviewQuestion(Base):
     focus_skill = Column(String(80), nullable=True)
     project_name = Column(String(160), nullable=True)
     reference_answer = Column(Text, nullable=True)
+    metadata_json = Column(JSON, nullable=True)
     answer_text = Column(Text, nullable=True)
     answer_summary = Column(Text, nullable=True)
     relevance_score = Column(Float, nullable=True)

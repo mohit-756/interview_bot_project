@@ -179,6 +179,7 @@ def ensure_schema() -> None:
                 ("focus_skill",       "VARCHAR(80)"),
                 ("project_name",      "VARCHAR(160)"),
                 ("reference_answer",  "TEXT"),
+                ("metadata_json",     "JSON"),
                 ("answer_summary",    "TEXT"),
                 ("relevance_score",   "FLOAT"),
                 ("time_taken_seconds","INTEGER"),
