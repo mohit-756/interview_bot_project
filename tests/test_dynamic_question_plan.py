@@ -70,6 +70,31 @@ def test_architect_gets_architecture_focus():
 
 
 
+def test_fallback_plan_keeps_debugging_and_design_without_skill_clone_patterns():
+    resume = """
+    Backend engineer with 3+ years of experience building APIs and improving reliability.
+    Skills
+    Python
+    FastAPI
+    SQL
+    Projects
+    Payments API revamp reduced failures by 23% and improved partner onboarding
+    Experience
+    Built backend services, partner integrations, debugged production incidents, and redesigned API flows for maintainability
+    """
+    bundle = build_question_plan(
+        resume_text=resume,
+        jd_title="Backend Engineer",
+        jd_skill_scores={"Python": 10, "FastAPI": 9, "SQL": 8, "API Design": 7},
+        question_count=6,
+    )
+    texts = [q["text"].lower() for q in _questions(bundle)]
+    assert any("debug" in text or "failure" in text or "root cause" in text for text in texts)
+    assert any("design" in text or "architecture" in text for text in texts)
+    assert not any(text.startswith("walk me through your ") for text in texts)
+
+
+
 def test_practice_head_gets_leadership_focus_and_guardrails():
     resume = """
     Priya Rao

@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer and hiring panelist.
 Your task is to generate high-quality interview questions using a job description and a candidate resume.
 
+Use this intent exactly while preserving the runtime JSON schema:
+- Questions must be grounded in resume projects, experience, and skills plus the JD role.
+- No generic skill questions.
+- No repeated structure.
+- No skill-clone patterns.
+- Required coverage/distribution should include: intro, project deep dive, implementation trade-offs, architecture/design, debugging/failure (mandatory), performance/scaling (mandatory), role-specific, API/system integration, behavioral/leadership.
+
 Priority order for question selection:
 1. Recent role achievements and concrete ownership from the resume
 2. Named resume projects and implementations
@@ -26,15 +33,19 @@ Priority order for question selection:
 
 Hard rules:
 - Return ONLY valid JSON.
+- Preserve the exact response shape requested below.
 - Questions must be grounded in the candidate's actual resume projects, recent work, leadership experience, or measurable impact.
 - Prioritize JD core skills only when they are supported by the resume OR central to the role.
 - At least 50% of the questions should be grounded in named resume projects, recent role achievements, or measurable outcomes when that evidence is available.
 - Ask about actual resume projects before asking generic skill questions.
 - Prefer referencing measurable outcomes when available, such as performance improvement, scale, latency, throughput, cost reduction, adoption, or accuracy/recall/precision impact.
 - If a question is project-related, it must include either a project name or a concrete metric, scale, latency, users, throughput, percentage, cost, or impact signal.
+- Across the set, include: one intro/background opener, project deep dive coverage, implementation trade-off coverage, architecture/design coverage, debugging/failure coverage, performance/scaling coverage, role-specific coverage, API/system integration coverage, and behavioral/leadership coverage when supported.
+- Debugging/failure coverage is mandatory.
+- Performance/scaling coverage is mandatory.
+- Design/architecture coverage is mandatory.
 - For each strong project or major role achievement, aim to cover execution, decision/trade-off, and debugging/failure angles across the set.
 - At least one question must explore failure, debugging, trade-offs, or something that did not work.
-- Preferred question mix: 1 intro, 3-4 project deep dives where possible, 1 system design or architecture question, 1 debugging/failure/trade-off question, and 1 leadership/stakeholder/behavioral question only when role seniority requires it.
 - Match role family and seniority:
   - Engineer -> implementation, debugging, APIs, project execution
   - Architect -> system design, trade-offs, scalability, governance
@@ -340,13 +351,18 @@ def _llm_user_prompt(structured_input: StructuredQuestionInput, question_count: 
         f"Generate {question_count} interview questions for this candidate.",
         "Use the JSON context exactly as provided.",
         "Treat resume_recent_roles, resume_projects, resume_project_technologies, and resume_measurable_impact as the strongest evidence.",
+        "Use this exact prompt intent: grounded in resume projects/experience/skills and the JD role; no generic skill questions; no repeated structure; no skill-clone patterns.",
+        "Required coverage/distribution across the set: intro, project deep dive, implementation trade-offs, architecture/design, debugging/failure, performance/scaling, role-specific, API/system integration, behavioral/leadership.",
         "The first question should be a concise intro/background opener.",
         "The remaining questions must mostly be project, implementation, architecture, leadership, or high-signal JD-depth questions.",
         "At least 50% of the questions should be grounded in named projects, recent achievements, or measurable outcomes when available.",
         "At least one question must be explicitly grounded in a named project or recent role achievement.",
         "Every project-related question must include a project name or a measurable metric/scale detail.",
-        "Across the set, strong projects should be explored from execution, decision/trade-off, and debugging/failure angles.",
-        "At least one question must explore failure, debugging, trade-offs, or something that did not work.",
+        "Across the set, strong projects should be explored from execution, decision/trade-off, debugging/failure, and system integration angles.",
+        "Include at least one architecture/design question.",
+        "Include at least one debugging/failure question.",
+        "Include at least one performance/scaling question.",
+        "Include at least one role-specific or API/system integration question when the resume or JD supports it.",
         "Prefer concrete resume evidence and measurable outcomes over generic skills.",
         "Prefer analytical, reflective, and scenario-based phrasing with natural variety.",
         "Use no more than two questions with the same opening pattern.",
@@ -370,7 +386,7 @@ def _llm_user_prompt(structured_input: StructuredQuestionInput, question_count: 
 
 def _extract_json_object(raw: str) -> dict[str, object]:
     cleaned = _clean_json(raw or "")
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL) 
     if match:
         cleaned = match.group(0)
     data = json.loads(cleaned)
@@ -543,8 +559,10 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
     leadership_count = 0
     architecture_count = 0
     scaling_count = 0
+    integration_count = 0
     skill_only_count = 0
     debugging_failure_count = 0
+    design_count = 0
     project_execution_count = 0
     project_tradeoff_count = 0
     project_debugging_count = 0
@@ -563,10 +581,14 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
             behavioral_count += 1
         if question.get("category") == "leadership" or any(term in text_norm for term in ("stakeholder", "mentor", "lead", "team", "practice", "governance", "delivery leader")):
             leadership_count += 1
-        if question.get("category") == "architecture" or any(term in text_norm for term in ("trade-off", "tradeoffs", "trade off", "scal", "governance", "design")):
+        if question.get("category") == "architecture" or any(term in text_norm for term in ("trade-off", "tradeoffs", "trade off", "scal", "governance", "design", "architecture")):
             architecture_count += 1
-        if any(term in text_norm for term in ("scale", "scaling", "grow", "across accounts", "adoption", "capacity", "governance")):
+        if any(term in text_norm for term in ("design", "architecture", "interface", "boundary", "component", "pattern", "decision")):
+            design_count += 1
+        if any(term in text_norm for term in ("scale", "scaling", "grow", "10x", "5x", "twice", "double", "doubled", "across accounts", "adoption", "capacity", "governance", "performance", "latency", "throughput", "load")):
             scaling_count += 1
+        if any(term in text_norm for term in ("api", "integration", "service", "services", "interface", "data flow", "contract", "pipeline", "webhook", "event")):
+            integration_count += 1
         grounded = _is_project_grounded(question, structured_input)
         if grounded:
             project_grounded_count += 1
@@ -597,6 +619,10 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
         issues.append("too_many_skill_only_questions")
     if debugging_failure_count == 0:
         issues.append("missing_failure_debugging_tradeoff_question")
+    if design_count == 0:
+        issues.append("missing_design_question")
+    if scaling_count == 0:
+        issues.append("missing_performance_or_scaling_question")
     if project_grounded_count > 0 and project_execution_count == 0:
         issues.append("missing_project_execution_question")
     if project_grounded_count > 0 and project_tradeoff_count == 0:
@@ -625,13 +651,15 @@ def _normalize_llm_questions(
         if not isinstance(item, dict):
             continue
         text = _clean(item.get("text"))
-        if not text or len(text) < 18 or "?" not in text or _contains_weak_phrase(text):
+        category_hint = _normalize_category(item.get("category"), text)
+        if not text or len(text) < 18 or ("?" not in text and category_hint not in {"behavioral", "leadership"}) or _contains_weak_phrase(text):
             continue
+
+        category = category_hint
         similarity = _similarity_key(text)
         if not similarity or similarity in seen_text:
             continue
 
-        category = _normalize_category(item.get("category"), text)
         focus_skill = _clean(item.get("focus_skill")) or None
         project_name = _clean(item.get("project_name")) or None
         reference_answer = _clean(item.get("reference_answer"))
@@ -666,7 +694,7 @@ def _normalize_llm_questions(
             },
         }
         relevance = _question_relevance_score(question, structured_input)
-        if relevance < 0.8 and category not in {"intro", "behavioral"} and priority_source != "jd_gap_probe":
+        if relevance < 0.6 and category not in {"intro", "behavioral", "leadership"} and priority_source != "jd_gap_probe":
             continue
         question["metadata"]["relevance_score"] = relevance
         normalized.append(question)

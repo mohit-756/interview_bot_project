@@ -47,11 +47,11 @@ INTRO_QUESTION = {
 }
 
 HR_QUESTIONS = [
-    "Tell me about a time you had to adapt when requirements or priorities changed midway.",
-    "Describe a situation where you had to align with teammates or stakeholders with different views.",
-    "Tell me about a time you had to learn something quickly to deliver an outcome.",
-    "Describe a difficult trade-off you made under time pressure. What did you optimize for?",
-    "How do you handle ownership when a project or deliverable is not going as planned?",
+    "Tell me about a time requirements changed mid-delivery and you had to reset scope, communication, or execution without losing momentum.",
+    "Describe a situation where you had to align teammates, product partners, or stakeholders around competing priorities or technical concerns.",
+    "Tell me about a time you had to learn a domain, tool, or system constraint quickly so you could unblock delivery.",
+    "Describe a difficult delivery or design trade-off you made under pressure. What did you optimize for and what did you deliberately defer?",
+    "Tell me about a time a project was at risk and you took ownership to stabilize delivery, quality, or stakeholder confidence.",
 ]
 
 ROLE_FAMILY_KEYWORDS = {
@@ -496,34 +496,94 @@ def _clean_label(value: str | None, fallback: str) -> str:
 
 def _slot_candidate(category: str, context: PlannerContext) -> dict[str, object]:
     module_label = get_resume_module(context.resume)
-    project_item = context.resume.projects[0] if context.resume.projects else None
-    experience_item = context.resume.experiences[0] if context.resume.experiences else None
-    backend_item = None
-    for item in context.resume.projects + context.resume.experiences:
-        lowered = item.text.lower()
-        if any(term in lowered for term in ("backend", "api", "service", "pipeline", "workflow", "database", "fastapi", "sql")):
-            backend_item = item
-            break
-    candidate_map = {
-        "intro": ("intro", _clean_label(context.jd.title or context.title, "your background"), None),
-        "project": ("project", _clean_label(project_item.text if project_item else module_label, module_label), [project_item] if project_item else []),
-        "deep_dive": ("project", _clean_label(project_item.text if project_item else module_label, module_label), [project_item] if project_item else []),
-        "backend": ("project", _clean_label(backend_item.text if backend_item else module_label, module_label), [backend_item] if backend_item else []),
-        "debugging": ("project", _clean_label(project_item.text if project_item else module_label, module_label), [project_item] if project_item else []),
-        "architecture": ("project", _clean_label(project_item.text if project_item else module_label, module_label), [project_item] if project_item else []),
-        "leadership": ("project", _clean_label(experience_item.text if experience_item else "your recent work", "your recent work"), [experience_item] if experience_item else []),
-    }
-    kind, label, evidence = candidate_map[category]
-    return {
-        "kind": kind,
-        "label": label or module_label,
-        "priority_source": "structured_slot",
-        "score": 0.9,
-        "resume_alignment": 0.8,
-        "jd_alignment": 0.7,
-        "role_alignment": 0.8,
-        "evidence": evidence,
-    }
+    prioritized = list(context.topic_priorities or [])
+    evidence_pool = context.resume.projects + context.resume.experiences
+
+    def _fallback(label: str, evidence: list[EvidenceItem] | None = None, *, kind: str = "project") -> dict[str, object]:
+        return {
+            "kind": kind,
+            "label": label or module_label,
+            "priority_source": "structured_slot",
+            "score": 0.9,
+            "resume_alignment": 0.8,
+            "jd_alignment": 0.7,
+            "role_alignment": 0.8,
+            "evidence": evidence or [],
+        }
+
+    def _pick(kind: str | None = None, predicate=None) -> dict[str, object] | None:
+        for item in prioritized:
+            if kind and str(item.get("kind")) != kind:
+                continue
+            if predicate and not predicate(item):
+                continue
+            return dict(item)
+        return None
+
+    intro = _fallback(_clean_label(context.jd.title or context.title, "your background"), kind="intro")
+    if category == "intro":
+        return intro
+
+    project_item = context.resume.projects[0] if context.resume.projects else (evidence_pool[0] if evidence_pool else None)
+    experience_item = context.resume.experiences[0] if context.resume.experiences else project_item
+    backend_item = next(
+        (
+            item for item in evidence_pool
+            if any(term in item.text.lower() for term in ("backend", "api", "service", "pipeline", "workflow", "database", "fastapi", "sql", "integration"))
+        ),
+        None,
+    )
+    debug_item = next(
+        (
+            item for item in evidence_pool
+            if any(term in item.text.lower() for term in ("debug", "bug", "failure", "incident", "issue", "root cause", "fix", "latency", "outage"))
+        ),
+        None,
+    )
+    architecture_item = next(
+        (
+            item for item in evidence_pool
+            if any(term in item.text.lower() for term in ("architecture", "design", "scalable", "distributed", "microservices", "integration", "platform", "cloud"))
+        ),
+        None,
+    )
+    leadership_item = next(
+        (
+            item for item in evidence_pool
+            if any(term in item.text.lower() for term in ("led", "lead", "stakeholder", "mentor", "managed", "ownership", "roadmap", "delivery"))
+        ),
+        None,
+    )
+
+    if category == "project":
+        return _pick("project") or _fallback(_clean_label(project_item.text if project_item else module_label, module_label), [project_item] if project_item else [])
+    if category == "deep_dive":
+        return (
+            _pick(predicate=lambda item: str(item.get("kind")) in {"project", "skill"} and item.get("evidence"))
+            or _fallback(_clean_label(project_item.text if project_item else module_label, module_label), [project_item] if project_item else [])
+        )
+    if category == "backend":
+        return (
+            _pick(predicate=lambda item: any(ev for ev in (item.get("evidence") or []) if any(term in ev.text.lower() for term in ("api", "service", "backend", "pipeline", "database", "integration"))))
+            or _fallback(_clean_label(backend_item.text if backend_item else project_item.text if project_item else module_label, module_label), [backend_item] if backend_item else ([project_item] if project_item else []))
+        )
+    if category == "debugging":
+        return (
+            _pick(predicate=lambda item: any(ev for ev in (item.get("evidence") or []) if any(term in ev.text.lower() for term in ("debug", "bug", "failure", "incident", "issue", "fix", "root cause"))))
+            or _fallback(_clean_label(debug_item.text if debug_item else project_item.text if project_item else module_label, module_label), [debug_item] if debug_item else ([project_item] if project_item else []))
+        )
+    if category == "architecture":
+        return (
+            _pick("architecture")
+            or _pick(predicate=lambda item: any(ev for ev in (item.get("evidence") or []) if any(term in ev.text.lower() for term in ("design", "architecture", "scalable", "distributed", "platform", "integration", "cloud"))))
+            or _fallback(_clean_label(architecture_item.text if architecture_item else project_item.text if project_item else module_label, module_label), [architecture_item] if architecture_item else ([project_item] if project_item else []))
+        )
+    if category == "leadership":
+        return (
+            _pick("leadership")
+            or _fallback(_clean_label(leadership_item.text if leadership_item else experience_item.text if experience_item else "your recent work", "your recent work"), [leadership_item] if leadership_item else ([experience_item] if experience_item else []))
+        )
+    return _fallback(module_label, [project_item] if project_item else [])
 
 
 
@@ -542,32 +602,32 @@ def _question_text(category: str, candidate: dict[str, object], context: Planner
         )
     if category == "project":
         return (
-            f"Walk me through {target}: what problem was it solving, what did you personally own, and how did you measure whether it worked?",
+            f"Walk me through {target}: what problem was it solving, what did you personally own, and what concrete outcome, metric, or user impact told you it was working?",
             evidence_text,
         )
     if category == "deep_dive":
         return (
-            f"In {target}, what was the hardest implementation decision you had to make, and what trade-offs shaped your final approach?",
+            f"Thinking about {target}, which implementation choice or trade-off best shows how you make technical decisions under real constraints, and why did you choose that path?",
             evidence_text,
         )
     if category == "backend":
         return (
-            f"For the backend or implementation layer of {target}, how did you structure the APIs, services, data flow, or modules so the system stayed reliable in day-to-day use?",
+            f"In {target}, how did you structure the APIs, services, integrations, or data flow so the system stayed maintainable and reliable as real usage increased?",
             evidence_text,
         )
     if category == "debugging":
         return (
-            f"Tell me about a debugging or production issue from {target} or similar recent work: what failed, how did you isolate the root cause, and what change prevented it from recurring?",
+            f"Describe a failure, debugging issue, or production problem from {target}: what signals told you something was wrong, how did you isolate the root cause, and what changed afterward?",
             evidence_text,
         )
     if category == "architecture":
         return (
-            f"If you had to redesign or scale {target} for higher load, more users, or stricter reliability requirements, what architecture or design changes would you make first and why?",
+            f"If {target} had to handle more scale, tighter reliability targets, or broader integration requirements, what design or architecture changes would you make first and what trade-offs would you watch?",
             evidence_text,
         )
     if category == "leadership":
         return (
-            f"Describe a situation from your recent work where you had to create alignment, make a delivery decision, or take ownership beyond coding. What did you do and what was the outcome?",
+            f"Tell me about a situation in your recent work where you had to align people, make a delivery decision, or take ownership beyond implementation. How did you handle it and what was the outcome?",
             evidence_text,
         )
     hr_prompt = HR_QUESTIONS[index % len(HR_QUESTIONS)]
@@ -735,12 +795,31 @@ def build_question_plan(
     )
 
     slot_order = ["intro", "project", "deep_dive", "backend", "debugging", "architecture", "leadership"]
+    role_slot_presets = {
+        "engineer": ["intro", "project", "deep_dive", "backend", "debugging", "architecture", "leadership"],
+        "senior_engineer": ["intro", "project", "deep_dive", "backend", "debugging", "architecture", "leadership"],
+        "lead": ["intro", "project", "deep_dive", "debugging", "architecture", "leadership", "leadership"],
+        "architect": ["intro", "project", "architecture", "deep_dive", "debugging", "architecture", "leadership"],
+        "manager": ["intro", "project", "debugging", "architecture", "leadership", "leadership", "architecture"],
+        "practice_head": ["intro", "project", "architecture", "debugging", "leadership", "leadership", "architecture"],
+    }
+    slot_order = list(role_slot_presets.get(role_family, slot_order))
     if total_questions == 6:
-        slot_order = ["intro", "project", "backend", "debugging", "architecture", "leadership"]
+        slot_order = slot_order[:6]
     elif total_questions == 8:
-        slot_order.append("project")
+        if role_family in {"architect", "manager", "practice_head", "lead"}:
+            slot_order.append("leadership" if role_family in {"manager", "practice_head", "lead"} else "architecture")
+        else:
+            slot_order.append("project")
     elif total_questions >= 9:
-        slot_order.extend(["project", "deep_dive"])
+        extra_slots = ["project", "deep_dive"]
+        if role_family == "architect":
+            extra_slots = ["architecture", "project"]
+        elif role_family in {"manager", "practice_head"}:
+            extra_slots = ["leadership", "architecture"]
+        elif role_family == "lead":
+            extra_slots = ["leadership", "project"]
+        slot_order.extend(extra_slots)
 
     def _build_slot_set(active_slots: list[str], variant: int = 0) -> list[dict[str, object]]:
         questions: list[dict[str, object]] = []

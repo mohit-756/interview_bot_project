@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from services.llm_answer_generator import generate_answer
 from services.llm_question_generator import (
     LLM_QUESTION_SYSTEM_PROMPT,
     build_structured_question_input,
@@ -366,3 +367,75 @@ def test_generate_question_bundle_with_fallback_runtime_shape(monkeypatch):
 
     assert set(["questions", "total_questions", "project_count", "hr_count", "project_questions_count", "theory_questions_count", "intro_count", "projects", "meta"]).issubset(bundle.keys())
     assert len(bundle["questions"]) == 6
+
+
+def test_generate_llm_questions_retries_on_missing_debugging_and_design(monkeypatch):
+    first = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly, focusing on the product area where your ownership was strongest?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "intro", "reference_answer": "good answer", "difficulty": "easy", "priority_source": "baseline", "rationale": "intro"},
+        {"text": "In the payments API revamp, what problem were you solving and what did you personally implement in FastAPI?", "category": "project", "focus_skill": "FastAPI", "project_name": "Payments API revamp", "intent": "project", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "recent_project", "rationale": "Payments API revamp reduced failures by 23%."},
+        {"text": "How did you collaborate with product on the payments API revamp roadmap?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "collaboration", "reference_answer": "good answer", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "collaboration"},
+        {"text": "Which backend choices helped the service stay maintainable as usage increased?", "category": "deep_dive", "focus_skill": "Python", "project_name": null, "intent": "implementation", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "backend service work"},
+        {"text": "How did you approach integrating the service with external systems and data sources?", "category": "deep_dive", "focus_skill": "API Integration", "project_name": "Payments API revamp", "intent": "integration", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "integration work"},
+        {"text": "What kind of ownership did you take when deadlines became tight?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "ownership", "reference_answer": "good answer", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "ownership"}
+      ]
+    }
+    """
+    second = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly, focusing on the backend project where your ownership and impact were strongest?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "intro", "reference_answer": "good answer", "difficulty": "easy", "priority_source": "baseline", "rationale": "intro"},
+        {"text": "In the payments API revamp, what problem were you solving, what did you personally own, and which outcome showed the redesign was working?", "category": "project", "focus_skill": "FastAPI", "project_name": "Payments API revamp", "intent": "project", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "recent_project", "rationale": "Payments API revamp reduced failures by 23% and improved partner onboarding."},
+        {"text": "When you redesigned the payments API revamp, how did you decide the service boundaries, request contracts, and data flow between internal and partner systems?", "category": "architecture", "focus_skill": "API Design", "project_name": "Payments API revamp", "intent": "design", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "architecture_signal", "rationale": "API design and partner integration work."},
+        {"text": "Describe a debugging or failure issue from the payments API revamp: what signal told you something was wrong, how did you isolate the root cause, and what prevented recurrence?", "category": "deep_dive", "focus_skill": "Debugging", "project_name": "Payments API revamp", "intent": "debugging", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "resume_strength", "rationale": "Reduced failures by 23% after production issue remediation."},
+        {"text": "If transaction volume doubled for the payments API revamp, what performance bottlenecks would you expect first and what scaling changes would you make?", "category": "deep_dive", "focus_skill": "Performance", "project_name": "Payments API revamp", "intent": "scaling", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "Backend API scaling and reliability."},
+        {"text": "Tell me about a release on the payments API revamp where you had to align engineering and product trade-offs while still keeping partner integrations stable.", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "leadership", "reference_answer": "good answer", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "cross-functional release ownership"}
+      ]
+    }
+    """
+    client = _SequencedClient([first, second])
+    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: client)
+    monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
+
+    result = generate_llm_questions(
+        jd_text="Backend Engineer role requiring Python, FastAPI, API design, debugging, integrations, and performance tuning.",
+        resume_text="""
+        Backend engineer with 3+ years of experience building APIs.
+        Skills: Python, FastAPI, SQL, API Integration.
+        Projects: Payments API revamp reduced failures by 23% and improved partner onboarding.
+        Experience: Built backend services, handled partner integrations, debugged production issues, and improved service reliability.
+        """,
+        question_count=6,
+        jd_title="Backend Engineer",
+        jd_skill_scores={"Python": 10, "FastAPI": 9, "API Design": 8, "Performance": 8},
+    )
+
+    assert client.chat.completions.calls == 2
+    assert result["quality"]["retry_used"] is True
+    assert any("missing_failure_debugging_tradeoff_question" == issue for issue in result["quality"]["first_attempt_issues"])
+    assert any(q["category"] == "architecture" for q in result["questions"])
+
+
+def test_generate_answer_returns_candidate_style_text(monkeypatch):
+    class _AnswerClient:
+        def __init__(self, content: str):
+            self.chat = type("_FakeChat", (), {"completions": _SequencedCompletions([content])})()
+
+    monkeypatch.setattr(
+        "services.llm_answer_generator._get_client",
+        lambda: _AnswerClient(
+            "I worked on a payments API revamp where partner failures were causing support escalations. I owned the FastAPI service changes, tightened request validation, and added better logging around partner callbacks so we could isolate bad payloads quickly. I chose to keep the first iteration simple with clearer service boundaries instead of introducing more infrastructure, because the immediate need was stability and faster onboarding. That reduced failures by 23%, improved partner onboarding, and gave us a cleaner base for later scaling."
+        ),
+    )
+    monkeypatch.setattr("services.llm_answer_generator._llm_model", lambda: "fake-model")
+
+    answer = generate_answer(
+        "Tell me about a debugging issue in your payments API revamp.",
+        "Projects: Payments API revamp reduced failures by 23%. Experience: Built FastAPI services, partner integrations, and debugging fixes.",
+        "Backend Engineer role requiring API design, debugging, and integrations.",
+    )
+
+    assert "I " in answer
+    assert "FastAPI" in answer
+    assert "23%" in answer
