@@ -9,6 +9,7 @@ from services.llm_question_generator import (
     LLM_QUESTION_SYSTEM_PROMPT,
     build_structured_question_input,
     generate_llm_questions,
+    generate_question_bundle_with_fallback,
 )
 from services.question_generation import build_question_bundle
 
@@ -28,22 +29,20 @@ class _FakeResponse:
         self.choices = [_FakeChoice(content)]
 
 
-class _FakeCompletions:
-    def __init__(self, content: str):
-        self._content = content
+class _SequencedCompletions:
+    def __init__(self, contents: list[str]):
+        self._contents = list(contents)
+        self.calls = 0
 
     def create(self, **kwargs):
-        return _FakeResponse(self._content)
+        index = min(self.calls, len(self._contents) - 1)
+        self.calls += 1
+        return _FakeResponse(self._contents[index])
 
 
-class _FakeChat:
-    def __init__(self, content: str):
-        self.completions = _FakeCompletions(content)
-
-
-class _FakeClient:
-    def __init__(self, content: str):
-        self.chat = _FakeChat(content)
+class _SequencedClient:
+    def __init__(self, contents: list[str]):
+        self.chat = type("_FakeChat", (), {"completions": _SequencedCompletions(contents)})()
 
 
 def test_generate_llm_questions_postprocesses_duplicates_and_noise(monkeypatch):
@@ -62,29 +61,18 @@ def test_generate_llm_questions_postprocesses_duplicates_and_noise(monkeypatch):
           "rationale": "Opens with a resume-aware summary prompt."
         },
         {
-          "text": "Walk me through the FastAPI service you built for the issue tracker and the trade-offs you handled around auth, logging, and SQLite?",
-          "category": "deep_dive",
+          "text": "In the issue tracker API project, what backend problem were you solving, what did you personally own, and how did you validate auth and logging behavior before shipping?",
+          "category": "project",
           "focus_skill": "FastAPI",
           "project_name": "Issue tracker API using FastAPI and SQLite with auth and logging",
           "intent": "Assess practical backend implementation depth.",
-          "reference_answer": "A strong answer should explain architecture, endpoints, auth flow, persistence trade-offs, failure handling, and lessons learned.",
+          "reference_answer": "A strong answer should explain architecture, auth flow, logging, validation, ownership boundaries, and lessons learned.",
           "difficulty": "medium",
-          "priority_source": "jd_resume_overlap",
-          "rationale": "Direct overlap between JD and resume project."
+          "priority_source": "recent_project",
+          "rationale": "Issue tracker API using FastAPI and SQLite with auth and logging"
         },
         {
-          "text": "Walk me through the FastAPI service you built for the issue tracker and the trade-offs you handled around auth, logging, and SQLite?",
-          "category": "deep_dive",
-          "focus_skill": "FastAPI",
-          "project_name": "Issue tracker API using FastAPI and SQLite with auth and logging",
-          "intent": "Duplicate that should be removed.",
-          "reference_answer": "duplicate",
-          "difficulty": "medium",
-          "priority_source": "jd_resume_overlap",
-          "rationale": "duplicate"
-        },
-        {
-          "text": "How did you debug SQL issues in production-like scenarios, and what signals helped you isolate the root cause quickly?",
+          "text": "When you debugged SQL issues in production-like scenarios, what signals helped you isolate the root cause quickly and how did you verify the fix?",
           "category": "deep_dive",
           "focus_skill": "SQL",
           "project_name": null,
@@ -92,32 +80,32 @@ def test_generate_llm_questions_postprocesses_duplicates_and_noise(monkeypatch):
           "reference_answer": "A strong answer should cover reproduction, observability, narrowing hypotheses, validating fixes, and preventing recurrence.",
           "difficulty": "medium",
           "priority_source": "jd_resume_overlap",
-          "rationale": "Resume explicitly mentions debugging SQL issues."
+          "rationale": "Built REST APIs in Python, debugged SQL issues, and shipped bug fixes with mentor guidance"
         },
         {
-          "text": "In the issue tracker API project, what did you own personally, how did you validate correctness, and what would you improve if usage grew 10x?",
-          "category": "project",
-          "focus_skill": null,
-          "project_name": "Issue tracker API using FastAPI and SQLite with auth and logging",
-          "intent": "Assess ownership and scaling judgment.",
-          "reference_answer": "A strong answer should explain ownership boundaries, testing/validation, constraints, and concrete improvements for scale.",
-          "difficulty": "medium",
-          "priority_source": "recent_project",
-          "rationale": "Best resume project for the role."
-        },
-        {
-          "text": "For this backend engineer role, if you had to add Docker-based deployment to a service like yours, how would you approach packaging, configuration, and local verification?",
+          "text": "If this service had to support 10x usage, what API, data, and observability trade-offs would you revisit first in the issue tracker design?",
           "category": "architecture_or_design",
+          "focus_skill": "FastAPI",
+          "project_name": "Issue tracker API using FastAPI and SQLite with auth and logging",
+          "intent": "Assess scaling judgment.",
+          "reference_answer": "A strong answer should explain expected bottlenecks, design options, trade-offs, and a validation plan.",
+          "difficulty": "medium",
+          "priority_source": "architecture_signal",
+          "rationale": "Issue tracker API using FastAPI and SQLite with auth and logging"
+        },
+        {
+          "text": "Docker is important in this JD. Given your FastAPI service experience, how would you package, configure, and locally verify that service in a containerized workflow?",
+          "category": "deep_dive",
           "focus_skill": "Docker",
           "project_name": null,
-          "intent": "Assess approach to a JD skill that is not strongly evidenced in the resume.",
-          "reference_answer": "A strong answer should explain containerization steps, environment handling, image/runtime choices, and practical local validation.",
+          "intent": "Assess practical transfer ability on a critical JD skill.",
+          "reference_answer": "A strong answer should explain Dockerfile structure, configuration handling, runtime choices, and local verification.",
           "difficulty": "medium",
           "priority_source": "jd_gap_probe",
           "rationale": "JD asks for Docker but resume evidence is weak."
         },
         {
-          "text": "Tell me about a time you had to adapt when requirements or priorities changed midway while shipping a backend fix or feature?",
+          "text": "Describe a time a backend requirement changed midway and how you adjusted your implementation plan without losing correctness or delivery momentum?",
           "category": "behavioral",
           "focus_skill": null,
           "project_name": null,
@@ -125,23 +113,12 @@ def test_generate_llm_questions_postprocesses_duplicates_and_noise(monkeypatch):
           "reference_answer": "A strong answer should describe the change, decision process, communication, execution changes, and outcome.",
           "difficulty": "easy",
           "priority_source": "resume_strength",
-          "rationale": "Fits junior backend profile with delivery pressure."
-        },
-        {
-          "text": "Python?",
-          "category": "deep_dive",
-          "focus_skill": "Python",
-          "project_name": null,
-          "intent": "too weak",
-          "reference_answer": "too weak",
-          "difficulty": "easy",
-          "priority_source": "jd_resume_overlap",
-          "rationale": "too short"
+          "rationale": "Shipped bug fixes with mentor guidance under delivery pressure."
         }
       ]
     }
     """
-    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: _FakeClient(fake_json))
+    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: _SequencedClient([fake_json]))
     monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
 
     result = generate_llm_questions(
@@ -163,8 +140,59 @@ def test_generate_llm_questions_postprocesses_duplicates_and_noise(monkeypatch):
     assert len({q["text"] for q in questions}) == 6
     assert any(q["category"] == "architecture" for q in questions)
     assert any(q["category"] == "behavioral" for q in questions)
+    assert any(q["category"] == "project" for q in questions)
     assert all(len(q["text"]) > 20 for q in questions)
     assert result["system_prompt"] == LLM_QUESTION_SYSTEM_PROMPT
+    assert result["quality"]["retry_used"] is False
+
+
+def test_generate_llm_questions_retries_once_when_first_output_is_generic(monkeypatch):
+    generic_first = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly and highlight your most relevant project?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "intro", "reference_answer": "intro answer", "difficulty": "easy", "priority_source": "baseline", "rationale": "intro"},
+        {"text": "Walk me through your most relevant project?", "category": "project", "focus_skill": null, "project_name": null, "intent": "generic", "reference_answer": "generic", "difficulty": "medium", "priority_source": "resume_strength", "rationale": "generic"},
+        {"text": "Walk me through your React experience?", "category": "deep_dive", "focus_skill": "React", "project_name": null, "intent": "generic", "reference_answer": "generic", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "generic"},
+        {"text": "Walk me through your JavaScript experience?", "category": "deep_dive", "focus_skill": "JavaScript", "project_name": null, "intent": "generic", "reference_answer": "generic", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "generic"},
+        {"text": "Describe a time you handled stakeholders?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "generic", "reference_answer": "generic", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "generic"},
+        {"text": "Describe a time you handled conflict?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "generic", "reference_answer": "generic", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "generic"}
+      ]
+    }
+    """
+    improved_second = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly, focusing on the frontend work or product area where you had the clearest ownership and user impact?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "Assess background and strongest evidence.", "reference_answer": "A strong answer should connect background, strongest frontend work, impact, and motivation.", "difficulty": "easy", "priority_source": "baseline", "rationale": "Resume shows ownership across frontend delivery."},
+        {"text": "In the analytics dashboard rebuild, what interaction or rendering problem were you solving, what did you personally change in React, and how did you confirm the UI became faster or easier to use?", "category": "project", "focus_skill": "React", "project_name": "Analytics dashboard rebuild for customer operations", "intent": "Assess concrete frontend implementation depth.", "reference_answer": "A strong answer should explain the problem, ownership, React implementation details, validation metrics, and user outcome.", "difficulty": "medium", "priority_source": "recent_project", "rationale": "Analytics dashboard rebuild for customer operations improved page performance by 32%."},
+        {"text": "When you built reusable components in the design system, how did you balance consistency, flexibility, and developer adoption across product teams?", "category": "deep_dive", "focus_skill": "React", "project_name": "Reusable design system", "intent": "Assess component architecture and practical trade-offs.", "reference_answer": "A strong answer should cover component boundaries, API choices, migration strategy, and adoption trade-offs.", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "Built reusable component library adopted across product surfaces."},
+        {"text": "The resume mentions a 32% page-performance improvement. Which frontend bottlenecks did you find first, what debugging tools did you use, and what changes moved the metric the most?", "category": "deep_dive", "focus_skill": "JavaScript", "project_name": "Analytics dashboard rebuild for customer operations", "intent": "Assess debugging and performance depth.", "reference_answer": "A strong answer should describe bottleneck discovery, tooling, implemented fixes, and measured impact.", "difficulty": "medium", "priority_source": "resume_strength", "rationale": "Improved page performance by 32% in analytics dashboard rebuild."},
+        {"text": "If this product had to support twice the feature surface without slowing down, how would you evolve the frontend architecture, state boundaries, and observability strategy?", "category": "architecture", "focus_skill": "Frontend Architecture", "project_name": "Analytics dashboard rebuild for customer operations", "intent": "Assess system design judgment for frontend scale.", "reference_answer": "A strong answer should explain architecture options, state-management trade-offs, observability, and scaling decisions.", "difficulty": "medium", "priority_source": "architecture_signal", "rationale": "Resume shows component architecture and performance optimization work."},
+        {"text": "Describe a release where product expectations changed late. How did you reset scope with design or product partners while still shipping a stable frontend experience?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "Assess collaboration and prioritization.", "reference_answer": "A strong answer should cover expectation reset, stakeholder communication, prioritization, execution, and outcome.", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "Frontend delivery requires close product/design coordination."}
+      ]
+    }
+    """
+    client = _SequencedClient([generic_first, improved_second])
+    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: client)
+    monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
+
+    result = generate_llm_questions(
+        jd_text="Frontend Engineer responsible for React, JavaScript, performance optimization, reusable components, and collaboration with product/design.",
+        resume_text="""
+        Frontend engineer with 4+ years of experience building product UIs.
+        Skills: React, JavaScript, TypeScript, Performance Optimization.
+        Projects: Analytics dashboard rebuild for customer operations improved page performance by 32%; Reusable design system adopted across product teams.
+        Experience: Built reusable component libraries, optimized rendering bottlenecks, and collaborated with product and design on releases.
+        """,
+        question_count=6,
+        jd_title="Frontend Engineer",
+        jd_skill_scores={"React": 10, "JavaScript": 9, "TypeScript": 8, "Performance Optimization": 8},
+    )
+
+    assert client.chat.completions.calls == 2
+    assert result["quality"]["retry_used"] is True
+    assert result["quality"]["first_attempt_issues"]
+    assert len(result["questions"]) == 6
+    assert any(q["category"] == "project" for q in result["questions"])
 
 
 def test_build_question_bundle_falls_back_to_dynamic_planner(monkeypatch):
@@ -206,9 +234,135 @@ def test_structured_input_is_dynamic_and_role_aware():
     )
 
     assert structured.role == "Practice Head - Digital Engineering"
+    assert structured.role_family == "practice_head"
     assert structured.seniority in {"practice_head", "manager", "lead"}
     assert structured.experience_level in {"executive", "staff_plus"}
     assert "Delivery Management" in structured.resume_skills
     assert "Cloud" in structured.overlap_skills
     assert "Pega" in structured.jd_only_skills
     assert structured.resume_projects
+    assert structured.resume_leadership_signals
+
+
+def test_validate_three_priority_profiles_with_retry_and_fallback(monkeypatch):
+    frontend_json = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly, focusing on the frontend work where you had the clearest ownership and impact?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "intro", "reference_answer": "good", "difficulty": "easy", "priority_source": "baseline", "rationale": "frontend intro"},
+        {"text": "In the analytics dashboard rebuild, what did you personally change in React, and how did you verify the 32% performance gain?", "category": "project", "focus_skill": "React", "project_name": "Analytics dashboard rebuild", "intent": "project depth", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "recent_project", "rationale": "Analytics dashboard rebuild improved page performance by 32%."},
+        {"text": "When you built the reusable design system, how did you decide component boundaries and API patterns across teams?", "category": "deep_dive", "focus_skill": "React", "project_name": "Reusable design system", "intent": "component architecture", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "Reusable design system adopted across teams."},
+        {"text": "Which rendering or state bottlenecks did you debug first in that dashboard, and what signals told you the fixes were working?", "category": "deep_dive", "focus_skill": "JavaScript", "project_name": "Analytics dashboard rebuild", "intent": "debugging", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "resume_strength", "rationale": "Improved page performance by 32%."},
+        {"text": "If the product scope doubled, how would you evolve the frontend architecture, state boundaries, and observability strategy without regressing UX?", "category": "architecture", "focus_skill": "Frontend Architecture", "project_name": "Analytics dashboard rebuild", "intent": "architecture", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "architecture_signal", "rationale": "architecture and performance work"},
+        {"text": "Describe a release where product expectations changed late. How did you reset scope with design or product partners and still ship a stable experience?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "collaboration", "reference_answer": "good answer", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "collaboration with product and design"}
+      ]
+    }
+    """
+    aiml_json = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly, focusing on the ML product or pipeline where your contribution and measurable impact were strongest?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "intro", "reference_answer": "good", "difficulty": "easy", "priority_source": "baseline", "rationale": "AIML intro"},
+        {"text": "In the fraud detection pipeline, what features or model changes did you personally drive, and how did they improve precision or recall in production?", "category": "project", "focus_skill": "Machine Learning", "project_name": "Fraud detection pipeline", "intent": "ml impact", "reference_answer": "good answer", "difficulty": "medium", "priority_source": "recent_project", "rationale": "Improved fraud recall by 18% and reduced false positives by 11%."},
+        {"text": "How did you choose between classical models and transformer-based approaches in your recent NLP work, and what trade-offs mattered most for the business constraint?", "category": "deep_dive", "focus_skill": "NLP", "project_name": "Support ticket triage model", "intent": "model choice", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "jd_resume_overlap", "rationale": "Built NLP triage model for support workflows."},
+        {"text": "When model quality drifted after deployment, what monitoring signals alerted you, how did you diagnose the root cause, and what remediation path did you take?", "category": "deep_dive", "focus_skill": "MLOps", "project_name": "Fraud detection pipeline", "intent": "mlops depth", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "jd_resume_overlap", "rationale": "Managed ML pipeline monitoring and retraining triggers."},
+        {"text": "If transaction volume increased 5x, how would you redesign the feature pipeline, model-serving path, and rollback strategy to keep latency and reliability under control?", "category": "architecture", "focus_skill": "ML Systems", "project_name": "Fraud detection pipeline", "intent": "ml system design", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "architecture_signal", "rationale": "production ML pipeline architecture"},
+        {"text": "Describe a time you had to explain a model trade-off to product, risk, or operations stakeholders and align on the final decision?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "stakeholder communication", "reference_answer": "good answer", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "cross-functional ML delivery"}
+      ]
+    }
+    """
+    leadership_first_bad = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly and highlight your most relevant project?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "intro", "reference_answer": "good", "difficulty": "easy", "priority_source": "baseline", "rationale": "generic"},
+        {"text": "Walk me through your Databricks experience?", "category": "deep_dive", "focus_skill": "Databricks", "project_name": null, "intent": "generic", "reference_answer": "good", "difficulty": "medium", "priority_source": "jd_resume_overlap", "rationale": "generic"},
+        {"text": "Walk me through your leadership experience?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "generic", "reference_answer": "good", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "generic"},
+        {"text": "Walk me through your stakeholder experience?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "generic", "reference_answer": "good", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "generic"},
+        {"text": "Walk me through your architecture experience?", "category": "deep_dive", "focus_skill": "Architecture", "project_name": null, "intent": "generic", "reference_answer": "good", "difficulty": "medium", "priority_source": "resume_strength", "rationale": "generic"},
+        {"text": "Describe a conflict?", "category": "behavioral", "focus_skill": null, "project_name": null, "intent": "generic", "reference_answer": "good", "difficulty": "easy", "priority_source": "resume_strength", "rationale": "generic"}
+      ]
+    }
+    """
+    leadership_second_good = """
+    {
+      "questions": [
+        {"text": "Please introduce yourself briefly, focusing on the Databricks or data-platform transformation where your leadership and business impact were strongest?", "category": "intro", "focus_skill": null, "project_name": null, "intent": "intro", "reference_answer": "good", "difficulty": "easy", "priority_source": "baseline", "rationale": "leadership intro"},
+        {"text": "In the enterprise lakehouse modernization program, what operating model or platform decisions did you personally drive, and what measurable business or delivery outcomes followed?", "category": "project", "focus_skill": "Databricks", "project_name": "Enterprise lakehouse modernization program", "intent": "practice leadership", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "recent_project", "rationale": "Scaled delivery across 6 accounts and improved platform adoption by 40%."},
+        {"text": "As a practice head, how did you decide which Databricks capabilities or accelerators should become reusable offerings across accounts, and what trade-offs did you make between standardization and client flexibility?", "category": "leadership", "focus_skill": "Databricks", "project_name": "Databricks practice acceleration", "intent": "practice building", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "leadership_signal", "rationale": "Built reusable offerings and mentored delivery leaders across accounts."},
+        {"text": "When a large client needed architectural changes in the lakehouse platform, how did you evaluate design trade-offs around governance, cost, performance, and team capability before committing?", "category": "architecture", "focus_skill": "Lakehouse Architecture", "project_name": "Enterprise lakehouse modernization program", "intent": "architecture trade-offs", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "architecture_signal", "rationale": "Owned governance, platform strategy, and delivery outcomes across accounts."},
+        {"text": "Describe a situation where you had to align senior stakeholders, delivery leaders, and client teams around a difficult platform or staffing decision. What did you do and what changed?", "category": "leadership", "focus_skill": null, "project_name": null, "intent": "stakeholder leadership", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "leadership_signal", "rationale": "Stakeholder alignment, team scaling, hiring, governance, and delivery outcomes across accounts."},
+        {"text": "If this practice had to scale Databricks delivery across several new enterprise clients next quarter, what capabilities, governance mechanisms, and risk controls would you put in place first?", "category": "architecture", "focus_skill": "Databricks Practice", "project_name": "Databricks practice acceleration", "intent": "scaling strategy", "reference_answer": "good answer", "difficulty": "hard", "priority_source": "architecture_signal", "rationale": "Scaled delivery across 6 accounts and mentored leaders."}
+      ]
+    }
+    """
+
+    client = _SequencedClient([frontend_json, aiml_json, leadership_first_bad, leadership_second_good])
+    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: client)
+    monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
+
+    frontend = generate_llm_questions(
+        jd_text="Frontend Engineer responsible for React, JavaScript, TypeScript, performance optimization, reusable components, and collaboration with product/design.",
+        resume_text="""
+        Frontend engineer with 4+ years of experience building product UIs.
+        Skills: React, JavaScript, TypeScript, Performance Optimization.
+        Projects: Analytics dashboard rebuild improved page performance by 32%; Reusable design system adopted across product teams.
+        Experience: Built reusable component libraries, optimized rendering bottlenecks, and collaborated with product and design on releases.
+        """,
+        question_count=6,
+        jd_title="Frontend Engineer",
+        jd_skill_scores={"React": 10, "JavaScript": 9, "TypeScript": 8, "Performance Optimization": 8},
+    )
+    assert frontend["structured_input"]["role_family"] in {"engineer", "senior_engineer"}
+    assert frontend["quality"]["retry_used"] is False
+
+    aiml = generate_llm_questions(
+        jd_text="AIML Engineer responsible for machine learning, NLP, MLOps, experimentation, model monitoring, and stakeholder communication.",
+        resume_text="""
+        AIML engineer with 5+ years of experience building ML products.
+        Skills: Machine Learning, NLP, Python, MLOps.
+        Projects: Fraud detection pipeline improved recall by 18% and reduced false positives by 11%; Support ticket triage model for enterprise operations.
+        Experience: Built training pipelines, monitored drift, and partnered with product and risk teams on model deployment decisions.
+        """,
+        question_count=6,
+        jd_title="AIML Engineer",
+        jd_skill_scores={"Machine Learning": 10, "NLP": 9, "MLOps": 8, "Experimentation": 7},
+    )
+    assert aiml["structured_input"]["role_family"] in {"engineer", "senior_engineer", "lead"}
+    assert aiml["quality"]["retry_used"] is False
+
+    leadership = generate_llm_questions(
+        jd_text="Databricks Practice Head responsible for Databricks strategy, lakehouse architecture, stakeholder leadership, governance, delivery excellence, capability building, and scaling multi-account practice outcomes.",
+        resume_text="""
+        Databricks practice head with 15+ years of experience in data engineering and delivery leadership.
+        Skills: Databricks, Lakehouse, Stakeholder Management, Delivery Governance.
+        Projects: Enterprise lakehouse modernization program scaled delivery across 6 accounts and improved platform adoption by 40%; Databricks practice acceleration initiative.
+        Experience: Owned roadmap, stakeholder alignment, team scaling, hiring, governance, reusable offerings, and mentoring delivery leaders across accounts.
+        """,
+        question_count=6,
+        jd_title="Databricks Practice Head",
+        jd_skill_scores={"Databricks": 10, "Lakehouse Architecture": 9, "Stakeholder Management": 9, "Delivery Governance": 8},
+    )
+    assert leadership["structured_input"]["role_family"] == "practice_head"
+    assert leadership["quality"]["retry_used"] is True
+    assert any(q["category"] == "leadership" for q in leadership["questions"])
+    assert any(q["category"] == "architecture" for q in leadership["questions"])
+
+
+def test_generate_question_bundle_with_fallback_runtime_shape(monkeypatch):
+    def _boom(*args, **kwargs):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr("services.llm_question_generator.generate_llm_questions", _boom)
+
+    bundle = generate_question_bundle_with_fallback(
+        resume_text="""
+        Backend engineer with 3+ years experience.
+        Skills: Python, FastAPI, SQL.
+        Projects: Internal ticketing service.
+        Experience: Built APIs and fixed production issues.
+        """,
+        jd_title="Backend Engineer",
+        jd_skill_scores={"Python": 10, "FastAPI": 9, "SQL": 8},
+        question_count=6,
+    )
+
+    assert set(["questions", "total_questions", "project_count", "hr_count", "project_questions_count", "theory_questions_count", "intro_count", "projects", "meta"]).issubset(bundle.keys())
+    assert len(bundle["questions"]) == 6
