@@ -37,7 +37,6 @@ export default function HRScoreMatrixPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
-  const [roleFilter, setRoleFilter] = useState("all");
   const [jdFilter, setJdFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [decisionFilter, setDecisionFilter] = useState("all");
@@ -98,8 +97,6 @@ export default function HRScoreMatrixPage() {
 
   useEffect(() => { loadRows(); }, []);
 
-  const roles = useMemo(() => ["all", ...new Set(rows.map((c) => c.role).filter(Boolean))], [rows]);
-
   const filteredCandidates = useMemo(() => {
     return rows
       .filter((candidate) => {
@@ -107,11 +104,10 @@ export default function HRScoreMatrixPage() {
           candidate.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
           candidate.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
           String(candidate.candidate_uid || "").toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesRole = roleFilter === "all" || candidate.role === roleFilter;
         const matchesJd = jdFilter === "all" || String(candidate.jobId) === jdFilter || candidate.jobTitle === jdFilter;
         const matchesStatus = statusFilter === "all" || candidate.interviewStatus?.key === statusFilter;
         const matchesDecision = decisionFilter === "all" || candidate.finalDecision?.key === decisionFilter;
-        return matchesSearch && matchesRole && matchesJd && matchesStatus && matchesDecision;
+        return matchesSearch && matchesJd && matchesStatus && matchesDecision;
       })
       .sort((left, right) => {
         const leftValue = Number(left[sortConfig.key] || 0);
@@ -120,9 +116,9 @@ export default function HRScoreMatrixPage() {
         if (leftValue > rightValue) return sortConfig.direction === "asc" ? 1 : -1;
         return 0;
       });
-  }, [rows, searchTerm, roleFilter, jdFilter, statusFilter, decisionFilter, sortConfig]);
+  }, [rows, searchTerm, jdFilter, statusFilter, decisionFilter, sortConfig]);
 
-  useEffect(() => { setPage(1); }, [searchTerm, roleFilter, jdFilter, statusFilter, decisionFilter, sortConfig]);
+  useEffect(() => { setPage(1); }, [searchTerm, jdFilter, statusFilter, decisionFilter, sortConfig]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCandidates.length / itemsPerPage));
   const paginatedCandidates = filteredCandidates.slice((page - 1) * itemsPerPage, page * itemsPerPage);

@@ -6,13 +6,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.llm_answer_generator import generate_answer
 from services.llm.client import _get_client, _llm_model, _llm_provider, _resolve_llm_config
-from services.llm_question_generator import (
+from ai_engine.phase2.llm_question_generator import (
     LLM_QUESTION_SYSTEM_PROMPT,
     build_structured_question_input,
     generate_llm_questions,
     generate_question_bundle_with_fallback,
 )
-from services.question_generation import build_question_bundle
+from ai_engine.phase2.question_generation import build_question_bundle
 
 
 class _FakeMessage:
@@ -119,8 +119,8 @@ def test_generate_llm_questions_postprocesses_duplicates_and_noise(monkeypatch):
       ]
     }
     """
-    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: _SequencedClient([fake_json]))
-    monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._get_client", lambda: _SequencedClient([fake_json]))
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._llm_model", lambda: "fake-model")
 
     result = generate_llm_questions(
         jd_text="Backend Engineer role requiring Python, FastAPI, SQL, Docker.",
@@ -173,8 +173,8 @@ def test_generate_llm_questions_retries_once_when_first_output_is_generic(monkey
     }
     """
     client = _SequencedClient([generic_first, improved_second])
-    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: client)
-    monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._get_client", lambda: client)
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._llm_model", lambda: "fake-model")
 
     result = generate_llm_questions(
         jd_text="Frontend Engineer responsible for React, JavaScript, performance optimization, reusable components, and collaboration with product/design.",
@@ -200,7 +200,7 @@ def test_build_question_bundle_falls_back_to_dynamic_planner(monkeypatch):
     def _boom(*args, **kwargs):
         raise RuntimeError("groq temporarily unavailable")
 
-    monkeypatch.setattr("services.llm_question_generator.generate_llm_questions", _boom)
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator.generate_llm_questions", _boom)
 
     bundle = build_question_bundle(
         resume_text="""
@@ -296,8 +296,8 @@ def test_validate_three_priority_profiles_with_retry_and_fallback(monkeypatch):
     """
 
     client = _SequencedClient([frontend_json, aiml_json, leadership_first_bad, leadership_second_good])
-    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: client)
-    monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._get_client", lambda: client)
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._llm_model", lambda: "fake-model")
 
     frontend = generate_llm_questions(
         jd_text="Frontend Engineer responsible for React, JavaScript, TypeScript, performance optimization, reusable components, and collaboration with product/design.",
@@ -351,7 +351,7 @@ def test_generate_question_bundle_with_fallback_runtime_shape(monkeypatch):
     def _boom(*args, **kwargs):
         raise RuntimeError("llm down")
 
-    monkeypatch.setattr("services.llm_question_generator.generate_llm_questions", _boom)
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator.generate_llm_questions", _boom)
 
     bundle = generate_question_bundle_with_fallback(
         resume_text="""
@@ -395,8 +395,8 @@ def test_generate_llm_questions_retries_on_missing_debugging_and_design(monkeypa
     }
     """
     client = _SequencedClient([first, second])
-    monkeypatch.setattr("services.llm_question_generator._get_client", lambda: client)
-    monkeypatch.setattr("services.llm_question_generator._llm_model", lambda: "fake-model")
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._get_client", lambda: client)
+    monkeypatch.setattr("ai_engine.phase2.llm_question_generator._llm_model", lambda: "fake-model")
 
     result = generate_llm_questions(
         jd_text="Backend Engineer role requiring Python, FastAPI, API design, debugging, integrations, and performance tuning.",
@@ -417,19 +417,17 @@ def test_generate_llm_questions_retries_on_missing_debugging_and_design(monkeypa
     assert any(q["category"] == "architecture" for q in result["questions"])
 
 
-def test_llm_client_prefers_groq_key_and_model(monkeypatch):
+def test_llm_client_prefers_ollama_model(monkeypatch):
     _resolve_llm_config.cache_clear()
     _get_client.cache_clear()
-    monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key")
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2.5-coder:3b")
 
     client = _get_client()
 
     assert client is not None
-    assert _llm_provider() == "groq"
-    assert _llm_model() == "llama-3.3-70b-versatile"
+    assert _llm_provider() == "ollama"
+    assert _llm_model() == "qwen2.5-coder:3b"
 
     _resolve_llm_config.cache_clear()
     _get_client.cache_clear()

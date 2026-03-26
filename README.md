@@ -1,13 +1,13 @@
 # AI Interview Platform
 
-**End-to-end AI-powered interview workflow with FastAPI backend, React 19 + Vite frontend, and Groq LLM integration.**
+**End-to-end AI-powered interview workflow with FastAPI backend, React 19 + Vite frontend, and provider-based LLM integration (Ollama default, Groq optional).**
 
 - 🔐 Session-cookie auth for candidate and HR users
 - 📊 Deterministic resume scoring (v2) against HR-managed JDs with academic cutoff validation
 - 💡 AI resume advice and practice-kit generation from uploaded resumes
 - ⏱️ Timed interview sessions with adaptive follow-up questions
 - 📹 Webcam proctoring with OpenCV frame analysis, local speech-to-text (Groq Whisper), and HR review/finalization
-- 🤖 Groq LLM-powered answer scoring with local fallback rubric
+- 🤖 LLM-powered answer scoring with local fallback rubric
 - ✅ Dedicated HR decision columns (no more JSON blob conflicts)
 
 ---
@@ -19,7 +19,7 @@
 - **Entrypoint**: `main.py`
 - **API Router**: `routes/api_routes.py`
 - **Route Groups**:
-  - `routes/auth/sessions.py` — signup, login, logout, profile updates, password changes, Groq health check
+   - `routes/auth/sessions.py` — signup, login, logout, profile updates, password changes, LLM provider health check
   - `routes/candidate/workflow.py` — dashboard, JD selection, resume upload, practice kit
   - `routes/hr/management.py` — JD CRUD, candidate search, skill generation, bulk scoring
   - `routes/hr/interview_review.py` — interview detail, finalization, **re-evaluation endpoint**
@@ -44,7 +44,9 @@
   - Logic: Semantic similarity (30%), skill match (25%), experience (15%), education (10%), academic % (5%), resume quality (5%)
   
 - **Phase 2** (Question Generation):
-  - `ai_engine/phase2/question_builder.py` — LLM-powered question generation with deterministic fallback
+   - `ai_engine/phase2/question_plan.py` — dynamic question planning and slot prioritization
+   - `ai_engine/phase2/llm_question_generator.py` — LLM-first generation with deterministic fallback
+   - `ai_engine/phase2/question_generation.py` — runtime-facing public question bundle entrypoint
   - Projects extracted from resume + weighted skill distribution
   - Ratio: 80% technical (project-based) + 20% behavioral
   
@@ -53,7 +55,7 @@
   - Stages: intro (easy), project (hard), HR (medium)
 
 - **Services**:
-  - `services/llm/client.py` — Groq LLM integration (skill extraction, answer scoring)
+   - `services/llm/client.py` — provider-based LLM integration (Ollama/Groq)
   - `services/practice.py` — practice kit generation
   - `services/resume_advice.py` — deterministic resume improvement suggestions
   - `services/jd_sync.py` — sync legacy jobs and JD config rows
@@ -74,7 +76,7 @@
 - ✅ Screening bands: `strong_shortlist` (≥80), `review_shortlist` (65-79), `reject` (<65)
 
 #### Interview Workflow (Phase 3)
-- ✅ **LLM Answer Scoring**: Groq-powered with local fallback (never "Pending forever")
+- ✅ **LLM Answer Scoring**: provider-based (Ollama/Groq) with local fallback (never "Pending forever")
 - ✅ **llm_eval_status Tracking**: `pending` → `running` → `completed` / `failed`
 - ✅ **Re-evaluation Endpoint**: HR can manually retry scoring after Groq outages
 - ✅ **Graceful Transcription**: Empty transcript returned instead of HTTP 500 if Whisper unavailable
@@ -89,7 +91,8 @@
 - ✅ **New Endpoints**:
   - `PUT /api/auth/profile` — update display name
   - `POST /api/auth/change-password` — change password with verification
-  - `GET /api/health/groq` — Groq API status (shows if LLM/Whisper available)
+   - `GET /api/health/groq` — backward-compatible LLM health route
+   - `GET /api/health/llm` — provider-aware LLM health route
 
 #### Proctoring
 - ✅ **OpenCV Frame Analysis**: Face detection, motion tracking, shoulder visibility
@@ -148,7 +151,7 @@
 - Python 3.10+
 - Node.js LTS
 - npm
-- **Groq API Key** (for LLM + Whisper; optional but recommended)
+- **Ollama** (default) or **Groq API Key** (optional alternative)
 
 ---
 
@@ -163,7 +166,12 @@ DATABASE_URL=sqlite:///./interview_bot.db
 # Authentication
 SECRET_KEY=replace_with_a_long_random_secret_key
 
-# Groq API (required for LLM features)
+# LLM runtime (default)
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen2.5-coder:3b
+OLLAMA_CHAT_URL=http://localhost:11434/api/chat
+
+# Groq API (only required when LLM_PROVIDER=groq)
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_LLM_MODEL=llama-3.1-8b-instant
 GROQ_WHISPER_MODEL=whisper-large-v3-turbo
@@ -189,6 +197,7 @@ PROCTOR_PAUSE_ENABLED=false  # Set true to enforce pause on repeated violations
 **Notes**:
 - For Gmail: Use [App Password](https://support.google.com/accounts/answer/185833), not your main password
 - Groq key: Get from [console.groq.com](https://console.groq.com)
+- Ollama default runtime expects a local server reachable at `OLLAMA_CHAT_URL`
 - First transcription request may download Whisper model (~3GB)
 - If model download blocked, set `WHISPER_MODEL_PATH` to local Faster Whisper dir
 
@@ -238,7 +247,8 @@ Frontend URL: `http://localhost:5173`
 ### Health & System
 
 - `GET /health` — basic health check
-- `GET /api/health/groq` — Groq API status (tells if LLM/Whisper available)
+- `GET /api/health/groq` — backward-compatible LLM health status endpoint
+- `GET /api/health/llm` — provider-aware LLM health status endpoint
 
 ### Authentication
 
@@ -313,7 +323,9 @@ Frontend URL: `http://localhost:5173`
 │   │   ├── matching.py      (text extraction, semantic score, skill match)
 │   │   └── scoring.py        (resume scorecard v2, answer rubric)
 │   ├── phase2/
-│   │   └── question_builder.py (LLM question generation + fallback)
+│   │   ├── question_plan.py          (dynamic question planning + prioritization)
+│   │   ├── llm_question_generator.py (LLM generation + deterministic fallback)
+│   │   └── question_generation.py    (runtime-facing question bundle facade)
 │   └── phase3/
 │       └── question_flow.py   (adaptive question selection)
 ├── docs/
@@ -323,7 +335,7 @@ Frontend URL: `http://localhost:5173`
 │   └── vite.config.js
 ├── routes/
 │   ├── auth/
-│   │   └── sessions.py       (signup, login, profile, password, Groq health)
+│   │   └── sessions.py       (signup, login, profile, password, LLM health)
 │   ├── candidate/
 │   │   └── workflow.py       (dashboard, JD selection, resume, practice, schedule)
 │   ├── hr/
@@ -338,7 +350,7 @@ Frontend URL: `http://localhost:5173`
 │   └── schemas.py            (request bodies)
 ├── services/
 │   ├── llm/
-│   │   └── client.py         (Groq LLM skill extraction + answer scoring)
+│   │   └── client.py         (provider adapter: Ollama/Groq chat completions)
 │   ├── practice.py
 │   ├── resume_advice.py
 │   ├── jd_sync.py
@@ -434,7 +446,7 @@ python -m unittest discover -s tests -p "test_*.py"
 ### Startup
 - `main.py` runs `ensure_schema()` to backfill columns on existing SQLite DBs (non-breaking)
 - SentenceTransformer model preloaded at startup (avoids 10s cold start on first resume)
-- Groq API key checked at startup → warning logged if missing
+- LLM provider is checked at startup (`ollama` default, `groq` optional)
 - All routes require session cookie set by `/api/auth/login`
 
 ### CORS
@@ -481,11 +493,11 @@ python -m unittest discover -s tests -p "test_*.py"
 
 ### Transcription returns empty transcript
 
-**Cause**: Groq Whisper unavailable or audio quality too poor
+**Cause**: Whisper provider unavailable or audio quality too poor
 
 **Solution**: Candidate can type answer instead (graceful fallback)
-- Check Groq API status: `GET /api/health/groq`
-- If degraded: verify `GROQ_API_KEY` is valid
+- Check LLM status: `GET /api/health/llm`
+- If using Groq and degraded: verify `GROQ_API_KEY`
 
 ### Answer scores show "Pending"
 
@@ -498,7 +510,7 @@ python -m unittest discover -s tests -p "test_*.py"
 - Refresh page after ~30s to see scores
 
 **If still pending**: 
-- Check Groq API: `GET /api/health/groq`
+- Check LLM API: `GET /api/health/llm`
 - Local rubric fallback was used instead (scores will eventually populate)
 
 ### Resume re-upload wipes interview schedule

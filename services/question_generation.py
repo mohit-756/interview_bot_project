@@ -3,7 +3,7 @@
 Runtime-facing callers should come through this module so the active question
 flow stays easy to trace:
 
-runtime/browser -> question_generation -> llm_question_generator -> question_plan fallback
+runtime/browser -> services.question_generation -> services.llm_question_generator -> services.question_plan fallback
 """
 
 from __future__ import annotations

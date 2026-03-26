@@ -183,6 +183,7 @@ def ensure_schema() -> None:
                 ("metadata_json",     "JSON"),
                 ("answer_summary",    "TEXT"),
                 ("relevance_score",   "FLOAT"),
+                ("started_at",        "DATETIME"),
                 ("time_taken_seconds","INTEGER"),
                 ("skipped",           "BOOLEAN DEFAULT 0 NOT NULL"),
                 ("answer_text",       "TEXT"),
@@ -323,15 +324,24 @@ def ensure_schema() -> None:
 ensure_schema()
 
 
-# ── FIX: Check GROQ_API_KEY at startup so engineers know immediately ────────
-_groq_key = os.getenv("GROQ_API_KEY", "")
-if not _groq_key:
-    logger.warning(
-        "⚠️  GROQ_API_KEY is not set. "
-        "Voice transcription and LLM answer scoring will be unavailable. "
-        "The system will run in text-only / local-scoring mode. "
-        "Set GROQ_API_KEY in your .env file to enable full AI features."
-    )
+# ── LLM provider startup checks ─────────────────────────────────────────────
+_llm_provider = (os.getenv("LLM_PROVIDER") or "ollama").strip().lower()
+if _llm_provider == "groq":
+    _groq_key = os.getenv("GROQ_API_KEY", "")
+    if not _groq_key:
+        logger.warning(
+            "GROQ_API_KEY is not set. "
+            "Voice transcription and LLM answer scoring may be unavailable. "
+            "Set GROQ_API_KEY in .env when using LLM_PROVIDER=groq."
+        )
+elif _llm_provider == "ollama":
+    _ollama_model = (os.getenv("OLLAMA_MODEL") or "qwen2.5-coder:3b").strip()
+    logger.info("LLM provider is ollama with model=%s", _ollama_model)
+elif _llm_provider == "gemini":
+    _gemini_model = (os.getenv("LLM_MODEL") or "gemini-2.5-flash").strip()
+    logger.info("LLM provider is gemini with model=%s", _gemini_model)
+else:
+    logger.warning("Unknown LLM_PROVIDER=%s. Expected one of: ollama, groq, gemini", _llm_provider)
 
 
 # ── FIX: Pre-load SentenceTransformer on startup ────────────────────────────
@@ -359,10 +369,7 @@ app.add_middleware(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

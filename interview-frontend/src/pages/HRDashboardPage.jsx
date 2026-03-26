@@ -8,6 +8,7 @@ import StatusBadge from "../components/StatusBadge";
 import { hrApi } from "../services/api";
 
 const CHART_COLORS = ["#2563eb", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#06b6d4"];
+const EMPTY_LIST = [];
 
 function ChartCard({ title, subtitle, children }) {
   return (
@@ -31,10 +32,10 @@ export default function HRDashboardPage() {
   const [error, setError] = useState("");
 
   const overview = dashboard?.analytics?.overview || {};
-  const pipeline = dashboard?.analytics?.pipeline || [];
-  const funnel = dashboard?.analytics?.funnel || [];
-  const scorePerJd = dashboard?.analytics?.avg_score_per_jd || [];
-  const topSkills = dashboard?.analytics?.top_matched_skills || [];
+  const pipeline = dashboard?.analytics?.pipeline ?? EMPTY_LIST;
+  const funnel = dashboard?.analytics?.funnel ?? EMPTY_LIST;
+  const scorePerJd = dashboard?.analytics?.avg_score_per_jd ?? EMPTY_LIST;
+  const topSkills = dashboard?.analytics?.top_matched_skills ?? EMPTY_LIST;
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);

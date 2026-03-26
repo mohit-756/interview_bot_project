@@ -19,6 +19,30 @@ from services._qp_slots import build_question, has_duplicate_structure, slot_can
 from services._qp_structs import PlannerContext
 
 
+def _materialize_questions(
+    *,
+    slot_order: list[str],
+    total_questions: int,
+    context: PlannerContext,
+    occurrence_shift: int,
+    index_shift: int,
+) -> list[dict[str, object]]:
+    category_counts: dict[str, int] = {}
+    questions: list[dict[str, object]] = []
+    used_labels: set[str] = set()
+
+    for i, slot in enumerate(slot_order[:total_questions], start=1):
+        category_counts[slot] = category_counts.get(slot, 0) + 1
+        occurrence = category_counts[slot] + occurrence_shift
+        candidate = slot_candidate(slot, context, occurrence, _used_labels=frozenset(used_labels))
+        questions.append(build_question(slot, candidate, context, i + index_shift, occurrence))
+        label = str(candidate.get("label") or "").strip().lower()
+        if label and slot not in {"intro", "behavioral", "leadership"}:
+            used_labels.add(label)
+
+    return questions
+
+
 def build_question_context(*, resume_text: str, jd_title: str | None, jd_skill_scores: Mapping[str, int] | None, question_count: int | None = None) -> dict[str, object]:
     resume = extract_structured_resume(resume_text or "")
     jd = extract_structured_jd(jd_title, jd_skill_scores)
@@ -63,31 +87,22 @@ def build_question_plan(*, resume_text: str, jd_title: str | None, jd_skill_scor
     rt = role_track(context)
     slot_order = slot_order_for_context(context, total_questions)
 
-    category_counts: dict[str, int] = {}
-    questions: list[dict[str, object]] = []
-    used_labels: set[str] = set()
-
-    for i, slot in enumerate(slot_order[:total_questions], start=1):
-        category_counts[slot] = category_counts.get(slot, 0) + 1
-        occurrence = category_counts[slot]
-        candidate = slot_candidate(slot, context, occurrence, _used_labels=frozenset(used_labels))
-        questions.append(build_question(slot, candidate, context, i, occurrence))
-        label = str(candidate.get("label") or "").strip().lower()
-        if label and slot not in {"intro", "behavioral", "leadership"}:
-            used_labels.add(label)
+    questions = _materialize_questions(
+        slot_order=slot_order,
+        total_questions=total_questions,
+        context=context,
+        occurrence_shift=0,
+        index_shift=0,
+    )
 
     if has_duplicate_structure(questions):
-        category_counts = {}
-        questions = []
-        used_labels = set()
-        for i, slot in enumerate(slot_order[:total_questions], start=1):
-            category_counts[slot] = category_counts.get(slot, 0) + 1
-            occurrence = category_counts[slot] + 1
-            candidate = slot_candidate(slot, context, occurrence, _used_labels=frozenset(used_labels))
-            questions.append(build_question(slot, candidate, context, i + 10, occurrence))
-            label = str(candidate.get("label") or "").strip().lower()
-            if label and slot not in {"intro", "behavioral", "leadership"}:
-                used_labels.add(label)
+        questions = _materialize_questions(
+            slot_order=slot_order,
+            total_questions=total_questions,
+            context=context,
+            occurrence_shift=1,
+            index_shift=10,
+        )
 
     project_like_count = sum(1 for item in questions if item.get("category") in {"deep_dive", "project", "architecture", "leadership"})
     hr_count = sum(1 for item in questions if item.get("category") == "behavioral")

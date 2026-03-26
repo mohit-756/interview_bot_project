@@ -19,44 +19,90 @@ def health() -> dict[str, object]:
     return {"ok": True, "status": "healthy"}
 
 
-# PHASE 1 FIX: Groq API health check endpoint.
-# Called by HR dashboard to show whether LLM scoring / Whisper is operational.
+# LLM provider health check endpoint.
+# Kept at /health/groq for backward compatibility with existing frontend calls.
 @router.get("/health/groq")
-def groq_health() -> dict[str, object]:
-    """
-    Check Groq API reachability so HR knows if AI scoring and Whisper
-    transcription are available before starting interview sessions.
-    Always returns HTTP 200 — 'degraded' flag signals the actual state.
-    """
+@router.get("/health/llm")
+def llm_health() -> dict[str, object]:
+    """Check configured LLM provider reachability without failing the endpoint."""
     import os
-    from groq import Groq
+    import requests
 
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key:
-        return {
-            "ok": True,
-            "groq": "unconfigured",
-            "degraded": True,
-            "message": "GROQ_API_KEY is not set. LLM scoring and Whisper transcription are disabled.",
-        }
-    try:
-        client = Groq(api_key=api_key)
-        models = client.models.list()
-        model_ids = [m.id for m in (models.data or [])]
-        return {
-            "ok": True,
-            "groq": "reachable",
-            "degraded": False,
-            "models_available": len(model_ids),
-            "message": "Groq API is reachable and ready.",
-        }
-    except Exception as exc:
-        return {
-            "ok": True,
-            "groq": "unreachable",
-            "degraded": True,
-            "message": f"Groq API check failed: {str(exc)[:200]}",
-        }
+    provider = (os.getenv("LLM_PROVIDER") or "ollama").strip().lower()
+
+    if provider == "ollama":
+        ollama_url = (os.getenv("OLLAMA_CHAT_URL") or "http://localhost:11434/api/chat").strip()
+        ollama_model = (os.getenv("OLLAMA_MODEL") or "qwen2.5-coder:3b").strip()
+        try:
+            response = requests.post(
+                ollama_url,
+                json={
+                    "model": ollama_model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "stream": False,
+                    "options": {"num_predict": 2},
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            return {
+                "ok": True,
+                "provider": "ollama",
+                "status": "reachable",
+                "degraded": False,
+                "model": ollama_model,
+                "message": "Ollama is reachable and ready.",
+            }
+        except Exception as exc:
+            return {
+                "ok": True,
+                "provider": "ollama",
+                "status": "unreachable",
+                "degraded": True,
+                "model": ollama_model,
+                "message": f"Ollama health check failed: {str(exc)[:200]}",
+            }
+
+    if provider == "groq":
+        api_key = os.getenv("GROQ_API_KEY", "")
+        if not api_key:
+            return {
+                "ok": True,
+                "provider": "groq",
+                "status": "unconfigured",
+                "degraded": True,
+                "message": "GROQ_API_KEY is not set.",
+            }
+        try:
+            from groq import Groq
+
+            client = Groq(api_key=api_key)
+            models = client.models.list()
+            model_ids = [m.id for m in (models.data or [])]
+            return {
+                "ok": True,
+                "provider": "groq",
+                "status": "reachable",
+                "degraded": False,
+                "models_available": len(model_ids),
+                "message": "Groq API is reachable and ready.",
+            }
+        except Exception as exc:
+            return {
+                "ok": True,
+                "provider": "groq",
+                "status": "unreachable",
+                "degraded": True,
+                "message": f"Groq health check failed: {str(exc)[:200]}",
+            }
+
+    return {
+        "ok": True,
+        "provider": provider or "unknown",
+        "status": "unsupported",
+        "degraded": True,
+        "message": "Unsupported LLM_PROVIDER. Expected 'ollama' or 'groq'.",
+    }
     
 # Add these two routes to routes/auth/sessions.py
 

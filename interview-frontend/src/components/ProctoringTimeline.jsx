@@ -133,7 +133,7 @@ function SummaryCard({ label, value, color = "slate", icon: Icon }) {
 }
 
 // ── main component ────────────────────────────────────────────────────────────
-export default function ProctoringTimeline({ events = [], sessionInfo = null }) {
+export default function ProctoringTimeline({ events = [] }) {
   const [activeGroup, setActiveGroup] = useState("all");
 
   const stats = useMemo(() => {

@@ -1,6 +1,8 @@
 """LLM-first interview question generation with deterministic fallback helpers."""
 from __future__ import annotations
 
+from typing import Any
+
 import json
 import logging
 import re
@@ -125,8 +127,9 @@ def _dedupe_strings(values: list[str], *, limit: int | None = None) -> list[str]
         key = cleaned.lower()
         if key not in seen:
             seen[key] = cleaned
-        if limit and len(seen) >= limit:
-            break
+        if isinstance(limit, int):
+            if len(seen) >= limit:
+                break
     return list(seen.values())
 
 
@@ -158,8 +161,8 @@ def _build_jd_text(jd_title: str | None, jd_skill_scores: Mapping[str, int] | No
 def _infer_experience_level(summary: str, resume_text: str) -> str:
     combined = f"{summary}\n{resume_text}".lower()
     match = re.search(r"(\d+)\+?\s*(?:years|yrs)", combined)
-    years = int(match.group(1)) if match else None
-    if years is not None:
+    if match:
+        years = int(match.group(1))
         if years >= 12:
             return "executive"
         if years >= 8:
@@ -190,7 +193,7 @@ def _extract_inline_section_values(text: str, label: str) -> list[str]:
     return _dedupe_strings(values)
 
 
-def _augment_resume_skills(parsed_resume: dict[str, object], resume_text: str, jd_skill_scores: Mapping[str, int] | None) -> list[str]:
+def _augment_resume_skills(parsed_resume: dict[str, Any], resume_text: str, jd_skill_scores: Mapping[str, int] | None) -> list[str]:
     detected = [str(item) for item in (parsed_resume.get("skills") or [])]
     inline_skills = _extract_inline_section_values(resume_text, "skills")
     lowered_resume = _normalize_token(resume_text)
@@ -198,17 +201,17 @@ def _augment_resume_skills(parsed_resume: dict[str, object], resume_text: str, j
     return _dedupe_strings(detected + inline_skills + jd_mentions, limit=24)
 
 
-def _augment_resume_projects(parsed_resume: dict[str, object], resume_text: str) -> list[str]:
+def _augment_resume_projects(parsed_resume: dict[str, Any], resume_text: str) -> list[str]:
     projects = [str(item) for item in (parsed_resume.get("projects") or [])]
     return _dedupe_strings(projects + _extract_inline_section_values(resume_text, "projects"), limit=10)
 
 
-def _augment_resume_experiences(parsed_resume: dict[str, object], resume_text: str) -> list[str]:
+def _augment_resume_experiences(parsed_resume: dict[str, Any], resume_text: str) -> list[str]:
     experience = [str(item) for item in (parsed_resume.get("experience") or [])]
     return _dedupe_strings(experience + _extract_inline_section_values(resume_text, "experience"), limit=10)
 
 
-def _augment_certifications(parsed_resume: dict[str, object], resume_text: str) -> list[str]:
+def _augment_certifications(parsed_resume: dict[str, Any], resume_text: str) -> list[str]:
     certs = [str(item) for item in (parsed_resume.get("certifications") or [])]
     return _dedupe_strings(certs + _extract_inline_section_values(resume_text, "certifications"), limit=6)
 
@@ -231,8 +234,8 @@ def _extract_jd_responsibilities(jd_text: str, jd_title: str | None) -> list[str
 def _split_core_secondary_skills(jd_skill_scores: Mapping[str, int] | None) -> tuple[list[str], list[str]]:
     ordered = [(str(skill), int(weight)) for skill, weight in (jd_skill_scores or {}).items() if _clean(skill)]
     ordered.sort(key=lambda item: item[1], reverse=True)
-    core = [skill for skill, _ in ordered[: min(6, len(ordered))]]
-    secondary = [skill for skill, _ in ordered[min(6, len(ordered)): min(12, len(ordered))]]
+    core = [ordered[i][0] for i in range(min(6, len(ordered)))]
+    secondary = [ordered[i][0] for i in range(min(6, len(ordered)), min(12, len(ordered)))]
     return _dedupe_strings(core, limit=6), _dedupe_strings(secondary, limit=6)
 
 
@@ -319,7 +322,7 @@ def _planner_meta_for_structured_input(
     resume_text: str,
     jd_title: str | None,
     jd_skill_scores: Mapping[str, int] | None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     planner_bundle = build_question_plan(
         resume_text=resume_text,
         jd_title=jd_title,
@@ -448,7 +451,7 @@ def _llm_user_prompt(structured_input: StructuredQuestionInput, question_count: 
 
 # Response parsing + normalization -----------------------------------------
 
-def _extract_json_object(raw: str) -> dict[str, object]:
+def _extract_json_object(raw: str) -> dict[str, Any]:
     cleaned = _clean_json(raw or "")
     match = re.search(r"\{.*\}", cleaned, re.DOTALL) 
     if match:
@@ -497,7 +500,7 @@ def _choose_priority_source(category: str, focus_skill: str | None, structured_i
     return "resume_strength"
 
 
-def _question_relevance_score(question: dict[str, object], structured_input: StructuredQuestionInput) -> float:
+def _question_relevance_score(question: dict[str, Any], structured_input: StructuredQuestionInput) -> float:
     haystacks = [
         _normalize_token(question.get("text")),
         _normalize_token(question.get("focus_skill")),
@@ -531,7 +534,7 @@ def _question_relevance_score(question: dict[str, object], structured_input: Str
         score += 0.3
     if len(_clean(question.get("text"))) >= 30:
         score += 0.2
-    return round(score, 3)
+    return round(float(score), 3)
 
 
 def _contains_weak_phrase(text: str) -> bool:
@@ -546,7 +549,7 @@ def _contains_weak_phrase(text: str) -> bool:
     return any(phrase in lowered for phrase in weak_phrases)
 
 
-def _is_project_grounded(question: dict[str, object], structured_input: StructuredQuestionInput) -> bool:
+def _is_project_grounded(question: dict[str, Any], structured_input: StructuredQuestionInput) -> bool:
     joined = " ".join([
         _clean(question.get("text")),
         _clean(question.get("project_name")),
@@ -575,12 +578,12 @@ def _contains_metric_or_scale(text: str | None) -> bool:
     return any(re.search(pattern, raw, re.IGNORECASE) for pattern in metric_patterns)
 
 
-def _is_project_question(question: dict[str, object]) -> bool:
+def _is_project_question(question: dict[str, Any]) -> bool:
     category = str(question.get("category") or "")
     return category == "project"
 
 
-def _has_project_anchor(question: dict[str, object], structured_input: StructuredQuestionInput) -> bool:
+def _has_project_anchor(question: dict[str, Any], structured_input: StructuredQuestionInput) -> bool:
     if not _is_project_question(question):
         return True
     if _clean(question.get("project_name")):
@@ -599,7 +602,7 @@ def _has_project_anchor(question: dict[str, object], structured_input: Structure
     return False
 
 
-def _opening_pattern_violations(questions: list[dict[str, object]]) -> bool:
+def _opening_pattern_violations(questions: list[dict[str, Any]]) -> bool:
     patterns: dict[str, int] = {}
     for item in questions:
         pattern = _opening_pattern(str(item.get("text") or ""))
@@ -611,7 +614,7 @@ def _opening_pattern_violations(questions: list[dict[str, object]]) -> bool:
     return False
 
 
-def _validate_question_set(questions: list[dict[str, object]], structured_input: StructuredQuestionInput, question_count: int) -> list[str]:
+def _validate_question_set(questions: list[dict[str, Any]], structured_input: StructuredQuestionInput, question_count: int) -> list[str]:
     issues: list[str] = []
     requested_count = max(2, int(question_count))
     # Accept a small shortfall while keeping a practical floor for real interview sets.
@@ -621,18 +624,18 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
         return issues
 
     similarity_seen: set[str] = set()
-    behavioral_count = 0
-    project_grounded_count = 0
-    leadership_count = 0
-    architecture_count = 0
-    scaling_count = 0
-    integration_count = 0
-    skill_only_count = 0
-    debugging_failure_count = 0
-    design_count = 0
-    project_execution_count = 0
-    project_tradeoff_count = 0
-    project_debugging_count = 0
+    behavioral_count: int = 0
+    project_grounded_count: int = 0
+    leadership_count: int = 0
+    architecture_count: int = 0
+    scaling_count: int = 0
+    integration_count: int = 0
+    skill_only_count: int = 0
+    debugging_failure_count: int = 0
+    design_count: int = 0
+    project_execution_count: int = 0
+    project_tradeoff_count: int = 0
+    project_debugging_count: int = 0
 
     for question in questions:
         text = _clean(question.get("text"))
@@ -645,41 +648,45 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
         if _contains_weak_phrase(text):
             issues.append("weak_phrase_present")
         if question.get("category") == "behavioral":
-            behavioral_count += 1
+            behavioral_count = behavioral_count + 1
         if question.get("category") == "leadership" or any(term in text_norm for term in ("stakeholder", "mentor", "lead", "team", "practice", "governance", "delivery leader")):
-            leadership_count += 1
+            leadership_count = leadership_count + 1
         if question.get("category") == "architecture" or any(term in text_norm for term in ("trade-off", "tradeoffs", "trade off", "scal", "governance", "design", "architecture")):
-            architecture_count += 1
+            architecture_count = architecture_count + 1
         if any(term in text_norm for term in ("design", "architecture", "interface", "boundary", "component", "pattern", "decision")):
-            design_count += 1
+            design_count = design_count + 1
         if any(term in text_norm for term in ("scale", "scaling", "grow", "10x", "5x", "twice", "double", "doubled", "across accounts", "adoption", "capacity", "governance", "performance", "latency", "throughput", "load")):
-            scaling_count += 1
+            scaling_count = scaling_count + 1
         if any(term in text_norm for term in ("api", "integration", "service", "services", "interface", "data flow", "contract", "pipeline", "webhook", "event")):
-            integration_count += 1
+            integration_count = integration_count + 1
         grounded = _is_project_grounded(question, structured_input)
         if grounded:
-            project_grounded_count += 1
+            project_grounded_count = project_grounded_count + 1
         elif question.get("category") not in {"intro", "behavioral"} and str(question.get("priority_source") or "") != "jd_gap_probe":
             issues.append("question_not_grounded_in_resume_or_priority_jd")
         if question.get("category") == "deep_dive" and not grounded:
-            skill_only_count += 1
+            skill_only_count = skill_only_count + 1
         if _is_project_question(question) and not _has_project_anchor(question, structured_input):
             issues.append("project_question_missing_name_or_metric_anchor")
 
         if grounded:
             if any(term in text_norm for term in ("what did you personally", "what exactly did you own", "what did you change", "did you personally drive", "how did you implement", "how did you build", "how did you deliver", "walk me through", "what problem were you solving")):
-                project_execution_count += 1
+                project_execution_count = project_execution_count + 1
             if any(term in text_norm for term in ("trade-off", "tradeoffs", "trade off", "how did you decide", "why did you choose", "what decisions", "why was that design", "balance consistency", "what would you revisit")):
-                project_tradeoff_count += 1
+                project_tradeoff_count = project_tradeoff_count + 1
             if any(term in text_norm for term in ("debug", "failure", "didn't work", "did not work", "root cause", "bottleneck", "incident", "wrong", "remediation", "what signals", "fixes were working")):
-                project_debugging_count += 1
+                project_debugging_count = project_debugging_count + 1
         if any(term in text_norm for term in ("failure", "debug", "trade-off", "tradeoffs", "trade off", "didn't work", "did not work", "root cause", "bottleneck", "what went wrong", "incident")):
-            debugging_failure_count += 1
+            debugging_failure_count = debugging_failure_count + 1
 
     if _opening_pattern_violations(questions):
         issues.append("opening_pattern_repetition")
     if project_grounded_count == 0:
         issues.append("no_project_grounded_question")
+    if sum(1 for q in questions if q.get("category") == "intro") == 0:
+        issues.append("missing_intro_question")
+    if behavioral_count == 0:
+        issues.append("missing_behavioral_question")
     if behavioral_count > max(2, question_count // 3):
         issues.append("too_many_generic_behavioral")
     if skill_only_count >= max(3, question_count - 2):
@@ -719,11 +726,11 @@ def _validate_question_set(questions: list[dict[str, object]], structured_input:
 
 def _normalize_llm_questions(
     *,
-    raw_questions: list[object],
+    raw_questions: list[Any],
     structured_input: StructuredQuestionInput,
     question_count: int,
-) -> list[dict[str, object]]:
-    normalized: list[dict[str, object]] = []
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
     seen_text: set[str] = set()
 
     for item in raw_questions:
@@ -745,6 +752,9 @@ def _normalize_llm_questions(
         if len(reference_answer) < 24:
             reference_answer = "A strong answer should explain the candidate's real contribution, decisions, trade-offs, execution details, validation approach, and outcomes."
         priority_source = _clean(item.get("priority_source")) or _choose_priority_source(category, focus_skill, structured_input)
+        role_alignment = 1.0 if category == "intro" else 0.8
+        resume_alignment = 0.85 if category in {"intro", "project", "leadership"} else 0.75
+        jd_alignment = 0.9 if category in {"deep_dive", "architecture"} else 0.75
         question = {
             "text": text,
             "type": "hr" if category == "behavioral" else category,
@@ -756,16 +766,16 @@ def _normalize_llm_questions(
             "reference_answer": reference_answer,
             "difficulty": _normalize_difficulty(item.get("difficulty")),
             "priority_source": priority_source,
-            "role_alignment": 1.0 if category == "intro" else 0.8,
-            "resume_alignment": 0.85 if category in {"intro", "project", "leadership"} else 0.75,
-            "jd_alignment": 0.9 if category in {"deep_dive", "architecture"} else 0.75,
+            "role_alignment": role_alignment,
+            "resume_alignment": resume_alignment,
+            "jd_alignment": jd_alignment,
             "metadata": {
                 "category": category,
                 "priority_source": priority_source,
                 "skill_or_topic": _clean(focus_skill or project_name or category),
-                "role_alignment": 1.0 if category == "intro" else 0.8,
-                "resume_alignment": 0.85 if category in {"intro", "project", "leadership"} else 0.75,
-                "jd_alignment": 0.9 if category in {"deep_dive", "architecture"} else 0.75,
+                "role_alignment": role_alignment,
+                "resume_alignment": resume_alignment,
+                "jd_alignment": jd_alignment,
                 "relevance_score": 0.0,
                 "role_family": structured_input.role_family,
                 "seniority": structured_input.experience_level,
@@ -789,7 +799,7 @@ def _normalize_llm_questions(
         )
     )
 
-    final_questions: list[dict[str, object]] = []
+    final_questions: list[dict[str, Any]] = []
     category_caps = {"behavioral": 2, "leadership": 3, "architecture": 3, "deep_dive": 4, "project": 3, "intro": 1}
     category_counts: dict[str, int] = {}
 
@@ -807,10 +817,19 @@ def _normalize_llm_questions(
 
 # LLM call + quality validation --------------------------------------------
 
-def _call_llm(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> dict[str, object]:
+def _call_llm(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> dict[str, Any]:
     user_prompt = _llm_user_prompt(structured_input, question_count, retry_note=retry_note)
     provider = _llm_provider()
     model = _llm_model()
+    logger.info(
+        "LLM_CALL_START provider=%s model=%s question_count_requested=%s question_count_returned=%s fallback_used=%s retry=%s",
+        provider,
+        model,
+        question_count,
+        0,
+        False,
+        bool(retry_note),
+    )
     logger.info(
         "llm_question_request provider=%s model=%s question_count=%s retry=%s role_family=%s",
         provider,
@@ -839,6 +858,15 @@ def _call_llm(structured_input: StructuredQuestionInput, question_count: int, re
         structured_input=structured_input,
         question_count=max(2, int(question_count)),
     )
+    logger.info(
+        "LLM_CALL_RESPONSE provider=%s model=%s question_count_requested=%s question_count_returned=%s fallback_used=%s retry=%s",
+        provider,
+        model,
+        question_count,
+        len(questions),
+        False,
+        bool(retry_note),
+    )
     return {
         "questions": questions,
         "user_prompt": user_prompt,
@@ -858,7 +886,7 @@ def _retry_note_for_issues(issues: list[str]) -> str:
 def _generate_validated_llm_questions(
     structured_input: StructuredQuestionInput,
     question_count: int,
-) -> tuple[list[dict[str, object]], str, dict[str, object]]:
+) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
     requested_count = max(2, int(question_count))
     first_attempt = _call_llm(structured_input, requested_count)
     all_issues = _validate_question_set(first_attempt["questions"], structured_input, requested_count)
@@ -904,7 +932,7 @@ def generate_llm_questions(
     question_count: int,
     jd_title: str | None = None,
     jd_skill_scores: Mapping[str, int] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     structured_input = build_structured_question_input(
         resume_text=resume_text,
         jd_title=jd_title,
@@ -930,11 +958,11 @@ def generate_llm_questions(
 
 def _pick_fallback_top_up(
     *,
-    llm_questions: list[dict[str, object]],
-    fallback_questions: list[dict[str, object]],
+    llm_questions: list[dict[str, Any]],
+    fallback_questions: list[dict[str, Any]],
     needed: int,
     distribution: dict[str, int] | None,
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     if needed <= 0:
         return []
 
@@ -945,7 +973,7 @@ def _pick_fallback_top_up(
         current_counts[category] = current_counts.get(category, 0) + 1
 
     target_distribution = distribution or {}
-    candidates: list[tuple[int, float, dict[str, object]]] = []
+    candidates: list[tuple[int, float, dict[str, Any]]] = []
     for fallback_question in fallback_questions:
         text_key = _similarity_key(fallback_question.get("text"))
         if not text_key or text_key in seen:
@@ -958,7 +986,7 @@ def _pick_fallback_top_up(
 
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
-    picked: list[dict[str, object]] = []
+    picked: list[dict[str, Any]] = []
     for _, _, fallback_question in candidates:
         if len(picked) >= needed:
             break
@@ -970,13 +998,104 @@ def _pick_fallback_top_up(
     return picked
 
 
+def _enforce_category_coverage(
+    questions: list[dict[str, Any]],
+    fallback_questions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not fallback_questions:
+        return questions
+        
+    categories_present = {str(q.get("category") or q.get("type") or "project") for q in questions}
+    has_intro = "intro" in categories_present
+    has_behavioral = "behavioral" in categories_present
+    
+    if has_intro and has_behavioral:
+        return questions
+        
+    result = list(questions)
+    seen_texts = {_similarity_key(q.get("text")) for q in result}
+    
+    def _swap_question(target_category: str | tuple[str, ...], replace_from_end: bool = True) -> bool:
+        candidate = None
+        for fq in fallback_questions:
+            cat = str(fq.get("category") or fq.get("type") or "project")
+            is_match = cat in target_category if isinstance(target_category, tuple) else cat == target_category
+            if is_match and _similarity_key(fq.get("text")) not in seen_texts:
+                candidate = fq
+                break
+                
+        if not candidate:
+            return False
+        assert candidate is not None
+            
+        # Find a victim to replace (usually another deep_dive or project that isn't the only one)
+        victim_idx = -1
+        if replace_from_end:
+            for i in range(len(result) - 1, -1, -1):
+                if str(result[i].get("category")) in {"deep_dive", "project"}:
+                    victim_idx = i
+                    break
+        else:
+            for i in range(len(result)):
+                if str(result[i].get("category")) in {"deep_dive", "project"}:
+                    victim_idx = i
+                    break
+                    
+        if victim_idx >= 0:
+            result[victim_idx] = candidate
+            seen_texts.add(_similarity_key(candidate.get("text")))
+            return True
+            
+        return False
+
+    if not has_intro:
+        # Swap the first deep dive or project question with the intro
+        success = _swap_question("intro", replace_from_end=False)
+        if not success and result:
+            idx = 0
+            for i in range(len(result)):
+                if str(result[i].get("category")) in {"deep_dive", "project"}:
+                    idx = i
+                    break
+            result[idx] = {
+                "text": "Could you briefly walk me through your background and the most recent role on your resume?",
+                "category": "intro",
+                "type": "intro",
+                "difficulty": "easy",
+                "topic": "background",
+                "intent": "Assess candidate background and communication.",
+                "priority_source": "baseline",
+            }
+        
+    if not has_behavioral:
+        # Swap the last deep dive or project question with behavioral
+        success = _swap_question("behavioral", replace_from_end=True)
+        if not success and result:
+            idx = -1
+            for i in range(len(result)-1, -1, -1):
+                if str(result[i].get("category")) in {"deep_dive", "project"}:
+                    idx = i
+                    break
+            result[idx] = {
+                "text": "Tell me about a time when you had to manage conflicting priorities or navigate a difficult stakeholder conversation to deliver a project on time.",
+                "category": "behavioral",
+                "type": "hr",
+                "difficulty": "medium",
+                "topic": "stakeholder management",
+                "intent": "Assess behavioral depth, conflict resolution, and communication.",
+                "priority_source": "derived",
+            }
+        
+    return result
+
+
 def _build_fallback_bundle(
     *,
     resume_text: str,
     jd_title: str | None,
     jd_skill_scores: Mapping[str, int] | None,
     question_count: int,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     fallback_bundle = build_question_plan(
         resume_text=resume_text,
         jd_title=jd_title,
@@ -986,7 +1105,7 @@ def _build_fallback_bundle(
     return fallback_bundle if isinstance(fallback_bundle, dict) else {}
 
 
-def _bundle_counts(questions: list[dict[str, object]]) -> dict[str, object]:
+def _bundle_counts(questions: list[dict[str, Any]]) -> dict[str, Any]:
     project_like_count = sum(
         1
         for item in questions
@@ -1005,12 +1124,12 @@ def _bundle_counts(questions: list[dict[str, object]]) -> dict[str, object]:
 
 def _runtime_bundle_from_llm(
     *,
-    llm_bundle: dict[str, object],
-    fallback_bundle: dict[str, object],
-    questions: list[dict[str, object]],
+    llm_bundle: dict[str, Any],
+    fallback_bundle: dict[str, Any],
+    questions: list[dict[str, Any]],
     project_ratio: float | None,
     llm_topped_up_with_fallback: bool,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     logger.info(
         "llm_question_bundle_ready provider=%s model=%s generation_mode=%s fallback_used=%s questions=%s",
         _llm_provider(),
@@ -1040,11 +1159,11 @@ def _runtime_bundle_from_llm(
 
 def _runtime_bundle_from_fallback(
     *,
-    fallback_bundle: dict[str, object],
+    fallback_bundle: dict[str, Any],
     fallback_reason: str,
     project_ratio: float | None,
     structured_input: StructuredQuestionInput,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     questions = list(fallback_bundle.get("questions") or [])
     meta = dict(fallback_bundle.get("meta") or {})
     meta.update(
@@ -1085,8 +1204,10 @@ def generate_question_bundle_with_fallback(
     question_count: int | None = None,
     project_ratio: float | None = None,
     jd_text: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     desired_count = max(2, min(20, int(question_count or 8)))
+    provider = _llm_provider()
+    model = _llm_model()
     fallback_bundle = _build_fallback_bundle(
         resume_text=resume_text,
         jd_title=jd_title,
@@ -1106,7 +1227,7 @@ def generate_question_bundle_with_fallback(
         llm_topped_up_with_fallback = False
 
         missing = desired_count - len(questions)
-        if 0 < missing <= 2:
+        if missing > 0:
             distribution = (fallback_bundle.get("meta") or {}).get("distribution")
             top_up_questions = _pick_fallback_top_up(
                 llm_questions=questions,
@@ -1118,6 +1239,24 @@ def generate_question_bundle_with_fallback(
                 questions.extend(top_up_questions)
                 llm_topped_up_with_fallback = True
 
+        # Enforce explicitly required categories
+        original_len = len(questions)
+        questions = _enforce_category_coverage(questions, list(fallback_bundle.get("questions") or []))
+        if len(questions) != original_len or any(q.get("category") in {"intro", "behavioral"} for q in questions) and not llm_topped_up_with_fallback:
+            # We don't change llm_topped_up_with_fallback just for category swaps, 
+            # but if it was missing entirely and now we have it, it's a fallback swap.
+            # We'll just set it to True if we actually used fallback stuff
+            llm_topped_up_with_fallback = True
+            
+        logger.info(
+            "LLM_SUCCESS provider=%s model=%s question_count_requested=%s question_count_returned=%s fallback_used=%s",
+            provider,
+            model,
+            desired_count,
+            len(questions),
+            False,
+        )
+
         return _runtime_bundle_from_llm(
             llm_bundle=llm_bundle,
             fallback_bundle=fallback_bundle,
@@ -1127,6 +1266,16 @@ def generate_question_bundle_with_fallback(
         )
     except Exception as exc:
         logger.warning("LLM question generation failed, using deterministic fallback: %s", exc)
+        fallback_questions = list(fallback_bundle.get("questions") or [])
+        logger.warning(
+            "LLM_FAILED provider=%s model=%s question_count_requested=%s question_count_returned=%s fallback_used=%s error=%s",
+            provider,
+            model,
+            desired_count,
+            len(fallback_questions),
+            True,
+            exc,
+        )
         structured_input = build_structured_question_input(
             resume_text=resume_text,
             jd_title=jd_title,

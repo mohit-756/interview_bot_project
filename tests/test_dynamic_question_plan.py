@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.question_plan import build_question_plan
+from ai_engine.phase2.question_plan import build_question_plan
 
 
 def _questions(bundle):

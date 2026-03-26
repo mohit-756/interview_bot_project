@@ -6,16 +6,14 @@ import { interviewApi } from "../services/api";
 export default function Completed() {
   const navigate = useNavigate();
   const { resultId } = useParams();
-  const [evaluating, setEvaluating] = useState(false);
-  const [evaluated, setEvaluated] = useState(false);
+  const [evaluating, setEvaluating] = useState(() => Boolean(sessionStorage.getItem(`session-id:${resultId}`)));
   const [evaluateFailed, setEvaluateFailed] = useState(false);
   const [summary, setSummary] = useState(null);
 
   useEffect(() => {
     const sessionId = sessionStorage.getItem(`session-id:${resultId}`);
-    if (!sessionId) { setEvaluated(true); return; }
+    if (!sessionId) return;
 
-    setEvaluating(true);
     interviewApi
       .evaluate(Number(sessionId))
       .then(async () => {
@@ -26,7 +24,6 @@ export default function Completed() {
         } catch {
           setSummary(null);
         }
-        setEvaluated(true);
       })
       .catch(async () => {
         setEvaluateFailed(true);
@@ -36,7 +33,6 @@ export default function Completed() {
         } catch {
           setSummary(null);
         }
-        setEvaluated(true);
       })
       .finally(() => setEvaluating(false));
   }, [resultId]);

@@ -6,12 +6,16 @@ import logging
 import os
 import re
 from functools import lru_cache
+from types import SimpleNamespace
+from typing import Any
 
-from groq import Groq
+import requests
+
+OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
+_DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:3b"
+_DEFAULT_OLLAMA_TIMEOUT_SECONDS = 90
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
 def _clean_json(raw: str) -> str:
@@ -20,55 +24,159 @@ def _clean_json(raw: str) -> str:
 
 @lru_cache(maxsize=1)
 def _resolve_llm_config() -> dict[str, str]:
-    groq_key = (os.getenv("GROQ_API_KEY") or "").strip()
-    openai_like_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+    provider = (os.getenv("LLM_PROVIDER") or "gemini").strip().lower()
 
-    if not provider:
-        if groq_key.startswith("gsk_"):
-            provider = "groq"
-        elif openai_like_key:
-            provider = "openai"
-        else:
-            provider = "groq"
-
-    if provider == "groq" and not groq_key and openai_like_key.startswith("gsk_"):
-        groq_key = openai_like_key
-        logger.warning("llm_config_groq_key_loaded_from_openai_api_key")
-
-    model = (
-        os.getenv("LLM_MODEL")
-        or os.getenv("GROQ_MODEL")
-        or os.getenv("MODEL_NAME")
-        or _DEFAULT_GROQ_MODEL
-    ).strip()
+    if provider == "gemini":
+        model = os.getenv("LLM_MODEL", "gemini-2.5-flash").strip()
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    else:
+        model = _DEFAULT_OLLAMA_MODEL
+        api_key = ""
 
     return {
         "provider": provider,
-        "api_key": groq_key if provider == "groq" else openai_like_key,
+        "api_key": api_key,
         "model": model,
+        "ollama_url": OLLAMA_CHAT_URL,
     }
 
 
+class _GeminiChatCompletionsAdapter:
+    def __init__(self, *, model: str, api_key: str) -> None:
+        self._model = model
+        self._api_key = api_key
+
+    def create(
+        self,
+        *,
+        model: str | None = None,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.2,
+        max_tokens: int = 800,
+        **_: Any,
+    ) -> Any:
+        chosen_model = (model or self._model).strip() or "gemini-2.5-flash"
+        if not self._api_key:
+            raise RuntimeError("Missing GEMINI_API_KEY. Please add GEMINI_API_KEY to your .env file.")
+
+        text_prompt = ""
+        for m in messages:
+            text_prompt += m.get("content", "") + "\n"
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent?key={self._api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": text_prompt.strip()}]}],
+            "generationConfig": {
+                "temperature": float(temperature),
+                "maxOutputTokens": int(max_tokens),
+            }
+        }
+        
+        response = requests.post(url, json=payload, timeout=90)
+        try:
+            response.raise_for_status()
+        except Exception as e:
+            logger.error("Gemini API Error: %s", response.text)
+            raise
+
+        data_dict: Any = response.json()
+        if not isinstance(data_dict, dict):
+            data_dict = {}
+        try:
+            candidates = data_dict.get("candidates")
+            if isinstance(candidates, list) and candidates:
+                content = candidates[0].get("content", {}).get("parts", [])[0].get("text", "")
+            else:
+                content = str(data_dict)
+        except Exception:
+            content = str(data_dict)
+
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+        )
+
+
+class _ChatCompletionsAdapter:
+    def __init__(self, *, provider: str, model: str, api_key: str, ollama_url: str) -> None:
+        self._provider = provider
+        self._model = model
+        self._api_key = api_key
+        self._ollama_url = ollama_url
+
+    def create(
+        self,
+        *,
+        model: str | None = None,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.2,
+        max_tokens: int = 800,
+        **_: Any,
+    ) -> Any:
+        chosen_model = (model or self._model).strip() or self._model
+
+        if self._provider != "ollama":
+            raise RuntimeError(
+                f"Unsupported LLM_PROVIDER='{self._provider}'. Supported providers: gemini, ollama."
+            )
+
+        payload = {
+            "model": chosen_model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": float(temperature),
+                "num_predict": int(max_tokens),
+            },
+        }
+        response = requests.post(
+            self._ollama_url,
+            json=payload,
+            timeout=_DEFAULT_OLLAMA_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json() or {}
+        content = str(((data.get("message") or {}).get("content") or "")).strip()
+
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+        )
+
+
+class _ChatAdapter:
+    def __init__(self, completions: Any) -> None:
+        self.completions = completions
+
+
+class _LLMClientAdapter:
+    def __init__(self, *, provider: str, model: str, api_key: str, ollama_url: str) -> None:
+        if provider == "gemini":
+            adapter = _GeminiChatCompletionsAdapter(model=model, api_key=api_key)
+        else:
+            adapter = _ChatCompletionsAdapter(
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                ollama_url=ollama_url,
+            )
+        self.chat = _ChatAdapter(adapter)
+
+
 @lru_cache(maxsize=1)
-def _get_client() -> Groq:
+def _get_client() -> _LLMClientAdapter:
     config = _resolve_llm_config()
     provider = config["provider"]
     api_key = config["api_key"]
 
-    if provider != "groq":
-        raise RuntimeError(
-            f"Unsupported LLM_PROVIDER='{provider}'. This runtime is configured for Groq chat completions. "
-            "Set LLM_PROVIDER=groq and provide GROQ_API_KEY (or OPENAI_API_KEY containing a gsk_ key)."
-        )
-    if not api_key:
-        raise RuntimeError(
-            "Missing Groq API key. Set GROQ_API_KEY to a valid gsk_ key. "
-            "OPENAI_API_KEY is only accepted here as a compatibility fallback when it contains the same gsk_ key."
-        )
+    if provider == "ollama" and not config["model"]:
+        raise RuntimeError("Missing Ollama model. Set OLLAMA_MODEL (for example: qwen2.5-coder:3b).")
 
     logger.info("llm_client_init provider=%s model=%s", provider, config["model"])
-    return Groq(api_key=api_key)
+    return _LLMClientAdapter(
+        provider=provider,
+        model=config["model"],
+        api_key=api_key,
+        ollama_url=config["ollama_url"],
+    )
 
 
 def _llm_provider() -> str:
@@ -86,7 +194,7 @@ def extract_skills(jd_text: str) -> dict[str, int]:
         "You are a technical recruiter. Read the job description below and extract all required technical skills.\n\n"
         "Return ONLY a valid JSON object where keys are lowercase skill names and values are integer importance weights from 1 to 10.\n\n"
         f"Job Description:\n{jd_text[:4000]}"
-    )
+    )  # type: ignore
     try:
         response = _get_client().chat.completions.create(
             model=_llm_model(),
@@ -144,22 +252,46 @@ Rules:
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         raw = match.group(0)
-    data = json.loads(raw)
-    dims = data.get("dimension_breakdown") or {}
+    data_dict = json.loads(raw)
+    if not isinstance(data_dict, dict):
+        data_dict = {}
+
+    dims = data_dict.get("dimension_breakdown")
+    if not isinstance(dims, dict):
+        dims = {}
+
     clean_dims = {k: max(0, min(100, int(dims.get(k, 0)))) for k in ["relevance", "correctness", "completeness", "clarity", "confidence"]}
+    
+    score_raw = data_dict.get("score", 50)
+    try:
+        score_val = float(score_raw)
+    except (ValueError, TypeError):
+        score_val = 50.0
+
+    raw_strengths = data_dict.get("strengths")
+    strengths_list = list(raw_strengths) if isinstance(raw_strengths, list) else []
+    
+    raw_weaknesses = data_dict.get("weaknesses")
+    weaknesses_list = list(raw_weaknesses) if isinstance(raw_weaknesses, list) else []
+
     return {
         "question": question,
         "candidate_answer": answer,
-        "generated_reference_answer": str(data.get("generated_reference_answer") or reference_answer or "A strong answer should directly answer the question with practical detail."),
-        "score": max(0, min(100, float(data.get("score", 50)))),
-        "feedback": str(data.get("feedback") or "Evaluation completed."),
-        "strengths": [str(x) for x in (data.get("strengths") or [])[:3]],
-        "weaknesses": [str(x) for x in (data.get("weaknesses") or [])[:3]],
-        "section": str(data.get("section") or section),
+        "generated_reference_answer": str(data_dict.get("generated_reference_answer") or reference_answer or "A strong answer should directly answer the question with practical detail."),
+        "score": float(max(0.0, min(100.0, score_val))),
+        "feedback": str(data_dict.get("feedback") or "Evaluation completed."),
+        "strengths": [str(x) for x in strengths_list[:3]],  # type: ignore
+        "weaknesses": [str(x) for x in weaknesses_list[:3]],  # type: ignore
+        "section": str(data_dict.get("section") or section),
         "dimension_breakdown": clean_dims,
     }
 
 
 def score_answer(question: str, answer: str) -> dict[str, object]:
     detailed = evaluate_answer_detailed(question=question, answer=answer)
-    return {"score": int(detailed["score"]), "feedback": str(detailed["feedback"])}
+    score_val = detailed.get("score", 0)
+    try:
+        final_score = int(float(score_val))  # type: ignore
+    except (ValueError, TypeError):
+        final_score = 0
+    return {"score": final_score, "feedback": str(detailed.get("feedback", ""))}

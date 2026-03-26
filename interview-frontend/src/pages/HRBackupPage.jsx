@@ -91,12 +91,15 @@ export default function HRBackupPage() {
                 { icon: Database, label: "Full database (candidates, results, sessions, questions)" },
                 { icon: FileArchive, label: "All uploaded resumes and proctoring snapshots" },
                 { icon: Package, label: "manifest.json with record counts and timestamp" },
-              ].map(({ icon: Icon, label }) => (
-                <div key={label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-                  <Icon size={14} className="text-blue-500 flex-shrink-0" />
-                  {label}
+              ].map((item) => {
+                const ItemIcon = item.icon;
+                return (
+                <div key={item.label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                  <ItemIcon size={14} className="text-blue-500 flex-shrink-0" />
+                  {item.label}
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Alerts */}
@@ -201,15 +204,18 @@ export default function HRBackupPage() {
                   { icon: Database, label: "database/interview_bot.db", sub: "Full SQLite database" },
                   { icon: FileArchive, label: "uploads/", sub: "Resumes & proctoring images" },
                   { icon: Package, label: "manifest.json", sub: "Record counts & metadata" },
-                ].map(({ icon: Icon, label, sub }) => (
-                  <li key={label} className="flex items-start gap-3">
-                    <Icon size={15} className="text-blue-500 mt-0.5 flex-shrink-0" />
+                ].map((item) => {
+                  const ItemIcon = item.icon;
+                  return (
+                  <li key={item.label} className="flex items-start gap-3">
+                    <ItemIcon size={15} className="text-blue-500 mt-0.5 flex-shrink-0" />
                     <div>
-                      <p className="text-sm font-bold text-slate-700 dark:text-slate-300 font-mono">{label}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">{sub}</p>
+                      <p className="text-sm font-bold text-slate-700 dark:text-slate-300 font-mono">{item.label}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{item.sub}</p>
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           </div>

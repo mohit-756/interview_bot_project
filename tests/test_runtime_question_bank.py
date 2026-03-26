@@ -26,6 +26,7 @@ def test_stale_bank_accepts_debugging_and_design_coverage():
             {"text": "Walk me through the frontend UI system and the project outcome you owned."},
             {"text": "Describe a UI or API integration bug you debugged, how you found the root cause, and what changed after the fix."},
             {"text": "If the frontend UI system had to scale, what architecture or observability trade-offs would you revisit first?"},
+            {"text": "Describe a time requirements changed late and how you aligned stakeholders while shipping."},
         ]
     )
 

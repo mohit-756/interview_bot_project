@@ -195,6 +195,8 @@ class InterviewQuestion(Base):
     answer_summary = Column(Text, nullable=True)
     relevance_score = Column(Float, nullable=True)
     allotted_seconds = Column(Integer, default=60, nullable=False)
+    # NEW: Server-side tracking for question elapsed time
+    started_at = Column(DateTime, nullable=True)
     time_taken_seconds = Column(Integer, nullable=True)
     skipped = Column(Boolean, default=False, nullable=False)
     llm_score = Column(Float, nullable=True)

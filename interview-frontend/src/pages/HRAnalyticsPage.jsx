@@ -217,7 +217,6 @@ export default function HRAnalyticsPage() {
   if (error && !dashboard) return <p className="alert error">{error}</p>;
 
   const maxPipelineCount = Math.max(...pipeline.map((p) => p.count), 1);
-  const maxRoleCount = Math.max(...roleStats.map((r) => r.count), 1);
 
   return (
     <div className="space-y-8 pb-12">

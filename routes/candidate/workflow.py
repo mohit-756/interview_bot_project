@@ -208,6 +208,13 @@ def upload_resume(
     safe_filename = Path(resume.filename or "resume").name
     if not safe_filename:
         raise HTTPException(status_code=400, detail="Resume filename is invalid")
+    
+    resume.file.seek(0, 2)
+    file_size = resume.file.tell()
+    resume.file.seek(0)
+    if file_size > 5_000_000:
+        raise HTTPException(status_code=400, detail="Resume file exceeds 5MB limit")
+
 
     resume_path = UPLOAD_DIR / f"resume_{candidate.id}_{uuid.uuid4().hex}_{safe_filename}"
     with resume_path.open("wb") as buffer:

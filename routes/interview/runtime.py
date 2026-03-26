@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, BackgroundTasks
 from ai_engine.phase1.matching import extract_text_from_file
 from fastapi.responses import RedirectResponse
 from services.question_generation import build_question_bundle
@@ -29,6 +29,7 @@ from routes.dependencies import SessionUser, require_role
 from services.pipeline import record_stage_change
 from services.scoring import build_application_score, evaluate_answer, summarize_interview
 from routes.schemas import InterviewAnswerBody, InterviewEventBody, InterviewStartBody
+from routes.interview.evaluation import run_evaluation_task
 from utils.proctoring_cv import analyze_frame, compare_signatures, should_store_periodic
 from utils.scoring import summarize_and_score
 from utils.stt_whisper import transcribe_audio_bytes
@@ -174,7 +175,7 @@ def _ensure_session_questions(
     return _ordered_questions(db, session.id)
 
 
-def _serialize_question(question: InterviewQuestion | None) -> dict[str, object] | None:
+def _serialize_question(question: InterviewQuestion | None) -> dict[str, Any] | None:
     if not question:
         return None
     return {
@@ -368,11 +369,16 @@ def _create_next_question(
         return None
     for item in ordered:
         if item.time_taken_seconds is None:
+            if item.started_at is None:
+                item.started_at = datetime.utcnow()
+                db.add(item)
+                db.commit()
+                db.refresh(item)
             return item
     return None
 
 
-def _is_stale_question_bank(questions: list[dict[str, object]]) -> tuple[bool, str]:
+def _is_stale_question_bank(questions: list[dict[str, Any]]) -> tuple[bool, str]:
     if not questions:
         return False, "empty"
 
@@ -405,7 +411,46 @@ def _is_stale_question_bank(questions: list[dict[str, object]]) -> tuple[bool, s
         return True, "missing_debugging"
     if not has_design:
         return True, "missing_design"
+    coverage = _question_bank_category_coverage(questions)
+    if not coverage["has_intro"] or not coverage["has_project_like"] or not coverage["has_behavioral"]:
+        return True, "missing_category_coverage"
     return False, "ok"
+
+
+def _question_bank_category_coverage(questions: list[dict[str, Any]]) -> dict[str, bool]:
+    categories: set[str] = set()
+    for item in questions:
+        if not isinstance(item, dict):
+            continue
+        explicit = str(item.get("category") or item.get("type") or "").strip().lower()
+        if explicit:
+            categories.add(explicit)
+            continue
+
+        text = str(item.get("text") or "").strip().lower()
+        if not text:
+            continue
+        if "introduce yourself" in text or "your background" in text:
+            categories.add("intro")
+            continue
+        if any(token in text for token in ("describe a time", "stakeholder", "collaboration", "conflict", "requirement changed")):
+            categories.add("behavioral")
+            continue
+        if any(token in text for token in ("project", "debug", "root cause", "architecture", "scale", "trade-off", "tradeoff")):
+            categories.add("project")
+
+    project_like_categories = {"project", "deep_dive", "architecture", "leadership"}
+    has_project_like = any(category in project_like_categories for category in categories)
+    return {
+        "has_intro": "intro" in categories,
+        "has_project_like": has_project_like,
+        "has_behavioral": "behavioral" in categories,
+    }
+
+
+def _log_question_bank_event(event: str, **payload: object) -> None:
+    fields = {"event": event, **payload}
+    logger.info("interview_question_bank_event %s", json.dumps(fields, sort_keys=True, default=str))
 
 
 def _ensure_question_bank(
@@ -415,15 +460,20 @@ def _ensure_question_bank(
     candidate: Candidate,
     job: JobDescription | None,
     question_count: int,
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     questions = normalize_result_questions(result.interview_questions)
     stale, stale_reason = _is_stale_question_bank(questions)
     if questions and len(questions) >= int(question_count or 0 or 8) and not stale:
-        logger.info(
-            "interview_question_bank_loaded_existing result_id=%s candidate_id=%s questions=%s source=result.interview_questions generation_mode=stored_existing",
-            result.id,
-            candidate.id,
-            len(questions),
+        coverage = _question_bank_category_coverage(questions)
+        _log_question_bank_event(
+            "loaded_existing",
+            result_id=result.id,
+            candidate_id=candidate.id,
+            question_count=len(questions),
+            source="result.interview_questions",
+            generation_mode="stored_existing",
+            stale_reason=stale_reason,
+            **coverage,
         )
         return questions
 
@@ -454,7 +504,14 @@ def _ensure_question_bank(
     config = db.query(JobDescriptionConfig).filter(JobDescriptionConfig.id == result.job_id).first()
     project_ratio = float(config.project_question_ratio) if config and config.project_question_ratio is not None else None
 
-    logger.info("interview_question_bank_generate_start result_id=%s candidate_id=%s", result.id, candidate.id)
+    _log_question_bank_event(
+        "generate_start",
+        result_id=result.id,
+        candidate_id=candidate.id,
+        requested_question_count=int(question_count or 8),
+        stale_reason=stale_reason,
+        existing_question_count=len(questions),
+    )
     bundle = build_question_bundle(
         resume_text=resume_text,
         jd_title=(job.jd_title if job else None),
@@ -462,24 +519,45 @@ def _ensure_question_bank(
         question_count=int(question_count or 8),
         project_ratio=project_ratio,
     )
-    generation_mode = str(((bundle.get("meta") or {}).get("generation_mode") or "unknown"))
-    fallback_used = bool((bundle.get("meta") or {}).get("fallback_used"))
+    bundle_meta = dict(bundle.get("meta") or {})
+    generation_mode = str(bundle_meta.get("generation_mode") or "unknown")
+    fallback_used = bool(bundle_meta.get("fallback_used"))
+    llm_topped_up_with_fallback = bool(bundle_meta.get("llm_topped_up_with_fallback"))
     questions = normalize_result_questions(bundle.get("questions") or [])
     if not questions:
         raise HTTPException(status_code=400, detail="Interview questions could not be generated for this result yet.")
+
+    coverage = _question_bank_category_coverage(questions)
+    if not all(coverage.values()):
+        _log_question_bank_event(
+            "generation_failed_guardrail",
+            result_id=result.id,
+            candidate_id=candidate.id,
+            question_count=len(questions),
+            generation_mode=generation_mode,
+            fallback_used=fallback_used,
+            llm_topped_up_with_fallback=llm_topped_up_with_fallback,
+            **coverage,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Generated question bank is missing required category coverage (intro/project/behavioral).",
+        )
 
     result.interview_questions = questions
     db.add(result)
     db.commit()
     db.refresh(result)
-    logger.info(
-        "interview_question_bank_generated_fresh result_id=%s candidate_id=%s questions=%s source=%s generation_mode=%s fallback_used=%s",
-        result.id,
-        candidate.id,
-        len(questions),
-        generation_mode,
-        generation_mode,
-        fallback_used,
+    _log_question_bank_event(
+        "generated_fresh",
+        result_id=result.id,
+        candidate_id=candidate.id,
+        question_count=len(questions),
+        source="result.interview_questions",
+        generation_mode=generation_mode,
+        fallback_used=fallback_used,
+        llm_topped_up_with_fallback=llm_topped_up_with_fallback,
+        **coverage,
     )
     return questions
 
@@ -488,7 +566,7 @@ def _compose_start_response(
     session: InterviewSession,
     question: InterviewQuestion | None,
     answered_count: int,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     pause_seconds_left = _pause_seconds_left(session)
     return {
         "ok": True,
@@ -511,7 +589,7 @@ def interview_access(
     result_id: int,
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     candidate = db.query(Candidate).filter(Candidate.id == current_user.user_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -546,7 +624,7 @@ def interview_start(
     payload: InterviewStartBody,
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     if payload.candidate_id is not None and payload.candidate_id != current_user.user_id:
         raise HTTPException(status_code=403, detail="candidate_id does not match logged-in user")
 
@@ -646,6 +724,11 @@ def interview_start(
         session.status = "completed"
         session.ended_at = session.ended_at or datetime.utcnow()
         db.commit()
+    elif current_question.started_at is None:
+        current_question.started_at = datetime.utcnow()
+        db.add(current_question)
+        db.commit()
+        db.refresh(current_question)
 
     return _compose_start_response(session, current_question, answered_count)
 
@@ -653,9 +736,10 @@ def interview_start(
 @router.post("/interview/answer")
 def interview_answer(
     payload: InterviewAnswerBody,
+    background_tasks: BackgroundTasks,
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     session = _get_candidate_session_or_403(db, payload.session_id, current_user)
     if session.status == "completed":
         raise HTTPException(status_code=400, detail="Interview session already completed")
@@ -686,8 +770,17 @@ def interview_answer(
         raise HTTPException(status_code=400, detail="Question already answered")
 
     question_limit = int(question.allotted_seconds or session.per_question_seconds or 60)
-    safe_time_taken = int(max(0, min(payload.time_taken_sec, question_limit)))
-    started_at = now - timedelta(seconds=safe_time_taken) if safe_time_taken else now
+    
+    # NEW: Secure server-side time calculation
+    if question.started_at:
+        elapsed_delta = now - question.started_at
+        actual_time_taken = int(elapsed_delta.total_seconds())
+        safe_time_taken = int(max(0, min(actual_time_taken, question_limit)))
+        started_at = question.started_at
+    else:
+        # Legacy fallback if started_at is missing (should not happen for new questions)
+        safe_time_taken = int(max(0, min(payload.time_taken_sec, question_limit)))
+        started_at = now - timedelta(seconds=safe_time_taken) if safe_time_taken else now
 
     answer_text = (payload.answer_text or "").strip()
     if payload.skipped:
@@ -772,6 +865,13 @@ def interview_answer(
     max_questions = int(session.max_questions or 8)
     if (session.remaining_time_seconds or 0) <= 0 or answered_count >= max_questions:
         interview_completed = True
+        next_question = None
+        if (session.remaining_time_seconds or 0) <= 0:
+            for unasked in ordered:
+                if unasked.time_taken_seconds is None and unasked.id != question.id:
+                    unasked.skipped = True
+                    unasked.time_taken_seconds = 0
+            db.commit()
     else:
         next_question = _create_next_question(db, session, result, answer_text)
         interview_completed = next_question is None
@@ -802,6 +902,10 @@ def interview_answer(
         if result.stage != "interview_completed":
             record_stage_change(db, result, stage="interview_completed", changed_by_role="system", changed_by_user_id=None, note="Interview finished")
         db.commit()
+        
+        # NEW: Automatically queue LLM evaluation safely on the backend
+        background_tasks.add_task(run_evaluation_task, session.id)
+        
         logger.info(
             "interview_completed session_id=%s answered=%s max=%s",
             session.id,
@@ -853,7 +957,7 @@ def interview_transcribe(
     language: str = Form("en"),
     context_hint: str = Form(""),
     current_user: SessionUser = Depends(require_role("candidate")),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     _ = current_user
     raw = audio.file.read()
     if not raw:
@@ -888,7 +992,7 @@ def interview_session_summary(
     session_id: int,
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     session = _get_candidate_session_or_403(db, session_id, current_user)
     answers = db.query(InterviewAnswer).filter(InterviewAnswer.session_id == session.id).all()
     answered_count = len([row for row in answers if (row.answer_text or "").strip() or row.skipped])
@@ -917,7 +1021,7 @@ def interview_event(
     payload: InterviewEventBody,
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     result = _resolve_result_by_token(db, current_user.user_id, token)
     latest_session = (
         db.query(InterviewSession)
@@ -933,7 +1037,7 @@ def interview_event(
     if not normalized_event_type:
         raise HTTPException(status_code=400, detail="event_type is required")
 
-    event_payload: dict[str, object] = {
+    event_payload: dict[str, Any] = {
         "event_type": normalized_event_type,
         "detail": (payload.detail or "").strip() or None,
         "timestamp": (payload.timestamp or "").strip() or datetime.utcnow().isoformat(),
@@ -941,7 +1045,7 @@ def interview_event(
         "session_id": latest_session.id if latest_session else None,
     }
 
-    existing_events: list[dict[str, object]]
+    existing_events: list[dict[str, Any]]
     if isinstance(result.events_json, list):
         existing_events = [item for item in result.events_json if isinstance(item, dict)]
     elif isinstance(result.events_json, dict):
@@ -964,7 +1068,7 @@ def interview_event_by_session(
     payload: InterviewEventBody,
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Frontend proctoring hook uses session-id-based event routing."""
     session = _get_candidate_session_or_403(db, session_id, current_user)
     result = db.query(Result).filter(Result.id == session.result_id).first()
@@ -975,7 +1079,7 @@ def interview_event_by_session(
     if not normalized_event_type:
         raise HTTPException(status_code=400, detail="event_type is required")
 
-    event_payload: dict[str, object] = {
+    event_payload: dict[str, Any] = {
         "event_type": normalized_event_type,
         "detail": (payload.detail or "").strip() or None,
         "timestamp": (payload.timestamp or "").strip() or datetime.utcnow().isoformat(),
@@ -983,7 +1087,7 @@ def interview_event_by_session(
         "session_id": session.id,
     }
 
-    existing_events: list[dict[str, object]]
+    existing_events: list[dict[str, Any]]
     if isinstance(result.events_json, list):
         existing_events = [item for item in result.events_json if isinstance(item, dict)]
     elif isinstance(result.events_json, dict):
@@ -1006,7 +1110,7 @@ def upload_proctor_frame(
     event_type: str = Form("scan"),
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     session = _get_candidate_session_or_403(db, session_id, current_user)
 
     raw = file.file.read()
@@ -1180,6 +1284,16 @@ def upload_proctor_frame(
 
     session_dir = PROCTOR_UPLOAD_ROOT / str(session.id)
     session_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Enforce a maximum of 50 proctoring frames per session to prevent disk exhaustion
+    existing_frames = sorted(session_dir.glob("*.jpg"))
+    if len(existing_frames) >= 50:
+        for old_frame in existing_frames[:-49]:
+            try:
+                old_frame.unlink()
+            except Exception:
+                pass
+
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
     file_path = session_dir / f"{timestamp}.jpg"
     file_path.write_bytes(raw)
@@ -1242,7 +1356,7 @@ def hr_proctoring_timeline(
     request: Request,
     current_user: SessionUser = Depends(require_role("hr")),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     session = (
         db.query(InterviewSession)
         .join(Result, InterviewSession.result_id == Result.id)

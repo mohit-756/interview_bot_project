@@ -5,7 +5,6 @@ import {
   ToggleLeft, AlertCircle, Loader2, User, Mail
 } from "lucide-react";
 import { useAuth } from "../context/useAuth";
-import { authApi } from "../services/api";
 import { cn } from "../utils/utils";
 
 // ── Theme hook ─────────────────────────────────────────────────────────────
@@ -148,7 +147,9 @@ export default function SettingsPage() {
       if (savedFs) setFontSize(savedFs);
       const savedCompact = localStorage.getItem("interviewbot_compact");
       if (savedCompact) setCompactMode(savedCompact === "true");
-    } catch {}
+    } catch {
+      // Ignore malformed local preference data.
+    }
   }, []);
 
   // Profile save — calls PUT /api/auth/profile (we add a simple endpoint)

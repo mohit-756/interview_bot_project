@@ -1,9 +1,12 @@
 import axios from "axios";
 import { toStatusObject } from "../utils/stages";
 
+const configuredBaseUrl = String(import.meta.env?.VITE_API_BASE_URL || "/api").trim();
+const baseURL = configuredBaseUrl === "/" ? "/api" : configuredBaseUrl.replace(/\/+$/, "");
+
 const apiClient = axios.create({
-  // NOTE: Keep frontend API calls relative so Vite dev proxy forwards /api to the backend.
-  baseURL: "/api",
+  // Defaults to /api for Vite proxy. Override via VITE_API_BASE_URL when needed.
+  baseURL,
   withCredentials: true,
 });
 

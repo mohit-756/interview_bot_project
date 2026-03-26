@@ -13,6 +13,8 @@ FIXES applied:
 """
 from __future__ import annotations
 
+from typing import Any
+
 import json
 import logging
 from collections import defaultdict
@@ -39,7 +41,7 @@ router = APIRouter(prefix="/hr", tags=["hr"])
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _json_dict(value: object) -> dict:
+def _json_dict(value: Any) -> dict:
     if isinstance(value, dict):
         return value
     if isinstance(value, str) and value.strip():
@@ -52,7 +54,7 @@ def _json_dict(value: object) -> dict:
     return {}
 
 
-def _json_list(value: object) -> list:
+def _json_list(value: Any) -> list:
     if isinstance(value, list):
         return value
     if isinstance(value, str) and value.strip():
@@ -65,7 +67,7 @@ def _json_list(value: object) -> list:
     return []
 
 
-def _safe_float(value: object) -> float | None:
+def _safe_float(value: Any) -> float | None:
     if value is None:
         return None
     try:
@@ -74,7 +76,7 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
-def _safe_int(value: object) -> int | None:
+def _safe_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
@@ -83,7 +85,7 @@ def _safe_int(value: object) -> int | None:
         return None
 
 
-def _normalize_answer_evaluation(value: object) -> dict:
+def _normalize_answer_evaluation(value: Any) -> dict:
     raw = _json_dict(value)
     breakdown = _json_dict(raw.get("score_breakdown"))
     legacy_breakdown = _json_dict(raw.get("dimension_breakdown"))
@@ -348,7 +350,7 @@ def interview_detail(
             for ev in events
         ],
         "hr_review": hr_review,
-        "section_summary": {key: round(sum(values) / len(values), 1) for key, values in section_scores.items() if values},
+        "section_summary": {key: round(float(sum(values)) / len(values), 1) for key, values in section_scores.items() if values},
     }
 
 
@@ -549,7 +551,7 @@ def _run_llm_evaluation(session_id: int) -> None:
         db.close()
 
 
-def _save_llm_fields(db: Session, session_id: int, question_id: int, evaluation: dict[str, object]) -> None:
+def _save_llm_fields(db: Session, session_id: int, question_id: int, evaluation: dict[str, Any]) -> None:
     answer = (
         db.query(InterviewAnswer)
         .filter(
@@ -571,24 +573,6 @@ def _save_llm_fields(db: Session, session_id: int, question_id: int, evaluation:
         question.reference_answer = str(evaluation.get("generated_reference_answer") or question.reference_answer or "") or None
         question.evaluation_json = evaluation
 
-    db.flush()
-def fields(db: Session, session_id: int, question_id: int, evaluation: dict[str, object]) -> None:
-    answer = (
-        db.query(InterviewAnswer)
-        .filter(
-            InterviewAnswer.session_id == session_id,
-            InterviewAnswer.question_id == question_id,
-        )
-        .order_by(InterviewAnswer.id.desc())
-        .first()
-    )
-    if answer:
-        answer.llm_score = float(evaluation["score"])
-        answer.llm_feedback = str(evaluation["feedback"])
-        answer.evaluation_json = evaluation
-
-    question = db.query(InterviewQuestion).filter(InterviewQuestion.id == question_id).first()
-    if question:
         question.llm_score = float(evaluation["score"])
         question.llm_feedback = str(evaluation["feedback"])
         question.reference_answer = str(evaluation.get("generated_reference_answer") or question.reference_answer or "") or None

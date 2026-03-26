@@ -255,6 +255,7 @@ export default function Interview() {
   // ── camera setup ───────────────────────────────────────────────────────────
   useEffect(() => {
     let disposed = false;
+    let cleanupVideoEl = null;
 
     async function startPreview() {
       setPreviewReady(false);
@@ -275,6 +276,8 @@ export default function Interview() {
         setPreviewWarning("Camera preview element not ready. Refresh and try again.");
         return;
       }
+      const previewVideoEl = videoEl;
+      cleanupVideoEl = previewVideoEl;
 
       let stream = null;
       try {
@@ -292,21 +295,21 @@ export default function Interview() {
       if (disposed) { stopStreamTracks(stream); return; }
 
       streamRef.current = stream;
-      videoEl.srcObject = stream;
-      videoEl.muted = true;
-      videoEl.playsInline = true;
+      previewVideoEl.srcObject = stream;
+      previewVideoEl.muted = true;
+      previewVideoEl.playsInline = true;
 
       try {
-        await videoEl.play();
+        await previewVideoEl.play();
       } catch {
         await new Promise((r) => setTimeout(r, 300));
-        try { await videoEl.play(); } catch { /* srcObject is still set */ }
+        try { await previewVideoEl.play(); } catch { /* srcObject is still set */ }
       }
 
       const pollStart = Date.now();
       const poll = () => {
         if (disposed) return;
-        if (videoEl.videoWidth > 0 && videoEl.readyState >= 2) {
+        if (previewVideoEl.videoWidth > 0 && previewVideoEl.readyState >= 2) {
           setPreviewReady(true);
         } else if (Date.now() - pollStart < 8000) {
           setTimeout(poll, 200);
@@ -329,7 +332,7 @@ export default function Interview() {
       }
       releaseAudioStream();
       if (streamRef.current) { stopStreamTracks(streamRef.current); streamRef.current = null; }
-      if (videoRef.current) videoRef.current.srcObject = null;
+      if (cleanupVideoEl) cleanupVideoEl.srcObject = null;
     };
   }, [releaseAudioStream]);
 

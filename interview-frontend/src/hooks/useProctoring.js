@@ -23,7 +23,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { proctorApi } from "../services/api";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const EMOTION_INTERVAL_MS   = 4000;   // analyse every 4 s
@@ -134,14 +133,8 @@ export function useProctoring({ sessionId, videoRef, enabled = true }) {
   const emotionTimerRef  = useRef(null);
   const fpsTimerRef      = useRef(null);
   const frameCountRef    = useRef(0);
-  const lastFpsCheckRef  = useRef(Date.now());
+  const lastFpsCheckRef  = useRef(0);
   const rafRef           = useRef(null);
-
-  // ── FPS tracker (uses requestAnimationFrame — zero overhead) ───────────────
-  const trackFps = useCallback(() => {
-    frameCountRef.current += 1;
-    rafRef.current = requestAnimationFrame(trackFps);
-  }, []);
 
   // Push an event into local state + ref buffer
   const pushEvent = useCallback((event) => {
@@ -183,8 +176,14 @@ export function useProctoring({ sessionId, videoRef, enabled = true }) {
   useEffect(() => {
     if (!enabled || !sessionId) return;
 
+    lastFpsCheckRef.current = Date.now();
+
     // Start FPS tracking
-    rafRef.current = requestAnimationFrame(trackFps);
+    const tick = () => {
+      frameCountRef.current += 1;
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
 
     // Check FPS every 2 s, disable emotion if too low
     fpsTimerRef.current = setInterval(() => {
@@ -205,7 +204,7 @@ export function useProctoring({ sessionId, videoRef, enabled = true }) {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (fpsTimerRef.current) clearInterval(fpsTimerRef.current);
     };
-  }, [enabled, sessionId, emotionEnabled, trackFps]);
+  }, [enabled, sessionId, emotionEnabled]);
 
   useEffect(() => {
     if (!enabled || !sessionId || !emotionEnabled) {

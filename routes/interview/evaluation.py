@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ai_engine.phase1.scoring import compute_answer_scorecard
-from database import get_db
+from database import get_db, SessionLocal
 from models import InterviewAnswer, InterviewQuestion, InterviewSession
 from routes.dependencies import SessionUser, require_role
 from services.llm.client import evaluate_answer_detailed
@@ -90,6 +90,70 @@ def _upsert_llm_fields(db: Session, session_id: int, question: InterviewQuestion
     db.flush()
 
 
+def run_evaluation_task(session_id: int) -> None:
+    """Background task to evaluate interview answers."""
+    db = SessionLocal()
+    try:
+        session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+        if not session or session.llm_eval_status in ("completed", "running"):
+            return
+
+        session.llm_eval_status = "running"
+        db.commit()
+
+        questions = db.query(InterviewQuestion).filter(InterviewQuestion.session_id == session_id).order_by(InterviewQuestion.id.asc()).all()
+        scored = 0
+        total_score = 0.0
+        section_scores: dict[str, list[float]] = defaultdict(list)
+
+        for question in questions:
+            answer_text = (question.answer_text or "").strip()
+            if not answer_text or question.skipped:
+                evaluation = {
+                    "question": question.text,
+                    "candidate_answer": answer_text,
+                    "generated_reference_answer": question.reference_answer or "A strong answer should directly respond to the prompt with practical detail.",
+                    "score": 0,
+                    "feedback": "Answer was skipped or empty.",
+                    "strengths": [],
+                    "weaknesses": ["No answer was provided."],
+                    "section": question.question_type or "project",
+                    "dimension_breakdown": {"relevance": 0, "correctness": 0, "completeness": 0, "clarity": 0, "confidence": 0},
+                }
+                _upsert_llm_fields(db, session_id, question, evaluation)
+                continue
+
+            try:
+                evaluation = evaluate_answer_detailed(
+                    question=question.text,
+                    answer=answer_text,
+                    section=question.question_type or "project",
+                    reference_answer=question.reference_answer,
+                    intent=question.intent,
+                    focus_skill=question.focus_skill,
+                    project_name=question.project_name,
+                )
+            except Exception as exc:
+                logger.warning("Detailed answer evaluation failed for question %s (session %s): %s — using local fallback.", question.id, session_id, exc)
+                evaluation = _fallback_evaluation(question, answer_text)
+
+            _upsert_llm_fields(db, session_id, question, evaluation)
+            total_score += float(evaluation["score"])
+            scored += 1
+            section_scores[str(evaluation.get("section") or "project")].append(float(evaluation["score"]))
+
+        session.llm_eval_status = "completed"
+        db.commit()
+    except Exception as exc:
+        logger.error("Background evaluation task failed for session %s: %s", session_id, exc)
+        session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+        if session:
+            session.llm_eval_status = "failed"
+            db.commit()
+    finally:
+        db.close()
+
+
 @router.post("/interview/{session_id}/evaluate")
 def evaluate_interview(
     session_id: int,
@@ -99,6 +163,10 @@ def evaluate_interview(
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.candidate_id == current_user.user_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found")
+
+    # Make idempotent
+    if session.llm_eval_status in ("completed", "running"):
+        return {"ok": True, "session_id": session_id, "status": session.llm_eval_status, "message": "Evaluation already running or completed."}
 
     session.llm_eval_status = "running"
     db.commit()
