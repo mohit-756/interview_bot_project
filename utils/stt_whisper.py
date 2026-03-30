@@ -44,7 +44,7 @@ def transcribe_audio_bytes(
     context_hint: str | None = None,
 ) -> dict[str, object]:
     """
-    Transcribe audio bytes using Groq API.
+    Transcribe audio bytes using Gemini 2.5 Flash Audio Transcription.
     """
     if not audio_bytes:
         return {
@@ -54,58 +54,67 @@ def transcribe_audio_bytes(
             "language": language or "en",
         }
 
-    api_key = os.getenv("GROQ_API_KEY", "")
+    api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set in .env")
-
-    model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
-    url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
     suffix = _resolve_suffix(filename)
-    form_filename = filename if filename else f"audio{suffix}"
+    mime_type = _mime(suffix)
 
-    headers = {
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    files = {
-        "file": (form_filename, audio_bytes)
-    }
-    
-    data = {"model": model, "response_format": "verbose_json"}
-    
-    if language:
-        data["language"] = language
+    prompt = "Please transcribe the following audio directly to text. Return ONLY the exact transcript text. Do not add any conversational filler, introductory remarks, or formatting."
     if context_hint:
-        data["prompt"] = context_hint
+        prompt += f"\nContext hint to help with correct domain terminology: {context_hint}"
+
+    encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": encoded_audio
+                        }
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.1
+        }
+    }
 
     try:
-        response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+        response = requests.post(url, json=payload, timeout=60)
         
         try:
             response.raise_for_status()
         except Exception:
-            logger.error("Groq API Error: %s", response.text)
+            logger.error("Gemini Transcription API Error: %s", response.text)
             raise
 
         response_data = response.json()
-        text = response_data.get("text", "").strip()
         
-        confidence = 0.92
-        segments = response_data.get("segments", [])
-        if segments:
-            import math
-            probs = [seg.get("avg_logprob", -1) for seg in segments]
-            avg_prob = sum(probs) / len(probs) if probs else -1
-            confidence = math.exp(avg_prob) if avg_prob < 0 else 0.92
+        text = ""
+        candidates = response_data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                text = parts[0].get("text", "").strip()
+
+        confidence = 0.95 if text else 0.0
 
         return {
             "text": text,
-            "confidence": confidence if text else 0.0,
+            "confidence": confidence,
             "low_confidence": not bool(text),
-            "language": response_data.get("language", language or "en"),
+            "language": language or "en",
         }
 
     except Exception as exc:
-        logger.error("Groq audio transcription failed: %s", exc)
+        logger.error("Gemini audio transcription failed: %s", exc)
         raise RuntimeError(f"Transcription failed: {exc}") from exc
