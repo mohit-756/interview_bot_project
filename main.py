@@ -74,6 +74,8 @@ def ensure_schema() -> None:
             # NOTE: Backward-safe demo toggle support for JD visibility.
             if "is_active" not in jd_cols:
                 conn.execute(text("ALTER TABLE job_descriptions ADD COLUMN is_active BOOLEAN DEFAULT 1 NOT NULL"))
+            if "custom_questions" not in jd_cols:
+                conn.execute(text("ALTER TABLE job_descriptions ADD COLUMN custom_questions JSON"))
 
             # ── jobs (legacy table) ───────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(jobs)")).fetchall()
@@ -88,6 +90,8 @@ def ensure_schema() -> None:
                 conn.execute(text("ALTER TABLE jobs ADD COLUMN education_requirement VARCHAR(50)"))
             if "experience_requirement" not in columns:
                 conn.execute(text("ALTER TABLE jobs ADD COLUMN experience_requirement INTEGER DEFAULT 0"))
+            if "custom_questions" not in columns:
+                conn.execute(text("ALTER TABLE jobs ADD COLUMN custom_questions JSON"))
 
             # ── candidates ────────────────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(candidates)")).fetchall()
@@ -193,6 +197,28 @@ def ensure_schema() -> None:
             ]:
                 if col not in q_cols:
                     conn.execute(text(f"ALTER TABLE interview_questions_v2 ADD COLUMN {col} {defn}"))
+
+            # ── interview_sessions ───────────────────────────────────────
+            rows = conn.execute(text("PRAGMA table_info(interview_sessions)")).fetchall()
+            sess_cols = {row[1] for row in rows}
+            if "llm_eval_status" not in sess_cols:
+                conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN llm_eval_status VARCHAR(20) DEFAULT 'pending'"))
+
+            # ── interview_feedbacks ───────────────────────────────────────
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS interview_feedbacks (
+                        id INTEGER PRIMARY KEY,
+                        session_id INTEGER,
+                        rating INTEGER NOT NULL,
+                        comment TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(session_id) REFERENCES interview_sessions(id)
+                    )
+                    """
+                )
+            )
 
             # ── interview_sessions ────────────────────────────────────────
             rows = conn.execute(text("PRAGMA table_info(interview_sessions)")).fetchall()

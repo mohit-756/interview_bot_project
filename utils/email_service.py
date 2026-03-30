@@ -87,3 +87,30 @@ While we were impressed with your background, we have decided to move forward wi
 
 We appreciate your interest in our organization and wish you the very best in your future endeavors."""
     return _send_generic_email(to_email, subject, body)
+
+def send_performance_feedback_email(to_email, candidate_name, role_title, strengths: list, areas_for_improvement: list, overall_score: float):
+    """Send performance feedback summary to candidate after interview review."""
+    subject = f"Your Interview Feedback - {role_title} | Quadrant Technologies"
+
+    strengths_text = "\n".join(f"  ✓ {s}" for s in strengths) if strengths else "  ✓ Strong overall communication"
+    improvements_text = "\n".join(f"  • {a}" for a in areas_for_improvement) if areas_for_improvement else "  • Continue building domain depth"
+
+    body = f"""Hello {candidate_name},
+
+Thank you for completing your interview for the {role_title} position at Quadrant Technologies.
+
+We have reviewed your interview responses and wanted to share some constructive feedback to help you grow professionally.
+
+— OVERALL INTERVIEW SCORE: {overall_score:.0f}/100 —
+
+STRENGTHS OBSERVED:
+{strengths_text}
+
+AREAS FOR IMPROVEMENT:
+{improvements_text}
+
+We appreciate the time and effort you put into the interview process. Regardless of the outcome, we hope this feedback helps you in your ongoing career journey.
+
+Thank you once again for your interest in Quadrant Technologies."""
+
+    return _send_generic_email(to_email, subject, body)

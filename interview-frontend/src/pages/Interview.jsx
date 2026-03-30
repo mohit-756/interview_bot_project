@@ -170,6 +170,7 @@ export default function Interview() {
   const [previewReady,    setPreviewReady]     = useState(false);
   const [previewWarning,  setPreviewWarning]   = useState("");
   const [answerFeedback,  setAnswerFeedback]   = useState(null);
+  const [proctorAlert,   setProctorAlert]     = useState("");
 
   const videoRef             = useRef(null);
   const autoSubmittedRef     = useRef(false);
@@ -511,7 +512,18 @@ export default function Interview() {
       ctx.drawImage(videoRef.current, 0, 0);
       const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.7));
       if (!blob) return;
-      await proctorApi.uploadFrame(sessionId, blob, eventType);
+      const fd = new FormData();
+      fd.append("frame", blob, "scan.jpg");
+      const res = await proctorApi.uploadFrame(sessionId, blob, eventType);
+      
+      // NEW: Real-time proctoring alerts to candidate
+      if (res && res.frame_reasons && res.frame_reasons.length > 0) {
+        setProctorAlert(res.frame_reasons[0]);
+        // Auto-clear alert after 6 seconds
+        setTimeout(() => setProctorAlert(""), 6000);
+      } else {
+        setProctorAlert("");
+      }
     } catch { /* silent */ }
   }, [sessionId, previewReady]);
 
@@ -613,6 +625,33 @@ export default function Interview() {
               </div>
             </div>
           </div>
+
+          {/* ⏲️ NEW: Question Progress Bar */}
+          {!answerFeedback && currentQuestion?.allotted_seconds > 0 && (
+            <div className="bg-slate-900/50 border border-slate-800/50 h-3 rounded-full overflow-hidden mb-2 relative">
+              <div 
+                className={cn(
+                  "h-full transition-all duration-1000 ease-linear",
+                  (timeLeft / currentQuestion.allotted_seconds) > 0.5 ? "bg-emerald-500" :
+                  (timeLeft / currentQuestion.allotted_seconds) > 0.2 ? "bg-amber-500" : "bg-red-500"
+                )}
+                style={{ width: `${Math.min(100, (timeLeft / currentQuestion.allotted_seconds) * 100)}%` }}
+              />
+            </div>
+          )}
+
+          {/* 🕵️ NEW: Proctoring Toast Alert */}
+          {proctorAlert && (
+            <div className="bg-amber-500/10 border border-amber-500/50 p-4 rounded-2xl flex items-center gap-3 animate-bounce">
+              <div className="bg-amber-500 text-slate-900 w-8 h-8 rounded-full flex items-center justify-center font-black">
+                !
+              </div>
+              <div>
+                <p className="text-xs font-black text-amber-500 uppercase tracking-widest">Compliance Alert</p>
+                <p className="text-slate-200 font-bold text-sm">{proctorAlert}</p>
+              </div>
+            </div>
+          )}
 
           {/* Question card with replay button */}
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl relative overflow-hidden">

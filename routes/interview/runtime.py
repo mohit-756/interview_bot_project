@@ -462,6 +462,18 @@ def _ensure_question_bank(
     question_count: int,
 ) -> list[dict[str, Any]]:
     questions = normalize_result_questions(result.interview_questions)
+
+    # -- Prepend HR-mandated custom questions first --
+    _cq = list(getattr(job, 'custom_questions', None) or [])
+    if _cq:
+        _exist = {str(q.get('text') or '').lower().strip() for q in questions}
+        _add = [{'text': t.strip(), 'category': 'mandatory', 'type': 'mandatory'} for t in _cq if isinstance(t, str) and t.strip() and t.strip().lower() not in _exist]
+        if _add:
+            questions = _add + questions
+            result.interview_questions = questions
+            db.add(result)
+            db.commit()
+
     stale, stale_reason = _is_stale_question_bank(questions)
     if questions and len(questions) >= int(question_count or 0 or 8) and not stale:
         coverage = _question_bank_category_coverage(questions)
@@ -1453,3 +1465,37 @@ def hr_proctoring_timeline(
             for event in events
         ],
     }
+
+#  Feature: Candidate Experience Feedback ----------------------------------
+from pydantic import BaseModel as _PydanticBase
+
+class FeedbackBody(_PydanticBase):
+    rating: int
+    comment: str = ""
+
+@router.post("/interview/{session_id}/feedback")
+def submit_interview_feedback(
+    session_id: int,
+    payload: FeedbackBody,
+    current_user: SessionUser = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+):
+    """Candidate submits experience rating at interview end."""
+    from models import InterviewFeedback
+
+    session = db.query(InterviewSession).filter(
+        InterviewSession.id == session_id,
+        InterviewSession.candidate_id == current_user.user_id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    rating = max(1, min(5, int(payload.rating)))
+    feedback = InterviewFeedback(
+        session_id=session_id,
+        rating=rating,
+        comment=(payload.comment or "").strip()[:1000],
+    )
+    db.add(feedback)
+    db.commit()
+    return {"ok": True, "rating": rating}

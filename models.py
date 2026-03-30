@@ -78,6 +78,7 @@ class JobDescription(Base):
 
     company = relationship("HR", back_populates="jobs")
     results = relationship("Result", back_populates="job")
+    custom_questions = Column(JSON, nullable=True)  # New field for HR mandatory questions
 
 
 class JobDescriptionConfig(Base):
@@ -97,6 +98,7 @@ class JobDescriptionConfig(Base):
     # NEW: store education + experience requirements on the canonical config
     education_requirement = Column(String(50), nullable=True)
     experience_requirement = Column(Integer, default=0, nullable=False)
+    custom_questions = Column(JSON, nullable=True)  # New field for HR mandatory questions
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
@@ -251,3 +253,15 @@ class ProctorEvent(Base):
     image_path = Column(String(500), nullable=True)
 
     session = relationship("InterviewSession", back_populates="proctor_events")
+
+class InterviewFeedback(Base):
+    """Candidate experience feedback collected at the end of the session."""
+    __tablename__ = "interview_feedbacks"
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("interview_sessions.id"))
+    rating = Column(Integer, nullable=False)  # 1-5 stars
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("InterviewSession")
