@@ -12,7 +12,7 @@ from passlib.exc import PasswordValueError, UnknownHashError
 # ---------------------------
 # Auth Config
 # ---------------------------
-load_dotenv()
+load_dotenv(override=True)
 
 DEFAULT_DEV_SECRET_KEY = "dev-secret-key-change-me"
 SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY

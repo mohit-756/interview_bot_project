@@ -10,6 +10,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 _DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:3b"
@@ -39,6 +42,7 @@ def _resolve_llm_config() -> dict[str, Any]:
     return {
         "provider": provider,
         "api_keys": api_keys,
+        "groq_api_key": os.getenv("GROQ_API_KEY", "").strip(),
         "standard_model": standard_model,
         "premium_model": premium_model,
         "ollama_url": OLLAMA_CHAT_URL,
@@ -69,15 +73,16 @@ class _GeminiChatCompletionsAdapter:
         max_tokens: int = 800,
         **_: Any,
     ) -> Any:
-        # Default to standard model if not specified
-        chosen_model = (model or self._standard_model).strip()
         api_key = self._get_api_key()
-
+        chosen_model = (model or self._standard_model).strip()
+        # Strip 'models/' prefix if present to avoid double-prefixing in URL
+        if chosen_model.startswith("models/"):
+            chosen_model = chosen_model[len("models/"):]
+            
         text_prompt = ""
         for m in messages:
             text_prompt += m.get("content", "") + "\n"
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent?key={api_key}"
         payload = {
             "contents": [{"parts": [{"text": text_prompt.strip()}]}],
             "generationConfig": {
@@ -86,12 +91,21 @@ class _GeminiChatCompletionsAdapter:
                 "responseMimeType": "application/json",
             }
         }
+
+        def _do_request(m_name: str) -> requests.Response:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={api_key}"
+            return requests.post(url, json=payload, timeout=120)
+
+        response = _do_request(chosen_model)
         
-        response = requests.post(url, json=payload, timeout=90)
+        if response.status_code == 404 and chosen_model != self._standard_model:
+            logger.warning("Gemini Model '%s' not found (404). Falling back to '%s'.", chosen_model, self._standard_model)
+            response = _do_request(self._standard_model)
+
         try:
             response.raise_for_status()
         except Exception as e:
-            logger.error("Gemini API Error: %s", response.text)
+            logger.error("Gemini API Error (%s): %s", response.status_code, response.text)
             raise
 
         data_dict: Any = response.json()
@@ -102,7 +116,8 @@ class _GeminiChatCompletionsAdapter:
             if isinstance(candidates, list) and candidates:
                 content = candidates[0].get("content", {}).get("parts", [])[0].get("text", "")
             else:
-                content = str(data_dict)
+                # Handle blocked or empty responses
+                content = data_dict.get("feedback", {}).get("reason", "No content generated") if not candidates else str(data_dict)
         except Exception:
             content = str(data_dict)
 
@@ -162,13 +177,63 @@ class _ChatAdapter:
         self.completions = completions
 
 
+class _GroqChatCompletionsAdapter:
+    def __init__(self, *, model: str, api_key: str) -> None:
+        self._model = model
+        self._api_key = api_key
+        self._url = "https://api.groq.com/openai/v1/chat/completions"
+
+    def create(
+        self,
+        *,
+        model: str | None = None,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.2,
+        max_tokens: int = 800,
+        **_: Any,
+    ) -> Any:
+        chosen_model = (model or self._model).strip()
+        payload = {
+            "model": chosen_model,
+            "messages": messages,
+            "temperature": float(temperature),
+            "max_tokens": int(max_tokens),
+            "response_format": {"type": "json_object"},
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        response = requests.post(self._url, json=payload, headers=headers, timeout=60)
+        try:
+            response.raise_for_status()
+        except Exception as e:
+            logger.error("Groq API Error (%s): %s", response.status_code, response.text)
+            raise
+
+        data = response.json() or {}
+        choices = data.get("choices") or []
+        content = ""
+        if choices:
+            content = choices[0].get("message", {}).get("content", "")
+
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+        )
+
+
 class _LLMClientAdapter:
-    def __init__(self, *, provider: str, standard_model: str, premium_model: str, api_keys: list[str], ollama_url: str) -> None:
+    def __init__(self, *, provider: str, standard_model: str, premium_model: str, api_keys: list[str], groq_api_key: str, ollama_url: str) -> None:
         if provider == "gemini":
             adapter = _GeminiChatCompletionsAdapter(
                 standard_model=standard_model,
                 premium_model=premium_model,
                 api_keys=api_keys
+            )
+        elif provider == "groq":
+            adapter = _GroqChatCompletionsAdapter(
+                model=standard_model,
+                api_key=groq_api_key,
             )
         else:
             adapter = _ChatCompletionsAdapter(
@@ -195,6 +260,7 @@ def _get_client() -> _LLMClientAdapter:
         standard_model=config["standard_model"],
         premium_model=config["premium_model"],
         api_keys=api_keys,
+        groq_api_key=config["groq_api_key"],
         ollama_url=config["ollama_url"],
     )
 

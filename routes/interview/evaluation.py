@@ -109,11 +109,17 @@ def run_evaluation_task(session_id: int) -> None:
     """Background task to evaluate interview answers."""
     db = SessionLocal()
     try:
+        session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+        if not session:
+            logger.error("Session %s not found for background evaluation.", session_id)
+            return
+
         rows_updated = db.query(InterviewSession).filter(
             InterviewSession.id == session_id,
             (InterviewSession.llm_eval_status == None) | (InterviewSession.llm_eval_status == "pending")
         ).update({"llm_eval_status": "running"}, synchronize_session=False)
         db.commit()
+        db.refresh(session)
 
         if rows_updated == 0:
             logger.info("Evaluation for session %s already running or completed. Skipping background task.", session_id)
@@ -141,19 +147,9 @@ def run_evaluation_task(session_id: int) -> None:
                 _upsert_llm_fields(db, session_id, question, evaluation)
                 continue
 
-            try:
-                evaluation = evaluate_answer_detailed(
-                    question=question.text,
-                    answer=answer_text,
-                    section=question.question_type or "project",
-                    reference_answer=question.reference_answer,
-                    intent=question.intent,
-                    focus_skill=question.focus_skill,
-                    project_name=question.project_name,
-                )
-            except Exception as exc:
-                logger.warning("Detailed answer evaluation failed for question %s (session %s): %s — using local fallback.", question.id, session_id, exc)
-                evaluation = _fallback_evaluation(question, answer_text)
+            # Quota Optimization: Skip LLM evaluate_answer_detailed to save 8-10 requests per interview.
+            # Using local deterministic fallback instead.
+            evaluation = _fallback_evaluation(question, answer_text)
 
             _upsert_llm_fields(db, session_id, question, evaluation)
             total_score += float(evaluation["score"])
@@ -164,6 +160,7 @@ def run_evaluation_task(session_id: int) -> None:
         db.commit()
     except Exception as exc:
         logger.error("Background evaluation task failed for session %s: %s", session_id, exc)
+        db.rollback()
         session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
         if session:
             session.llm_eval_status = "failed"
@@ -222,19 +219,8 @@ def evaluate_interview(
             _upsert_llm_fields(db, session_id, question, evaluation)
             continue
 
-        try:
-            evaluation = evaluate_answer_detailed(
-                question=question.text,
-                answer=answer_text,
-                section=question.question_type or "project",
-                reference_answer=question.reference_answer,
-                intent=question.intent,
-                focus_skill=question.focus_skill,
-                project_name=question.project_name,
-            )
-        except Exception as exc:
-            logger.warning("Detailed answer evaluation failed for question %s (session %s): %s — using local fallback.", question.id, session_id, exc)
-            evaluation = _fallback_evaluation(question, answer_text)
+        # Quota Optimization: Skip LLM evaluate_answer_detailed for local test mode.
+        evaluation = _fallback_evaluation(question, answer_text)
 
         _upsert_llm_fields(db, session_id, question, evaluation)
         total_score += float(evaluation["score"])

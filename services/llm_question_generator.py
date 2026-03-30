@@ -30,31 +30,24 @@ Target flow across the set:
 8. leadership / stakeholder / ownership if relevant
 9. measurable impact / outcome reflection
 
-Selection priority order:
-1. project/platform names
-2. recent work achievements
-3. measurable outcomes
-4. module/system names
-5. raw skills only if they are clearly central
+- Mirror this target 80/20 split: 80% should be project or role-specific technical depth (including implementation, trade-offs, design, debugging, scaling), and at most 20% can be intro or soft behavioral questions.
+- Every question MUST be grounded in the PROVIDED resume and JD. Generic questions are strictly prohibited.
+
+Selection priority order (Highest to Lowest):
+1. Named projects and specific platform implementations from the resume.
+2. Measurable outcomes and technical achievements from the resume.
+3. JD-specific technical gaps (e.g. why is a skill missing if is in JD?).
+4. Role-family architecture and design patterns.
 
 Hard rules:
 - Return ONLY valid JSON.
 - Preserve the exact response shape requested below.
-- Make every question feel candidate-specific, not template-generic.
-- No generic skill questions. No skill-clone questions. No repeated wording. No repeated openings beyond 2 questions.
-- Never ask "what is your experience with", "explain what is", "tell me about your most relevant project", or "in Python / in JavaScript" style questions.
-- Never surface broken resume artifacts, personal headers, full name, email, phone, location, or garbage fragments.
-- Prefer clean labels such as "Veriton data platform", "AI interview system", "resume screening system", "Databricks Lakehouse platform".
-- At least 50% of the questions must be grounded in named projects, platforms, recent achievements, or measurable outcomes when available.
-- At least one question must be project or platform grounded.
-- At least one question must be architecture/design focused.
-- At least one question must be debugging/failure focused.
-- At least one question must be scaling/performance focused.
-- For strong projects, try to cover execution, trade-off, debugging, and scale from different angles across the set.
-- Prefer measurable impact, scale, latency, adoption, cost, precision/recall, throughput, governance, or business outcome when available.
-- Treat each question like a senior interviewer probing one distinct dimension; avoid repeating the same prompt skeleton with swapped nouns.
-- Across the full set, cover different dimensions of the strongest evidence: implementation ownership, decision/trade-off, debugging/failure, architecture/scale, and business or stakeholder outcome.
-- Match role family strictly:
+- At least 80% of the questions MUST be grounded in named platforms, projects, or recent achievements.
+- At least two questions must be project or platform grounded.
+- Always include at least one architecture/design question.
+- Always include at least one debugging/failure/trade-off question.
+- Always include at least one performance/scaling question.
+- Match role family strictly (frontend/backend/aiml/data).
   - frontend -> components, state, UX, API integration, responsiveness, browser behavior, performance; avoid data-platform questions
   - backend -> APIs, services, data flow, reliability, integrations, scaling
   - aiml -> models, evaluation, prompts/features, MLOps, drift, serving, trade-offs
@@ -403,17 +396,15 @@ def build_structured_question_input(
 def _llm_user_prompt(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> str:
     instructions = [
         f"Generate {question_count} interview questions for this candidate.",
-        f"You MUST return EXACTLY {question_count} questions.",
+        "You MUST return EXACTLY {question_count} questions.",
+        "Ensure an 80/20 split: 80% should be project-grounded or deep-technical questions (implementations, design, debugging, scaling), and only 20% should be intro/soft skills.",
+        "Ground every single question in the PROVIDED Resume and Job Description context.",
         "Do not return fewer questions.",
         "If unsure, still complete the full count.",
         "Use the JSON context exactly as provided.",
         "Treat resume_projects, resume_recent_roles, resume_measurable_impact, and resume_leadership_signals as the strongest evidence in that order.",
-        "Mirror this target ordering across the set: intro/background alignment -> project/platform deep dive -> implementation trade-off -> architecture/design -> debugging/failure -> scaling/performance -> governance/security if relevant -> leadership/stakeholder if relevant -> measurable impact reflection.",
-        "Ground the questions in project/platform names, recent work achievements, measurable outcomes, module/system names, and only then raw skills.",
-        "The first question must be a concise intro/background opener.",
-        "The rest should mostly be project, platform, implementation, architecture, debugging, scaling, governance, or leadership questions rather than generic skill checks.",
-        "At least 50% of the questions should be grounded in named projects, platforms, recent achievements, or measurable outcomes when available.",
-        "At least one question must be explicitly grounded in a named project, platform, or recent achievement.",
+        "Mirror this target technical flow: intro -> project/platform deep dive -> implementation trade-off -> architecture/design -> debugging/failure -> scaling/performance -> governance/security -> measurable impact reflection.",
+        "At least 80% of the questions should be grounded in named platforms, projects, achievements, or outcomes from the resume.",
         "Across the set, strong evidence should be explored from execution, trade-off, debugging/failure, scale, and outcome angles.",
         "If the same project or platform appears multiple times, each question must probe a genuinely different angle rather than rephrasing the same ownership prompt.",
         "Include at least one architecture/design question.",
@@ -893,33 +884,13 @@ def _generate_validated_llm_questions(
 
     final_questions = first_attempt["questions"]
     final_user_prompt = first_attempt["user_prompt"]
-    retry_used = False
-    retry_issues: list[str] = []
-
-    if all_issues:
-        retry_used = True
-        stricter_note = _retry_note_for_issues(all_issues)
-        retry_attempt = _call_llm(structured_input, requested_count, retry_note=stricter_note)
-        retry_issues = _validate_question_set(retry_attempt["questions"], structured_input, requested_count)
-
-        # Use retry if it is at least as good as first attempt — never discard LLM output
-        retry_q = retry_attempt["questions"]
-        if retry_q and (not final_questions or len(retry_issues) <= len(all_issues)):
-            final_questions = retry_q
-            final_user_prompt = retry_attempt["user_prompt"]
-
-        # Only hard-fail when both attempts produced literally zero questions
-        if not final_questions:
-            raise ValueError(
-                "LLM returned zero questions after two attempts. first_issues="
-                + ",".join(all_issues)
-            )
-
+    # Quota optimization: Disable automatic retries for Free Tier accounts (20 req/day)
+    # This saves one LLM call per interview start.
     quality = {
         "first_attempt_issues": all_issues,
-        "retry_used": retry_used,
-        "retry_issues": retry_issues,
-        "final_issues": retry_issues if retry_used else all_issues,
+        "retry_used": False,
+        "retry_issues": [],
+        "final_issues": all_issues,
     }
     return final_questions, final_user_prompt, quality
 

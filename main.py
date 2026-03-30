@@ -14,13 +14,12 @@ FIXES applied:
 """
 from __future__ import annotations
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 import logging
 import os
 import threading
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -328,6 +327,8 @@ ensure_schema()
 _llm_provider = (os.getenv("LLM_PROVIDER") or "ollama").strip().lower()
 if _llm_provider == "groq":
     _groq_key = os.getenv("GROQ_API_KEY", "")
+    _groq_model = (os.getenv("LLM_STANDARD_MODEL") or "llama-3.1-8b-instant").strip()
+    logger.info("LLM provider is groq with model=%s", _groq_model)
     if not _groq_key:
         logger.warning(
             "GROQ_API_KEY is not set. "
@@ -338,7 +339,7 @@ elif _llm_provider == "ollama":
     _ollama_model = (os.getenv("OLLAMA_MODEL") or "qwen2.5-coder:3b").strip()
     logger.info("LLM provider is ollama with model=%s", _ollama_model)
 elif _llm_provider == "gemini":
-    _gemini_model = (os.getenv("LLM_MODEL") or "gemini-2.5-flash").strip()
+    _gemini_model = (os.getenv("LLM_STANDARD_MODEL") or "gemini-2.0-flash").strip()
     logger.info("LLM provider is gemini with model=%s", _gemini_model)
 else:
     logger.warning("Unknown LLM_PROVIDER=%s. Expected one of: ollama, groq, gemini", _llm_provider)

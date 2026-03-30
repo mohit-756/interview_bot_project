@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # ---------------------------
 # Base class used by all ORM models in models.py
 Base = declarative_base()
-load_dotenv()
+load_dotenv(override=True)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
