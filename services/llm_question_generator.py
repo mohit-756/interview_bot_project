@@ -16,63 +16,53 @@ from services.resume_parser import parse_resume_text
 
 logger = logging.getLogger(__name__)
 
-LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer designing a sharp, resume-grounded interview.
-Your job is to produce the SAME style and quality as a strong curated panel would produce, but dynamically from ONLY the provided resume + JD.
+LLM_QUESTION_SYSTEM_PROMPT = """You are a highly experienced technical interviewer conducting a live panel interview.
+Your ONLY source material is the candidate's resume and the job description provided in the user message.
+You must generate questions that are IMPOSSIBLE to answer without knowing this specific candidate's resume.
 
-Target flow across the set:
-1. intro/background alignment
-2. project or platform deep dive
-3. implementation trade-off
-4. architecture or design
-5. debugging / failure / what went wrong
-6. scaling / performance / reliability
-7. governance / security if relevant
-8. leadership / stakeholder / ownership if relevant
-9. measurable impact / outcome reflection
+ABSOLUTE RULES:
+- Every question except the intro MUST reference a SPECIFIC project, technology, company, outcome, or achievement that appears in this candidate's resume.
+- If a question could be asked of any random candidate, it is REJECTED. Rewrite it with a specific reference.
+- Use the candidate's actual project names, platform names, and measurable results in the question text itself.
+- Do NOT rephrase resume bullet points as questions. Instead, probe the implementation, trade-offs, failures, and decisions BEHIND those bullets.
+- 80% of questions must be grounded in the candidate's specific experience. Only 20% can be intro/behavioral.
 
-- Mirror this target 80/20 split: 80% should be project or role-specific technical depth (including implementation, trade-offs, design, debugging, scaling), and at most 20% can be intro or soft behavioral questions.
-- Every question MUST be grounded in the PROVIDED resume and JD. Generic questions are strictly prohibited.
+Flow to follow:
+1. Intro: Let the candidate connect their background to this specific role.
+2. Project Deep Dive: Pick the strongest/most recent project from the resume and probe execution details.
+3. Implementation Trade-off: Ask about a key technical decision within one of their listed projects/roles.
+4. Architecture/Design: Ask how one of their actual systems would need to evolve if requirements changed.
+5. Debugging/Failure: Ask about a real failure, bug, or setback named in or implied by their resume.
+6. Scaling/Performance: Ask about a scaling challenge tied to their actual project or platform.
+7. Behavioral (only 1): Ask about leadership, conflict resolution, or stakeholder alignment.
 
-Selection priority order (Highest to Lowest):
-1. Named projects and specific platform implementations from the resume.
-2. Measurable outcomes and technical achievements from the resume.
-3. JD-specific technical gaps (e.g. why is a skill missing if is in JD?).
-4. Role-family architecture and design patterns.
+Role-family routing rules:
+- frontend -> components, state, UX, API integration, browser behavior; avoid data-platform questions
+- backend -> APIs, services, data flow, reliability, integrations, scaling
+- aiml -> models, evaluation, prompts, MLOps, drift, serving, trade-offs
+- data/databricks -> platform, pipelines, lakehouse, governance, quality, scale, cost
+- lead/manager -> ownership, stakeholder alignment, delivery, practice building
 
 Hard rules:
-- Return ONLY valid JSON.
-- Preserve the exact response shape requested below.
-- At least 80% of the questions MUST be grounded in named platforms, projects, or recent achievements.
-- At least two questions must be project or platform grounded.
-- Always include at least one architecture/design question.
-- Always include at least one debugging/failure/trade-off question.
-- Always include at least one performance/scaling question.
-- Match role family strictly (frontend/backend/aiml/data).
-  - frontend -> components, state, UX, API integration, responsiveness, browser behavior, performance; avoid data-platform questions
-  - backend -> APIs, services, data flow, reliability, integrations, scaling
-  - aiml -> models, evaluation, prompts/features, MLOps, drift, serving, trade-offs
-  - data/databricks -> platform, pipelines, lakehouse, governance, quality, scale, cost, reliability; avoid UI questions
-  - architect -> design, trade-offs, boundaries, scale, governance
-  - lead/manager/practice_head -> ownership, stakeholder alignment, delivery, practice building, governance, scaling
-- Senior / lead profiles should include stakeholder or leadership depth.
-- Databricks / data profiles should include platform/governance/scaling depth.
-- Frontend profiles should include UI/components/API integration/responsiveness coverage.
-- Use natural interviewer phrasing with variety: Walk me through..., How did you decide..., Tell me about a time..., If this had to scale..., When something failed...
-- Reference answers should describe what a strong answer should cover, not a script.
+- Return ONLY valid JSON with the exact shape below.
+- project_name field MUST contain the actual project or platform name from the resume (not "your project").
+- Never use vague phrases: "your most relevant project", "end to end", "what is your experience with", "explain what is", "tell me about yourself".
+- Every question text should be specific enough that an interviewer could follow up based on the answer.
+- At minimum: 1 architecture/design, 1 debugging/failure, 1 performance/scaling, 1 intro, 1 behavioral.
 
 Return a JSON object with this exact shape:
 {
   "questions": [
     {
-      "text": "string",
+      "text": "string — must contain a specific project/platform/achievement from the resume",
       "category": "intro|deep_dive|project|architecture|leadership|behavioral",
       "focus_skill": "string or null",
-      "project_name": "string or null",
-      "intent": "string",
-      "reference_answer": "string",
+      "project_name": "string — the actual project or platform name, or null for intro/behavioral",
+      "intent": "string — what specific competency this question reveals",
+      "reference_answer": "string — what a strong answer would cover for this specific question",
       "difficulty": "easy|medium|hard",
       "priority_source": "resume_strength|jd_resume_overlap|jd_gap_probe|recent_project|architecture_signal|leadership_signal|baseline",
-      "rationale": "short explanation grounded in the provided context"
+      "rationale": "one sentence explaining which resume fact makes this question relevant"
     }
   ]
 }
@@ -394,48 +384,70 @@ def build_structured_question_input(
 # Prompt construction -------------------------------------------------------
 
 def _llm_user_prompt(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> str:
+    # ── Build a concrete evidence snapshot so the LLM has explicit names/facts ──
+    evidence_lines: list[str] = []
+    if structured_input.resume_projects:
+        evidence_lines.append("CANDIDATE'S ACTUAL PROJECTS (use these names verbatim in questions):")
+        for p in structured_input.resume_projects[:6]:
+            evidence_lines.append(f"  - {p}")
+    if structured_input.resume_measurable_impact:
+        evidence_lines.append("MEASURABLE OUTCOMES (reference these numbers/results directly):")
+        for m in structured_input.resume_measurable_impact[:5]:
+            evidence_lines.append(f"  - {m}")
+    if structured_input.resume_experiences:
+        evidence_lines.append("RECENT ROLES/EXPERIENCE (ground questions in these):")
+        for e in structured_input.resume_experiences[:4]:
+            evidence_lines.append(f"  - {e}")
+    if structured_input.overlap_skills:
+        evidence_lines.append(f"SKILLS ON BOTH RESUME AND JD (highest priority for technical depth): {', '.join(structured_input.overlap_skills[:8])}")
+    if structured_input.jd_only_skills:
+        evidence_lines.append(f"SKILLS IN JD BUT NOT ON RESUME (use max 1 gap-probe question): {', '.join(structured_input.jd_only_skills[:3])}")
+    if structured_input.resume_leadership_signals:
+        evidence_lines.append("LEADERSHIP SIGNALS (use for leadership/stakeholder questions):")
+        for l in structured_input.resume_leadership_signals[:3]:
+            evidence_lines.append(f"  - {l}")
+    evidence_snapshot = "\n".join(evidence_lines)
+
     instructions = [
-        f"Generate {question_count} interview questions for this candidate.",
-        "You MUST return EXACTLY {question_count} questions.",
-        "Ensure an 80/20 split: 80% should be project-grounded or deep-technical questions (implementations, design, debugging, scaling), and only 20% should be intro/soft skills.",
-        "Ground every single question in the PROVIDED Resume and Job Description context.",
-        "Do not return fewer questions.",
-        "If unsure, still complete the full count.",
-        "Use the JSON context exactly as provided.",
-        "Treat resume_projects, resume_recent_roles, resume_measurable_impact, and resume_leadership_signals as the strongest evidence in that order.",
-        "Mirror this target technical flow: intro -> project/platform deep dive -> implementation trade-off -> architecture/design -> debugging/failure -> scaling/performance -> governance/security -> measurable impact reflection.",
-        "At least 80% of the questions should be grounded in named platforms, projects, achievements, or outcomes from the resume.",
-        "Across the set, strong evidence should be explored from execution, trade-off, debugging/failure, scale, and outcome angles.",
-        "If the same project or platform appears multiple times, each question must probe a genuinely different angle rather than rephrasing the same ownership prompt.",
+        f"Generate exactly {question_count} interview questions for this specific candidate.",
+        "CRITICAL: Your questions must be so specific to THIS resume that they could not be asked of any other candidate.",
+        f"Use the EVIDENCE SNAPSHOT below — reference the actual project names, numbers, and role titles in your question text.",
+        "80% of questions must directly reference a named project, platform, role, or measurable outcome from the resume.",
+        "20% can be intro/behavioral — but even the intro should mention this role and what their resume shows.",
+        "Do NOT produce generic questions. Every question must have a 'project_name' or a specific resume fact in its text.",
+        "Mirror this flow: intro -> project execution deep dive -> implementation trade-off -> architecture/design -> debugging/failure -> scaling/performance -> (if senior) leadership/stakeholder -> (1 behavioral).",
+        "If the same project appears in multiple questions, each must probe a completely different angle (e.g., one on execution, one on failure, one on scaling).",
         "Include at least one architecture/design question.",
-        "Include at least one debugging/failure question.",
-        "Include at least one performance/scaling question.",
-        "Prefer concrete evidence and clean project labels over raw skill mentions.",
-        "Do not mention full name, email, phone, location, or broken resume fragments.",
-        "Use varied natural openings. No more than two questions may share the same opening pattern.",
-        "Include at most one JD gap-probe question, only for a critical missing capability.",
-        "Reference answers should describe what a strong answer should cover, not a memorized script.",
-        "Reject weak phrasing such as 'end to end', 'most relevant project', 'what is your experience with', 'explain what is', 'In Python', or 'In JavaScript'.",
-        "Do not produce questions that could apply unchanged to almost any candidate.",
+        "Include at least one debugging/failure/root-cause question.",
+        "Include at least one scaling/performance question.",
+        "Do NOT mention the candidate's full name, email, phone, or location in any question.",
+        "Vary the opening phrases — no more than 2 questions can start with the same words.",
+        "Include at most 1 JD-gap question (skill in JD but missing from resume) — only if it's critical.",
+        "Reference answers must specifically describe what a strong answer covers for THIS question, not a generic script.",
+        "BANNED phrases: 'end to end', 'most relevant project', 'what is your experience with', 'explain what is', 'walk me through your resume', 'tell me about yourself'.",
     ]
     role_track = _structured_role_track(structured_input)
     if role_track == "frontend":
-        instructions.append("Role-family routing: this is FRONTEND. Cover UI/components/state/API integration/responsiveness. Avoid data-platform, lakehouse, or pipeline-governance questions unless the resume clearly centers on them.")
+        instructions.append("Role track is FRONTEND: focus on UI architecture, component design, state management, API integration, and browser/responsiveness concerns tied to their specific projects.")
     elif role_track == "data":
-        instructions.append("Role-family routing: this is DATA / DATABRICKS. Cover platform design, governance, quality, scale, cost, reliability, and multi-domain delivery. Avoid UI/component/browser questions.")
+        instructions.append("Role track is DATA/DATABRICKS: focus on platform design, governance, pipeline reliability, quality, cost, and scale tied to their specific data projects.")
     elif role_track == "aiml":
-        instructions.append("Role-family routing: this is AIML. Cover model/prompt/feature choices, evaluation, failure analysis, drift or serving, and product trade-offs. Avoid UI-specific questions unless supported by evidence.")
+        instructions.append("Role track is AI/ML: focus on model choices, evaluation, prompt design, failure analysis, drift, and serving tied to their specific ML work.")
     else:
-        instructions.append("Role-family routing: this is BACKEND / GENERAL ENGINEERING. Cover APIs, services, integrations, reliability, debugging, and scaling.")
+        instructions.append("Role track is BACKEND/GENERAL ENGINEERING: focus on API design, service reliability, data flow, integration, debugging, and scaling tied to their specific backend work.")
     if _is_senior_profile(structured_input):
-        instructions.append("Because this is a senior profile, include leadership, stakeholder alignment, ownership, scaling, mentoring, delivery, governance, or practice-building coverage where supported.")
+        instructions.append("This is a SENIOR profile: include at least one question about leadership, stakeholder alignment, delivery decisions, or mentoring tied to their actual experience.")
     if _is_architect_profile(structured_input):
-        instructions.append("Because this role has architect/platform signals, include design, architecture, trade-off, scale, reliability, or governance/platform-decision coverage.")
+        instructions.append("This role has ARCHITECT signals: include at least one design/trade-off/system boundary question referencing their actual system or platform.")
     if retry_note:
         instructions.append(retry_note)
+
     return (
-        "\n".join(instructions)
-        + "\n\nCandidate/JD context (JSON):\n"
+        "=== EVIDENCE SNAPSHOT (use these specific facts in your questions) ===\n"
+        + evidence_snapshot
+        + "\n\n=== INSTRUCTIONS ===\n"
+        + "\n".join(instructions)
+        + "\n\n=== CANDIDATE/JD FULL CONTEXT (JSON) ===\n"
         + json.dumps(asdict(structured_input), indent=2)
     )
 
