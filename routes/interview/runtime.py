@@ -64,7 +64,7 @@ from routes.interview.evaluation import run_evaluation_task
 
 from utils.proctoring_cv import analyze_frame, compare_signatures, should_store_periodic
 
-from utils.scoring import summarize_and_score
+
 
 from utils.stt_whisper import transcribe_audio_bytes
 
@@ -1691,35 +1691,12 @@ def interview_answer(
 
     job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
 
-    summary, relevance_score, score_breakdown = summarize_and_score(
-
-        question.text,
-
-        answer_text,
-
-        allotted_seconds=question_limit,
-
-        time_taken_seconds=safe_time_taken,
-
-        jd_skills=(job.skill_scores or {}).keys() if job else (),
-
-    )
-
-    answer_evaluation = evaluate_answer(
-
-        question.text,
-
-        answer_text,
-
-        allotted_seconds=question_limit,
-
-        time_taken_seconds=safe_time_taken,
-
-        jd_skills=(job.skill_scores or {}).keys() if job else (),
-
-    )
-
-
+    # Keep answer handling lightweight; detailed scoring runs after interview completion.
+    summary = (answer_text[:220] + "...") if len(answer_text) > 220 else answer_text
+    if payload.skipped or not answer_text:
+        relevance_score = 0.0
+    else:
+        relevance_score = max(0.35, min(1.0, len(answer_text) / 250.0))
 
     answer = (
 
@@ -1751,7 +1728,7 @@ def interview_answer(
 
         answer.ended_at = now
 
-        answer.evaluation_json = answer_evaluation
+        answer.evaluation_json = None
 
     else:
 
@@ -1771,7 +1748,7 @@ def interview_answer(
 
             ended_at=now,
 
-            evaluation_json=answer_evaluation,
+            evaluation_json=None,
 
         )
 
@@ -1926,15 +1903,22 @@ def interview_answer(
 
         session.llm_eval_status = "pending"
 
-        answer_evaluations = [
-
-            row.evaluation_json
-
-            for row in db.query(InterviewAnswer).filter(InterviewAnswer.session_id == session.id).all()
-
-            if isinstance(row.evaluation_json, dict)
-
-        ]
+        answer_evaluations = []
+        session_answers = db.query(InterviewAnswer).filter(InterviewAnswer.session_id == session.id).all()
+        jd_skill_keys = (job.skill_scores or {}).keys() if job else ()
+        for row in session_answers:
+            q = next((item for item in ordered if item.id == row.question_id), None)
+            if not q:
+                continue
+            evaluated = evaluate_answer(
+                q.text,
+                (row.answer_text or ""),
+                allotted_seconds=int(q.allotted_seconds or session.per_question_seconds or 60),
+                time_taken_seconds=int(row.time_taken_sec or 0),
+                jd_skills=jd_skill_keys,
+            )
+            row.evaluation_json = evaluated
+            answer_evaluations.append(evaluated)
 
         interview_summary = summarize_interview(answer_evaluations)
 
@@ -2046,21 +2030,7 @@ def interview_answer(
 
         "time_limit_seconds": int(next_question.allotted_seconds or session.per_question_seconds or 60),
 
-        "feedback": {
-
-            "overall_score": score_breakdown["overall_score"],
-
-            "relevance": score_breakdown["relevance"],
-
-            "completeness": score_breakdown["completeness"],
-
-            "clarity": score_breakdown["clarity"],
-
-            "time_fit": score_breakdown["time_fit"],
-
-            "word_count": score_breakdown["word_count"],
-
-        } if (not payload.skipped and answer_text) else None,
+        "feedback": None,
 
     }
 

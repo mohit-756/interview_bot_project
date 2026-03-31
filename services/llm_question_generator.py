@@ -436,24 +436,29 @@ def _llm_user_prompt(structured_input: StructuredQuestionInput, question_count: 
     if structured_input.resume_projects:
         evidence_lines.append("CANDIDATE'S ACTUAL PROJECTS (use these names verbatim in questions):")
         for p in structured_input.resume_projects[:6]:
-            evidence_lines.append(f"  - {p}")
+            evidence_lines.append(f"  - {p[:150]}") # Truncate long project names
     if structured_input.resume_measurable_impact:
         evidence_lines.append("MEASURABLE OUTCOMES (reference these numbers/results directly):")
         for m in structured_input.resume_measurable_impact[:5]:
-            evidence_lines.append(f"  - {m}")
+            evidence_lines.append(f"  - {m[:200]}") # Truncate long impacts
     if structured_input.resume_experiences:
         evidence_lines.append("RECENT ROLES/EXPERIENCE (ground questions in these):")
         for e in structured_input.resume_experiences[:4]:
-            evidence_lines.append(f"  - {e}")
+            evidence_lines.append(f"  - {e[:200]}") # Truncate long experience bullets
+    
+    # ... rest of the evidence snapshot ...
     if structured_input.overlap_skills:
-        evidence_lines.append(f"SKILLS ON BOTH RESUME AND JD (highest priority for technical depth): {', '.join(structured_input.overlap_skills[:8])}")
-    if structured_input.jd_only_skills:
-        evidence_lines.append(f"SKILLS IN JD BUT NOT ON RESUME (use max 1 gap-probe question): {', '.join(structured_input.jd_only_skills[:3])}")
-    if structured_input.resume_leadership_signals:
-        evidence_lines.append("LEADERSHIP SIGNALS (use for leadership/stakeholder questions):")
-        for l in structured_input.resume_leadership_signals[:3]:
-            evidence_lines.append(f"  - {l}")
+        evidence_lines.append(f"SKILLS ON BOTH RESUME AND JD: {', '.join(structured_input.overlap_skills[:8])}")
+    
     evidence_snapshot = "\n".join(evidence_lines)
+    
+    # Truncate JSON context to avoid TPM limits
+    context_dict = asdict(structured_input)
+    # Surgical truncation of largest fields
+    context_dict['resume_summary'] = context_dict['resume_summary'][:500]
+    context_dict['jd_summary'] = context_dict['jd_summary'][:1000]
+    context_dict['resume_experiences'] = [str(x)[:200] for x in context_dict['resume_experiences'][:4]]
+    context_dict['resume_projects'] = [str(x)[:200] for x in context_dict['resume_projects'][:5]]
 
     instructions = [
         f"Generate exactly {question_count} interview questions for this specific candidate.",
@@ -882,7 +887,8 @@ def _normalize_llm_questions(
 def _call_llm(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> dict[str, Any]:
     user_prompt = _llm_user_prompt(structured_input, question_count, retry_note=retry_note)
     provider = _llm_provider()
-    model = _llm_premium_model()
+    # USE STANDARD MODEL (8B) to avoid 429 Rate Limits on Groq Premium (70B)
+    model = _llm_model() 
     logger.info(
         "LLM_CALL_START provider=%s model=%s question_count_requested=%s question_count_returned=%s fallback_used=%s retry=%s",
         provider,
@@ -1491,7 +1497,8 @@ def generate_followup_question(
 ) -> dict[str, Any] | None:
     """Generate a surgical follow-up question using the LLM."""
     provider = _llm_provider()
-    model = _llm_premium_model()
+    # USE STANDARD MODEL (8B) to avoid 429 Rate Limits
+    model = _llm_model() 
     
     user_prompt = f"RESUME CONTEXT (Optional):\n{resume_text[:2000]}\n\nORIGINAL QUESTION: {original_question}\n\nCANDIDATE ANSWER: {candidate_answer}\n\nGenerate a deep-probe follow-up question."
 

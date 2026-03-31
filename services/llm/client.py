@@ -235,46 +235,70 @@ class _GroqChatCompletionsAdapter:
 
 
 class _LLMClientAdapter:
-    def __init__(self, *, provider: str, standard_model: str, premium_model: str, api_keys: list[str], groq_api_key: str, ollama_url: str) -> None:
-        if provider == "gemini":
-            adapter = _GeminiChatCompletionsAdapter(
-                standard_model=standard_model,
-                premium_model=premium_model,
-                api_keys=api_keys
+    def __init__(self, *, config: dict[str, Any]) -> None:
+        self._config = config
+        self._adapters: dict[str, Any] = {}
+        
+        # Initialize Gemini if keys exist
+        if config["api_keys"]:
+            self._adapters["gemini"] = _GeminiChatCompletionsAdapter(
+                standard_model=config["standard_model"],
+                premium_model=config["premium_model"],
+                api_keys=config["api_keys"]
             )
-        elif provider == "groq":
-            adapter = _GroqChatCompletionsAdapter(
-                model=standard_model,
-                api_key=groq_api_key,
+            
+        # Initialize Groq if key exists
+        if config["groq_api_key"]:
+            self._adapters["groq"] = _GroqChatCompletionsAdapter(
+                model=config["standard_model"],
+                api_key=config["groq_api_key"]
             )
-        else:
-            adapter = _ChatCompletionsAdapter(
-                provider=provider,
-                model=standard_model,
-                api_key=api_keys[0] if api_keys else "",
-                ollama_url=ollama_url,
-            )
-        self.chat = _ChatAdapter(adapter)
+            
+        # Initialize Ollama as fallback or explicit choice
+        self._adapters["ollama"] = _ChatCompletionsAdapter(
+            provider="ollama",
+            model=config["standard_model"],
+            api_key="",
+            ollama_url=config["ollama_url"]
+        )
+
+    def create(
+        self,
+        *,
+        model: str | None = None,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.2,
+        max_tokens: int = 800,
+        provider_override: str | None = None,
+        **_: Any,
+    ) -> Any:
+        provider = provider_override or self._config["provider"]
+        
+        # Smart Failover: If chosen provider isn't available, try others
+        if provider not in self._adapters:
+            logger.warning(f"Provider {provider} not available. Trying fallbacks.")
+            for p in ["gemini", "groq", "ollama"]:
+                if p in self._adapters:
+                    provider = p
+                    break
+        
+        adapter = self._adapters.get(provider)
+        if not adapter:
+            raise RuntimeError("No LLM providers configured correctly.")
+            
+        return adapter.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
 
 
 @lru_cache(maxsize=1)
 def _get_client() -> _LLMClientAdapter:
     config = _resolve_llm_config()
-    provider = config["provider"]
-    api_keys = config["api_keys"]
-
-    if provider == "ollama" and not config["standard_model"]:
-        raise RuntimeError("Missing Ollama model. Set OLLAMA_MODEL (for example: qwen2.5-coder:3b).")
-
-    logger.info("llm_client_init provider=%s standard=%s premium=%s", provider, config["standard_model"], config["premium_model"])
-    return _LLMClientAdapter(
-        provider=provider,
-        standard_model=config["standard_model"],
-        premium_model=config["premium_model"],
-        api_keys=api_keys,
-        groq_api_key=config["groq_api_key"],
-        ollama_url=config["ollama_url"],
-    )
+    logger.info("llm_client_init with multi-provider support")
+    return _LLMClientAdapter(config=config)
 
 
 def _llm_provider() -> str:
@@ -302,7 +326,7 @@ def extract_skills(jd_text: str) -> dict[str, int]:
             model=_llm_model(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=600,
+            max_tokens=350,
         )
         data = json.loads(_clean_json(response.choices[0].message.content or ""))
         return {str(k).strip().lower(): max(1, min(10, int(v))) for k, v in data.items() if str(k).strip()}
@@ -343,13 +367,15 @@ Rules:
 - be practical and human-like, not harsh
 - strengths and weaknesses must each be arrays of short strings
 - dimension_breakdown must contain integers 0-100 for relevance, correctness, completeness, clarity, confidence
-"""
+\"\"\"
+    # USE STANDARD MODEL (8B) for evaluation to avoid 429 Rate Limits
     response = _get_client().chat.completions.create(
-        model=_llm_premium_model(),
+        model=_llm_model(),
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=900,
+        max_tokens=500,
     )
+
     raw = _clean_json(response.choices[0].message.content or "")
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
