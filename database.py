@@ -30,10 +30,11 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Render PostgreSQL URLs need sslmode=require for secure connections.
-# If the URL does not already contain sslmode, append it.
+# Only add sslmode for remote hosts — skip for localhost/local dev.
 if DATABASE_URL.startswith("postgresql://") and "sslmode" not in DATABASE_URL:
-    separator = "&" if "?" in DATABASE_URL else "?"
-    DATABASE_URL = f"{DATABASE_URL}{separator}sslmode=require"
+    if "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL:
+        separator = "&" if "?" in DATABASE_URL else "?"
+        DATABASE_URL = f"{DATABASE_URL}{separator}sslmode=require"
 
 # Engine handles low-level DB connections.
 # For SQLite, check_same_thread=False is needed. For Postgres, it is not.
