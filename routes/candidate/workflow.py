@@ -10,7 +10,7 @@ from services.question_generation import build_question_bundle
 from ai_engine.phase1.scoring import compute_resume_skill_match
 from ai_engine.phase1.matching import extract_text_from_file
 from database import get_db
-from models import JobDescription, JobDescriptionConfig, Result
+from models import JobDescription, Result
 from routes.common import (
     UPLOAD_DIR,
     ensure_candidate_profile,
@@ -24,7 +24,6 @@ from routes.common import (
 )
 from routes.dependencies import SessionUser, require_role
 from routes.schemas import CandidateSelectJDBody, ScheduleInterviewBody
-from services.jd_sync import sync_config_from_legacy_job, sync_legacy_job_from_config
 from services.practice import build_practice_kit
 from services.resume_advice import build_resume_advice
 from utils.email_service import send_interview_email
@@ -51,21 +50,17 @@ def _generate_result_question_bank(
     return questions
 
 
-def _selected_jd_or_404(db: Session, jd_id: int) -> JobDescriptionConfig:
-    selected_jd = db.query(JobDescriptionConfig).filter(JobDescriptionConfig.id == jd_id).first()
-    if selected_jd:
-        return selected_jd
-
-    legacy = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
-    if not legacy:
+def _selected_jd_or_404(db: Session, jd_id: int) -> JobDescription:
+    selected_jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
+    if not selected_jd:
         raise HTTPException(status_code=404, detail="JD not found")
-    return sync_config_from_legacy_job(db, legacy)
+    return selected_jd
 
 
 def _resume_advice_payload(
     *,
     candidate,
-    selected_jd: JobDescriptionConfig | None,
+    selected_jd: JobDescription | None,
     explanation: dict[str, object] | None,
 ) -> dict[str, object] | None:
     if not candidate.resume_path or not selected_jd:
@@ -231,13 +226,11 @@ def upload_resume(
         raise HTTPException(status_code=400, detail="Select a JD before uploading resume")
 
     selected_jd = _selected_jd_or_404(db, selected_jd_id)
-
-    selected_job = sync_legacy_job_from_config(db, selected_jd)
     candidate.selected_jd_id = selected_jd.id
     db.commit()
     db.refresh(candidate)
 
-    if not selected_job:
+    if not selected_jd:
         return {
             "ok": True,
             "message": "Resume uploaded. No job description available yet.",
@@ -249,20 +242,20 @@ def upload_resume(
             "selected_jd_id": None,
         }
 
-    score, explanation, _ = evaluate_resume_for_job(candidate, selected_job)
+    score, explanation, _ = evaluate_resume_for_job(candidate, selected_jd)
     result = upsert_result(
         db,
         candidate.id,
-        selected_job.id,
+        selected_jd.id,
         score,
         explanation,
-        cutoff_score=float(selected_job.cutoff_score if selected_job.cutoff_score is not None else 65.0),
+        cutoff_score=float(selected_jd.qualify_score if selected_jd.qualify_score is not None else 65.0),
     )
 
     # Main restored flow: generate and persist interview questions immediately
     # after resume-vs-JD screening. Result.interview_questions is the source of truth.
     resume_text = extract_text_from_file(candidate.resume_path)
-    questions = _generate_result_question_bank(result=result, resume_text=resume_text, job=selected_job)
+    questions = _generate_result_question_bank(result=result, resume_text=resume_text, job=selected_jd)
     db.commit()
     db.refresh(result)
 
@@ -281,8 +274,8 @@ def upload_resume(
         },
         "available_jobs": list_available_jobs(db),
         "available_jds": list_active_jds(db),
-        "selected_job_id": selected_job.id,
-        "selected_jd_id": selected_job.id,
+        "selected_job_id": selected_jd.id,
+        "selected_jd_id": selected_jd.id,
         "result": serialize_result(result),
         "question_count": len(questions or []),
         "resume_advice": _resume_advice_payload(

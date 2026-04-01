@@ -11,8 +11,7 @@ from sqlalchemy.orm import Session
 
 from ai_engine.phase1.scoring import compute_resume_scorecard
 from ai_engine.phase1.matching import extract_text_from_file
-from models import Candidate, HR, JobDescription, JobDescriptionConfig, Result
-from services.jd_sync import extract_min_academic_percent
+from models import Candidate, HR, JobDescription, Result
 from services.pipeline import normalize_stage, record_stage_change, stage_payload
 from services.resume_parser import parse_resume_text
 from services.scoring import build_application_score
@@ -162,58 +161,35 @@ def list_available_jobs(db: Session) -> list[dict[str, object]]:
                 "education_requirement": job.education_requirement,
                 "experience_requirement": job.experience_requirement,
                 "skill_scores": job.skill_scores or {},
-                "cutoff_score": float(job.cutoff_score if job.cutoff_score is not None else 65.0),
-                "min_academic_percent": extract_min_academic_percent(job.education_requirement),
-                "question_count": int(job.question_count if job.question_count is not None else 8),
+                "cutoff_score": float(job.qualify_score if job.qualify_score is not None else 65.0),
+                "min_academic_percent": float(job.min_academic_percent if job.min_academic_percent is not None else 0.0),
+                "question_count": int(job.total_questions if job.total_questions is not None else 8),
             }
         )
     return payload
 
 
 def list_active_jds(db: Session) -> list[dict[str, object]]:
-    jds = db.query(JobDescriptionConfig).order_by(JobDescriptionConfig.id.desc()).all()
-    if not jds:
-        legacy_jobs = db.query(JobDescription).order_by(JobDescription.id.desc()).all()
-        return [
-            {
-                "id": job.id,
-                "title": (job.jd_title or Path(job.jd_text or "").name or "Untitled JD"),
-                "jd_text": job.jd_text or "",
-                "jd_dict_json": {},
-                "weights_json": job.skill_scores or {},
-                "qualify_score": float(job.cutoff_score if job.cutoff_score is not None else 65.0),
-                "min_academic_percent": extract_min_academic_percent(job.education_requirement),
-                "total_questions": int(job.question_count if job.question_count is not None else 8),
-                "project_question_ratio": 0.8,
-                "created_at": None,
-            }
-            for job in legacy_jobs
-        ]
+    jds = db.query(JobDescription).filter(JobDescription.is_active == True).order_by(JobDescription.id.desc()).all()
     payload: list[dict[str, object]] = []
     for jd in jds:
         payload.append(
             {
                 "id": jd.id,
-                "title": jd.title,
+                "title": jd.title or jd.jd_title or "Untitled Role",
                 "jd_text": jd.jd_text,
-                "jd_dict_json": jd.jd_dict_json or {},
-                "weights_json": jd.weights_json or {},
+                "weights_json": jd.weights_json or jd.skill_scores or {},
                 "qualify_score": float(jd.qualify_score if jd.qualify_score is not None else 65.0),
                 "education_requirement": jd.education_requirement,
                 "experience_requirement": int(jd.experience_requirement if jd.experience_requirement is not None else 0),
-                "min_academic_percent": float(
-                    jd.min_academic_percent if jd.min_academic_percent is not None else 0.0
-                ),
+                "min_academic_percent": float(jd.min_academic_percent if jd.min_academic_percent is not None else 0.0),
                 "total_questions": int(jd.total_questions if jd.total_questions is not None else 8),
-                "project_question_ratio": float(
-                    jd.project_question_ratio if jd.project_question_ratio is not None else 0.8
-                ),
-                "is_active": bool(jd.is_active if jd.is_active is not None else True),
+                "project_question_ratio": float(jd.project_question_ratio if jd.project_question_ratio is not None else 0.8),
+                "is_active": True,
                 "created_at": jd.created_at,
             }
         )
-    # NOTE: Candidate-facing list should only expose active JDs.
-    return [item for item in payload if item["is_active"]]
+    return payload
 
 
 def serialize_result(result: Result | None) -> dict[str, object] | None:
@@ -296,7 +272,7 @@ def _load_jd_text(jd_text_value: str) -> str:
 
 def evaluate_resume_for_job(
     candidate: Candidate,
-    job: JobDescription | JobDescriptionConfig,
+    job: JobDescription,
 ) -> tuple[float, dict[str, object], list[dict[str, str]]]:
     resume_text = extract_text_from_file(candidate.resume_path or "")
     candidate.resume_text = resume_text

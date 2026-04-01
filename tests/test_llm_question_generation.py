@@ -43,7 +43,15 @@ class _SequencedCompletions:
 
 class _SequencedClient:
     def __init__(self, contents: list[str]):
-        self.chat = type("_FakeChat", (), {"completions": _SequencedCompletions(contents)})()
+        self._completions = _SequencedCompletions(contents)
+        self.chat = type("_FakeChat", (), {"completions": self._completions})()
+
+    def create(self, **kwargs):
+        return self._completions.create(**kwargs)
+
+    @property
+    def calls(self):
+        return self._completions.calls
 
 
 def test_generate_llm_questions_postprocesses_duplicates_and_noise(monkeypatch):
@@ -189,7 +197,7 @@ def test_generate_llm_questions_retries_once_when_first_output_is_generic(monkey
         jd_skill_scores={"React": 10, "JavaScript": 9, "TypeScript": 8, "Performance Optimization": 8},
     )
 
-    assert client.chat.completions.calls == 2
+    assert client.calls == 2
     assert result["quality"]["retry_used"] is True
     assert result["quality"]["first_attempt_issues"]
     assert len(result["questions"]) == 6
@@ -411,7 +419,7 @@ def test_generate_llm_questions_retries_on_missing_debugging_and_design(monkeypa
         jd_skill_scores={"Python": 10, "FastAPI": 9, "API Design": 8, "Performance": 8},
     )
 
-    assert client.chat.completions.calls == 2
+    assert client.calls == 2
     assert result["quality"]["retry_used"] is True
     assert any("missing_failure_debugging_tradeoff_question" == issue for issue in result["quality"]["first_attempt_issues"])
     assert any(q["category"] == "architecture" for q in result["questions"])

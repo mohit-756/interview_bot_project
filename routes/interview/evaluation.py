@@ -140,7 +140,7 @@ Answers to audit:
 ]"""
 
     try:
-        response = _get_client().chat.completions.create(
+        response = _get_client().create(
             model=_llm_model(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.05,

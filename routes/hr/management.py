@@ -15,7 +15,7 @@ from ai_engine.phase1.scoring import compute_interview_scoring, compute_resume_s
 from ai_engine.phase1.matching import extract_skills_from_jd, extract_text_from_file
 from database import get_db
 from services.llm.client import extract_skills as llm_extract_skills
-from models import Candidate, InterviewSession, JobDescription, JobDescriptionConfig, Result, ApplicationStageHistory
+from models import Candidate, InterviewSession, JobDescription, Result, ApplicationStageHistory
 from routes.common import (
     UPLOAD_DIR,
     ensure_candidate_profile,
@@ -28,7 +28,6 @@ from routes.dependencies import SessionUser, require_role
 from routes.schemas import HrJDCreateBody, HrJDUpdateBody, InterviewScoreBody, SkillWeightsBody, StageUpdateBody, CandidateCompareBody, CandidateAssignJDBody, HrCandidateNotesBody
 from services.hr_dashboard import build_hr_dashboard_analytics
 from services.pipeline import normalize_stage, record_stage_change, stage_payload
-from services.jd_sync import normalize_skill_map, sync_config_from_legacy_job, sync_legacy_job_from_config
 from services.local_exports import create_local_backup_archive
 from services.resume_advice import build_resume_advice
 
@@ -105,7 +104,7 @@ def _serialize_candidate_summary(candidate: Candidate, result: Result | None) ->
         },
         "assigned_jd": {
             "id": candidate.selected_jd_id,
-            "title": candidate.selected_jd.title if candidate.selected_jd else None,
+            "title": candidate.selected_jd.title if candidate.selected_jd else (candidate.selected_jd.jd_title if candidate.selected_jd else None),
         },
         "interview_date": result.interview_date if result else None,
         "hr_notes": result.hr_notes if result else None,
@@ -199,18 +198,26 @@ def _sort_candidate_summaries(candidates: list[dict[str, object]], sort: str) ->
 
 
 def _normalize_weight_map(raw_map: dict[str, int] | None) -> dict[str, int]:
-    return normalize_skill_map(raw_map)
+    normalized: dict[str, int] = {}
+    for key, value in (raw_map or {}).items():
+        skill = str(key or "").strip().lower()
+        if not skill:
+            continue
+        try:
+            normalized[skill] = int(value)
+        except Exception:
+            normalized[skill] = 0
+    return normalized
 
 
 # NOTE: Keep this serializer aligned with the exact field names expected by
 # interview-frontend/src/pages/HRJdManagementPage.jsx and related HR views.
-def _serialize_jd_config(jd: JobDescriptionConfig) -> dict[str, object]:
+def _serialize_jd(jd: JobDescription) -> dict[str, object]:
     return {
         "id": jd.id,
-        "title": jd.title,
+        "title": jd.title or jd.jd_title or Path(jd.jd_text or "").name or "Untitled Role",
         "jd_text": jd.jd_text,
-        "jd_dict_json": jd.jd_dict_json or {},
-        "weights_json": jd.weights_json or {},
+        "weights_json": jd.weights_json or jd.skill_scores or {},
         "qualify_score": float(jd.qualify_score if jd.qualify_score is not None else 65.0),
         "education_requirement": jd.education_requirement,
         "experience_requirement": int(jd.experience_requirement if jd.experience_requirement is not None else 0),
@@ -230,17 +237,14 @@ def _sync_legacy_job_from_config(
     return sync_legacy_job_from_config(db, jd_config, hr_id)
 
 
-def _get_hr_owned_jd_or_404(db: Session, jd_id: int, hr_id: int) -> JobDescriptionConfig:
-    legacy = (
+def _get_hr_owned_jd_or_404(db: Session, jd_id: int, hr_id: int) -> JobDescription:
+    jd = (
         db.query(JobDescription)
         .filter(JobDescription.id == jd_id, JobDescription.company_id == hr_id)
         .first()
     )
-    if not legacy:
-        raise HTTPException(status_code=404, detail="JD not found")
-    jd = db.query(JobDescriptionConfig).filter(JobDescriptionConfig.id == jd_id).first()
     if not jd:
-        jd = sync_config_from_legacy_job(db, legacy)
+        raise HTTPException(status_code=404, detail="JD not found")
     return jd
 
 
@@ -253,26 +257,27 @@ def hr_create_jd(
     current_user: SessionUser = Depends(require_role("hr")),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    # NOTE: Persist the full JD management payload used by the current frontend,
-    # including education_requirement and experience_requirement.
-    jd_config = JobDescriptionConfig(
+    jd = JobDescription(
+        company_id=current_user.user_id,
         title=payload.title.strip(),
+        jd_title=payload.title.strip(),
         jd_text=payload.jd_text.strip(),
-        jd_dict_json=payload.jd_dict_json or {},
         weights_json=_normalize_weight_map(payload.weights_json),
+        skill_scores=_normalize_weight_map(payload.weights_json),
         qualify_score=float(payload.qualify_score),
+        cutoff_score=float(payload.qualify_score),
         education_requirement=(payload.education_requirement.strip() if payload.education_requirement else None),
         experience_requirement=int(payload.experience_requirement if payload.experience_requirement is not None else 0),
         min_academic_percent=float(payload.min_academic_percent),
         total_questions=int(payload.total_questions),
+        question_count=int(payload.total_questions),
         project_question_ratio=float(payload.project_question_ratio),
+        is_active=True,
     )
-    db.add(jd_config)
-    db.flush()
-    _sync_legacy_job_from_config(db, jd_config, current_user.user_id)
+    db.add(jd)
     db.commit()
-    db.refresh(jd_config)
-    return {"ok": True, "jd": _serialize_jd_config(jd_config)}
+    db.refresh(jd)
+    return {"ok": True, "jd": _serialize_jd(jd)}
 
 
 # 1) What this does: lists all HR-owned JD configs.
@@ -283,23 +288,8 @@ def hr_list_jds(
     current_user: SessionUser = Depends(require_role("hr")),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    owned_ids = [
-        row.id
-        for row in db.query(JobDescription.id)
-        .filter(JobDescription.company_id == current_user.user_id)
-        .order_by(JobDescription.id.desc())
-        .all()
-    ]
-    if not owned_ids:
-        return {"ok": True, "jds": []}
-
-    jd_rows = (
-        db.query(JobDescriptionConfig)
-        .filter(JobDescriptionConfig.id.in_(owned_ids))
-        .order_by(JobDescriptionConfig.id.desc())
-        .all()
-    )
-    return {"ok": True, "jds": [_serialize_jd_config(row) for row in jd_rows]}
+    jds = db.query(JobDescription).filter(JobDescription.company_id == current_user.user_id).order_by(JobDescription.id.desc()).all()
+    return {"ok": True, "jds": [_serialize_jd(row) for row in jds]}
 
 
 # 1) What this does: fetches details for one HR-owned JD config.
@@ -312,7 +302,7 @@ def hr_get_jd(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     jd = _get_hr_owned_jd_or_404(db, jd_id, current_user.user_id)
-    return {"ok": True, "jd": _serialize_jd_config(jd)}
+    return {"ok": True, "jd": _serialize_jd(jd)}
 
 
 # 1) What this does: updates one HR-owned JD config and syncs scoring table.
@@ -329,16 +319,17 @@ def hr_update_jd(
 
     if payload.title is not None:
         jd.title = payload.title.strip()
+        jd.jd_title = jd.title
     if payload.jd_text is not None:
         jd.jd_text = payload.jd_text.strip()
     if payload.jd_dict_json is not None:
         jd.jd_dict_json = payload.jd_dict_json
     if payload.weights_json is not None:
         jd.weights_json = _normalize_weight_map(payload.weights_json)
+        jd.skill_scores = jd.weights_json
     if payload.qualify_score is not None:
         jd.qualify_score = float(payload.qualify_score)
-    # NOTE: These fields are sent by the current HR JD management form and
-    # must be persisted on partial update as-is.
+        jd.cutoff_score = jd.qualify_score
     if payload.education_requirement is not None:
         jd.education_requirement = payload.education_requirement.strip() or None
     if payload.experience_requirement is not None:
@@ -347,13 +338,13 @@ def hr_update_jd(
         jd.min_academic_percent = float(payload.min_academic_percent)
     if payload.total_questions is not None:
         jd.total_questions = int(payload.total_questions)
+        jd.question_count = jd.total_questions
     if payload.project_question_ratio is not None:
         jd.project_question_ratio = float(payload.project_question_ratio)
 
-    _sync_legacy_job_from_config(db, jd, current_user.user_id)
     db.commit()
     db.refresh(jd)
-    return {"ok": True, "jd": _serialize_jd_config(jd)}
+    return {"ok": True, "jd": _serialize_jd(jd)}
 
 
 # NOTE: Backward-safe minimal toggle for demo readiness.
@@ -365,20 +356,11 @@ def hr_toggle_jd_active(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     jd = _get_hr_owned_jd_or_404(db, jd_id, current_user.user_id)
-    legacy_job = (
-        db.query(JobDescription)
-        .filter(JobDescription.id == jd_id, JobDescription.company_id == current_user.user_id)
-        .first()
-    )
-
-    next_active = not bool(jd.is_active if jd.is_active is not None else True)
+    next_active = not bool(jd.is_active)
     jd.is_active = next_active
-    if legacy_job:
-        legacy_job.is_active = next_active
-
     db.commit()
     db.refresh(jd)
-    return {"ok": True, "jd": _serialize_jd_config(jd)}
+    return {"ok": True, "jd": _serialize_jd(jd)}
 
 
 @jd_router.delete("/{jd_id}")
@@ -388,34 +370,18 @@ def hr_delete_jd(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     jd = _get_hr_owned_jd_or_404(db, jd_id, current_user.user_id)
-    legacy_job = (
-        db.query(JobDescription)
-        .filter(JobDescription.id == jd_id, JobDescription.company_id == current_user.user_id)
-        .first()
-    )
-
     applications_count = db.query(Result).filter(Result.job_id == jd_id).count()
     if applications_count:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete a JD that already has candidate applications",
-        )
+        raise HTTPException(status_code=400, detail="Cannot delete a JD with applications")
 
     selected_candidates_count = db.query(Candidate).filter(Candidate.selected_jd_id == jd_id).count()
     if selected_candidates_count:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete a JD that is currently selected by candidates",
-        )
+        raise HTTPException(status_code=400, detail="Cannot delete a JD selected by candidates")
 
     deleted_upload = False
-    if legacy_job and legacy_job.jd_text:
-        deleted_upload = safe_delete_upload(legacy_job.jd_text)
-    elif jd.jd_text:
+    if jd.jd_text:
         deleted_upload = safe_delete_upload(jd.jd_text)
 
-    if legacy_job:
-        db.delete(legacy_job)
     db.delete(jd)
     db.commit()
     return {"ok": True, "jd_id": jd_id, "deleted_upload": deleted_upload}
@@ -743,7 +709,7 @@ def hr_candidate_detail(
             "recommendation": latest_application.get("recommendation"),
             "assigned_jd": {
                 "id": candidate.selected_jd_id,
-                "title": candidate.selected_jd.title if candidate.selected_jd else None,
+                "title": candidate.selected_jd.title if candidate.selected_jd else (candidate.selected_jd.jd_title if candidate.selected_jd else None),
             },
             "hr_notes": latest_result.hr_notes,
         },

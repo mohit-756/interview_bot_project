@@ -9,124 +9,174 @@ from functools import lru_cache
 from types import SimpleNamespace
 from typing import Any
 
+import time
 import requests
+from pathlib import Path
+from utils.token_utils import log_token_usage
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+CACHE_DIR = Path(".cache")
+CACHE_DIR.mkdir(exist_ok=True)
+CACHE_FILE = CACHE_DIR / "llm_cache.json"
+
+def _load_cache():
+    if not CACHE_FILE.exists(): return {}
+    try: return json.loads(CACHE_FILE.read_text()) or {}
+    except: return {}
+
+def _save_cache(data: dict):
+    try: CACHE_FILE.write_text(json.dumps(data, indent=2))
+    except: pass
+
+_llm_cache: dict[str, str] = _load_cache()
+
 logger = logging.getLogger(__name__)
 
 def _clean_json(raw: str) -> str:
-    return re.sub(r"```(?:json)?", "", raw or "").strip().strip("`")
+    raw = str(raw or "").strip()
+    # Try to find JSON within markdown block
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+    if match:
+        raw = match.group(1).strip()
+    
+    # Try to find JSON object or array as fallback
+    if not raw.startswith("{") and not raw.startswith("["):
+        obj_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", raw)
+        if obj_match:
+            raw = obj_match.group(1).strip()
+    
+    return raw
 
 @lru_cache(maxsize=1)
 def _resolve_llm_config() -> dict[str, Any]:
     """Single source of truth for LLM configuration from .env only."""
-    provider = (os.getenv("LLM_PROVIDER") or "gemini").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "cerebras").strip().lower()
     
-    # Generic model names from .env
-    standard_model = os.getenv("LLM_STANDARD_MODEL", "").strip()
-    premium_model = os.getenv("LLM_PREMIUM_MODEL", "").strip()
+    # Standardized environment variables
+    api_key = os.getenv("LLM_API_KEY", "").strip()
+    base_url = os.getenv("LLM_BASE_URL", "").strip()
+    primary_model = os.getenv("LLM_MODEL_PRIMARY", "").strip()
+    fallback_model = os.getenv("LLM_MODEL_FALLBACK", "").strip()
     
-    # Provider specific defaults if not in .env
-    if not standard_model:
-        if provider == "gemini": standard_model = "gemini-1.5-flash"
-        elif provider == "groq": standard_model = "llama-3.1-8b-instant"
-        elif provider == "cohere": standard_model = "command-r"
-        elif provider == "ollama": standard_model = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b")
+    # Provider-specific defaults if not provided in .env
+    if not primary_model:
+        if provider == "cerebras": primary_model = "qwen-3-235b-a22b-instruct-2507"
+        elif provider == "groq": primary_model = "llama-3.1-8b-instant"
+        elif provider == "ollama": primary_model = "qwen2.5-coder:3b"
+        elif provider == "openai": primary_model = "gpt-4o"
+        elif provider == "gemini": primary_model = "gemini-1.5-flash"
+        else: primary_model = "llama3.1-8b"
 
-    if not premium_model:
-        if provider == "gemini": premium_model = "gemini-1.5-pro"
-        elif provider == "groq": premium_model = "llama-3.3-70b-versatile"
-        elif provider == "cohere": premium_model = "command-r-plus"
-        elif provider == "ollama": premium_model = standard_model
+    if not fallback_model:
+        fallback_model = primary_model
 
-    # Keys from .env only
-    config = {
+    if not base_url:
+        if provider == "cerebras": base_url = "https://api.cerebras.ai/v1"
+        elif provider == "groq": base_url = "https://api.groq.com/openai/v1"
+        elif provider == "ollama": base_url = "http://localhost:11434/v1"
+        elif provider == "openai": base_url = "https://api.openai.com/v1"
+        # Gemini usually requires its own adapter or a proxy
+
+    return {
         "provider": provider,
-        "standard_model": standard_model,
-        "premium_model": premium_model,
-        "gemini_api_key": os.getenv("GEMINI_API_KEY", "").strip(),
-        "groq_api_key": os.getenv("GROQ_API_KEY", "").strip(),
-        "cohere_api_key": os.getenv("COHERE_API_KEY", "").strip(),
-        "ollama_url": os.getenv("OLLAMA_CHAT_URL", "http://localhost:11434/api/chat").strip(),
+        "api_key": api_key,
+        "base_url": base_url,
+        "primary_model": primary_model,
+        "fallback_model": fallback_model,
     }
-    return config
 
-class _CohereAdapter:
-    def __init__(self, model: str, api_key: str):
-        self.model = model
+class OpenAIAdapter:
+    """Generic adapter for any OpenAI-compatible API (Cerebras, Groq, Ollama, OpenAI)."""
+    def __init__(self, base_url: str, api_key: str, model: str):
+        self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.url = "https://api.cohere.ai/v1/chat"
+        self.model = model
 
     def create(self, messages: list[dict[str, Any]], temperature: float, max_tokens: int, **kwargs):
         model = kwargs.get("model") or self.model
-        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
-        payload = {"model": model, "message": prompt, "temperature": temperature, "max_tokens": max_tokens}
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        resp = requests.post(self.url, json=payload, headers=headers, timeout=60)
-        resp.raise_for_status()
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=resp.json().get("text", "")))])
+        
+        # Caching logic
+        cache_key = f"{model}_{temperature}_{json.dumps(messages)}"
+        if cache_key in _llm_cache:
+            logger.info(f"CACHE_HIT: model={model}")
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=_llm_cache[cache_key]))])
 
-class _GroqAdapter:
-    def __init__(self, model: str, api_key: str):
-        self.model = model
+        url = f"{self.base_url}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": float(temperature),
+            "max_tokens": int(max_tokens)
+        }
+        if kwargs.get("response_format"):
+            payload["response_format"] = kwargs["response_format"]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        prompt_text = "\n".join([m.get("content", "") for m in messages])
+        
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=120)
+            if resp.status_code != 200:
+                logger.error(f"LLM API Error ({resp.status_code}): {resp.text}")
+                resp.raise_for_status()
+            
+            data = resp.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            # Log token usage
+            log_token_usage(prompt_text, content, model)
+            
+            # Save to cache
+            _llm_cache[cache_key] = content
+            _save_cache(_llm_cache)
+            
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+        except Exception as e:
+            logger.error(f"LLM request failed: {e}")
+            raise
+
+class GeminiAdapter:
+    """Specialized adapter for Google Gemini API."""
+    def __init__(self, api_key: str, model: str):
         self.api_key = api_key
-        self.url = "https://api.groq.com/openai/v1/chat/completions"
-
-    def create(self, messages: list[dict[str, Any]], temperature: float, max_tokens: int, **kwargs):
-        model = kwargs.get("model") or self.model
-        payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
-        if kwargs.get("response_format"): payload["response_format"] = kwargs["response_format"]
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        resp = requests.post(self.url, json=payload, headers=headers, timeout=60)
-        resp.raise_for_status()
-        content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
-
-class _GeminiAdapter:
-    def __init__(self, model: str, api_key: str):
         self.model = model
-        self.api_key = api_key
 
     def create(self, messages: list[dict[str, Any]], temperature: float, max_tokens: int, **kwargs):
         model = kwargs.get("model") or self.model
         if model.startswith("models/"): model = model[len("models/"):]
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
+        
+        # Simple prompt concatenation for now, as per original code
         prompt = "\n".join([m['content'] for m in messages])
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens}
         }
+        
         resp = requests.post(url, json=payload, timeout=120)
         resp.raise_for_status()
         data = resp.json()
         content = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
-class _OllamaAdapter:
-    def __init__(self, model: str, url: str):
-        self.model = model
-        self.url = url
-
-    def create(self, messages: list[dict[str, Any]], temperature: float, max_tokens: int, **kwargs):
-        model = kwargs.get("model") or self.model
-        payload = {"model": model, "messages": messages, "stream": False, "options": {"temperature": temperature, "num_predict": max_tokens}}
-        resp = requests.post(self.url, json=payload, timeout=120)
-        resp.raise_for_status()
-        content = resp.json().get("message", {}).get("content", "")
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
-
-class _LLMClient:
-    def __init__(self, config: dict[str, Any]):
-        self.config = config
-        p = config["provider"]
-        if p == "gemini": self.adapter = _GeminiAdapter(config["standard_model"], config["gemini_api_key"])
-        elif p == "groq": self.adapter = _GroqAdapter(config["standard_model"], config["groq_api_key"])
-        elif p == "cohere": self.adapter = _CohereAdapter(config["standard_model"], config["cohere_api_key"])
-        elif p == "ollama": self.adapter = _OllamaAdapter(config["standard_model"], config["ollama_url"])
-        else: raise RuntimeError(f"Unsupported provider: {p}")
+class LLMClient:
+    def __init__(self):
+        config = _resolve_llm_config()
+        self.provider = config["provider"]
+        self.primary_model = config["primary_model"]
         
+        if self.provider == "gemini":
+            self.adapter = GeminiAdapter(config["api_key"], self.primary_model)
+        else:
+            self.adapter = OpenAIAdapter(config["base_url"], config["api_key"], self.primary_model)
+
+        # Compatibility layer for old OpenAI-style calls (.chat.completions.create)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs):
@@ -139,12 +189,12 @@ class _LLMClient:
         )
 
 @lru_cache(maxsize=1)
-def _get_client() -> _LLMClient:
-    return _LLMClient(_resolve_llm_config())
+def _get_client() -> LLMClient:
+    return LLMClient()
 
 def _llm_provider() -> str: return _resolve_llm_config()["provider"]
-def _llm_model() -> str: return _resolve_llm_config()["standard_model"]
-def _llm_premium_model() -> str: return _resolve_llm_config()["premium_model"]
+def _llm_model() -> str: return _resolve_llm_config()["primary_model"]
+def _llm_premium_model() -> str: return _resolve_llm_config()["primary_model"] # Default to primary
 
 def extract_skills(jd_text: str) -> dict[str, int]:
     prompt = f"Extract technical skills as JSON {{skill: weight}} from:\n{jd_text[:4000]}"
@@ -156,7 +206,6 @@ def extract_skills(jd_text: str) -> dict[str, int]:
         return {}
 
 def evaluate_answer_detailed(**kwargs) -> dict[str, Any]:
-    # Simplified evaluation call using the configured provider
     prompt = f"Evaluate answer for question: {kwargs.get('question')}\nAnswer: {kwargs.get('answer')}\nReturn JSON with score (0-100) and feedback."
     try:
         resp = _get_client().create(messages=[{"role": "user", "content": prompt}], temperature=0.2, max_tokens=500)

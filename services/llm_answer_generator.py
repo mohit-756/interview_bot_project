@@ -42,7 +42,7 @@ Requirements:
 - Do not output bullets, JSON, markdown headings, or meta commentary.
 - Return only the final answer text.
 """
-    response = _get_client().chat.completions.create(
+    response = _get_client().create(
         model=_llm_model(),
         messages=[
             {"role": "system", "content": ANSWER_SYSTEM_PROMPT},

@@ -43,12 +43,12 @@ class Candidate(Base):
     # ATS views, ranking, and HR detail pages.
     resume_text = Column(Text, nullable=True)
     parsed_resume_json = Column(JSON, nullable=True)
-    selected_jd_id = Column(Integer, ForeignKey("job_descriptions.id"), nullable=True, index=True)
+    selected_jd_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True, index=True)
 
     results = relationship("Result", back_populates="candidate")
     interviews = relationship("InterviewSession", back_populates="candidate")
-    selected_jd = relationship("JobDescriptionConfig", foreign_keys=[selected_jd_id])
+    selected_jd = relationship("JobDescription", foreign_keys=[selected_jd_id])
 
 
 class HR(Base):
@@ -65,41 +65,29 @@ class HR(Base):
 class JobDescription(Base):
     __tablename__ = "jobs"
 
-    id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey("hr.id"))
-    jd_title = Column(String(150), nullable=True)
-    jd_text = Column(String)
-    skill_scores = Column(JSON)
-    gender_requirement = Column(String(50))
-    education_requirement = Column(String(50))
-    experience_requirement = Column(Integer)
-    cutoff_score = Column(Float, default=65.0, nullable=False)
-    question_count = Column(Integer, default=8, nullable=False)
-
-    company = relationship("HR", back_populates="jobs")
-    results = relationship("Result", back_populates="job")
-    custom_questions = Column(JSON, nullable=True)  # New field for HR mandatory questions
-
-
-class JobDescriptionConfig(Base):
-    __tablename__ = "job_descriptions"
-
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("hr.id"))
     title = Column(String(200), nullable=False)
+    jd_title = Column(String(150), nullable=True) # Legacy alias
     jd_text = Column(Text, nullable=False)
     jd_dict_json = Column(JSON, nullable=True)
     weights_json = Column(JSON, nullable=True)
+    skill_scores = Column(JSON, nullable=True) # Legacy alias
     qualify_score = Column(Float, default=65.0, nullable=False)
+    cutoff_score = Column(Float, default=65.0, nullable=False) # Legacy alias
     min_academic_percent = Column(Float, default=0.0, nullable=False)
     total_questions = Column(Integer, default=8, nullable=False)
+    question_count = Column(Integer, default=8, nullable=False) # Legacy alias
     project_question_ratio = Column(Float, default=0.8, nullable=False)
-    # NOTE: Backward-safe active flag for demo readiness.
     is_active = Column(Boolean, default=True, nullable=False)
-    # NEW: store education + experience requirements on the canonical config
+    gender_requirement = Column(String(50), nullable=True)
     education_requirement = Column(String(50), nullable=True)
     experience_requirement = Column(Integer, default=0, nullable=False)
-    custom_questions = Column(JSON, nullable=True)  # New field for HR mandatory questions
+    custom_questions = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    company = relationship("HR", back_populates="jobs")
+    results = relationship("Result", back_populates="job")
 
 
 class Result(Base):

@@ -52,13 +52,13 @@ LLM_QUESTION_SYSTEM_PROMPT = """You are a highly experienced technical interview
 Your ONLY source material is the candidate's resume and the job description provided in the user message.
 You must generate questions that are IMPOSSIBLE to answer without knowing this specific candidate's resume.
 
-██████ CRITICAL — SINGLE QUESTION RULE (VIOLATIONS CAUSE REJECTION) ██████
-- Each "text" field MUST contain EXACTLY ONE question mark. No more.
-- NEVER combine two questions into one text: do NOT use patterns like "X? Also, Y?" or "A? And how did you B?"
-- Do NOT add sub-questions, follow-ups, or clarifications inside the question text.
-- Each question must be ONE focused, self-contained sentence ending with a single "?".
-- If you write two questions in one text field, the entire output is INVALID.
-██████████████████████████████████████████████████████████████████████████
+██████ CRITICAL RULES ██████
+- Each "text" field MUST contain EXACTLY ONE question mark.
+- Every question MUST reference a SPECIFIC project, technology, or achievement from this candidate's resume.
+- IMPOSSIBLE TO ANSWER without knowing this candidate's resume.
+- Dynamic Context: Use the candidate's last answer to bridge into the next topic or probe deeper if the answer was vague.
+- Tone: Professional, technical, and probing. No fluff like "That's interesting" or "Thank you for that."
+██████████████████████
 
 ABSOLUTE RULES:
 - Every question except the intro MUST reference a SPECIFIC project, technology, company, outcome, or achievement that appears in this candidate's resume.
@@ -91,19 +91,17 @@ Hard rules:
 - At minimum: 1 architecture/design, 1 debugging/failure, 1 performance/scaling, 1 intro, 1 behavioral.
 - REMINDER: Every question text must contain exactly ONE question mark and be a single sentence.
 
-Return a JSON object with this exact shape:
 {
   "questions": [
     {
-      "text": "string — ONE question, ONE question mark, specific project/platform/achievement from resume",
+      "text": "string — ONE question, specific project/platform from resume",
       "category": "intro|deep_dive|project|architecture|leadership|behavioral",
-      "focus_skill": "string or null",
-      "project_name": "string — the actual project or platform name, or null for intro/behavioral",
-      "intent": "string — what specific competency this question reveals",
-      "reference_answer": "string — what a strong answer would cover for this specific question",
+      "focus_skill": "string",
+      "project_name": "string",
+      "intent": "string",
+      "reference_answer": "string",
       "difficulty": "easy|medium|hard",
-      "priority_source": "resume_strength|jd_resume_overlap|jd_gap_probe|recent_project|architecture_signal|leadership_signal|baseline",
-      "rationale": "one sentence explaining which resume fact makes this question relevant"
+      "rationale": "resume connection"
     }
   ]
 }
@@ -884,7 +882,7 @@ def _call_llm(structured_input: StructuredQuestionInput, question_count: int, re
     )
     try:
         # Use configured LLM provider from .env
-        response = _get_client().chat.completions.create(
+        response = _get_client().create(
             model=model,
             messages=[
                 {"role": "system", "content": LLM_QUESTION_SYSTEM_PROMPT},
@@ -1481,7 +1479,7 @@ def generate_followup_question(
 
     logger.info("llm_followup_request_start provider=%s model=%s", provider, model)
     try:
-        response = _get_client().chat.completions.create(
+        response = _get_client().create(
             model=model,
             messages=[
                 {"role": "system", "content": FOLLOWUP_QUESTION_SYSTEM_PROMPT},
@@ -1508,4 +1506,74 @@ def generate_followup_question(
         }
     except Exception as exc:
         logger.warning("llm_followup_request_failed error=%s", exc)
+        return None
+
+
+# --- Conversational Dynamic Flow (New) ---
+
+DYNAMIC_NEXT_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer. 
+You are conducting a conversation. Based on the candidate's last answer, generate the NEXT logical question.
+If the answer was strong, move to a new project or a design challenge.
+If the answer was weak/vague, probe for technical implementation details.
+ALWAYS ground your question in the resume and overall projects.
+
+Return JSON:
+{
+  "text": "one surgical question",
+  "category": "category",
+  "project_name": "project",
+  "intent": "intent",
+  "reference_answer": "strong answer expectations"
+}
+"""
+
+def generate_dynamic_next_question(
+    *,
+    resume_text: str,
+    jd_title: str,
+    jd_skill_scores: dict,
+    history: list[dict[str, str]],
+    question_count: int,
+) -> dict[str, Any] | None:
+    """Generate the next question based on interview history."""
+    structured_input = build_structured_question_input(
+        resume_text=resume_text,
+        jd_title=jd_title,
+        jd_skill_scores=jd_skill_scores,
+    )
+    
+    # Evidence snapshot to save tokens
+    evidence = "\n".join([f"PROJECT: {p}" for p in structured_input.resume_projects[:3]])
+    
+    chat_history = ""
+    for turn in history[-4:]: # Only last 2 rounds to save tokens
+        chat_history += f"Q: {turn.get('question')}\nA: {turn.get('answer')}\n\n"
+        
+    user_prompt = (
+        f"CANDIDATE PROJECTS:\n{evidence}\n\n"
+        f"INTERVIEW HISTORY:\n{chat_history}"
+        f"Generate question number {len(history) + 1} of {question_count}."
+    )
+    
+    try:
+        response = _get_client().create(
+            model=_llm_model(),
+            messages=[
+                {"role": "system", "content": DYNAMIC_NEXT_QUESTION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            max_tokens=1000,
+        )
+        data = _extract_json_object(response.choices[0].message.content or "")
+        return {
+            "text": _clean(data.get("text")),
+            "category": _normalize_category(data.get("category"), data.get("text")),
+            "project_name": _clean(data.get("project_name")),
+            "intent": _clean(data.get("intent")),
+            "reference_answer": _clean(data.get("reference_answer")),
+            "difficulty": "medium",
+        }
+    except Exception as exc:
+        logger.warning(f"Dynamic question gen failed: {exc}")
         return None

@@ -33,23 +33,13 @@ from ai_engine.phase3.question_flow import compute_dynamic_seconds, normalize_re
 from database import get_db
 
 from models import (
-
     Candidate,
-
     InterviewAnswer,
-
     InterviewQuestion,
-
     InterviewSession,
-
     JobDescription,
-
-    JobDescriptionConfig,
-
     ProctorEvent,
-
     Result,
-
 )
 
 from routes.common import interview_access_state, interview_entry_url
@@ -708,42 +698,56 @@ def _job_title_for_result(db: Session, result: Result) -> str:
 
 
 def _create_next_question(
-
     db: Session,
-
     session: InterviewSession,
-
     result: Result,
-
     last_answer: str,
-
 ) -> InterviewQuestion | None:
-
-    _ = last_answer
-
     ordered = _ordered_questions(db, session.id)
-
     remaining_total = int(session.remaining_time_seconds or session.total_time_seconds or 1200)
-
     if remaining_total <= 0:
-
         return None
 
-    for item in ordered:
-
-        if item.time_taken_seconds is None:
-
-            if item.started_at is None:
-
-                item.started_at = datetime.utcnow()
-
+    current_idx = 0
+    for i, item in enumerate(ordered):
+        if item.time_taken_seconds is not None:
+            current_idx = i + 1
+            continue
+        
+        # If we have an answer to the previous question, we can potentially generate a dynamic one
+        if i > 0 and last_answer and i == current_idx:
+            from services.llm_question_generator import generate_dynamic_next_question
+            
+            history = []
+            for prev in ordered[:i]:
+                ans = db.query(InterviewAnswer).filter(InterviewAnswer.question_id == prev.id).first()
+                history.append({"question": prev.question_text, "answer": ans.answer_text if ans else ""})
+            
+            job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
+            candidate = result.candidate
+            
+            new_q_data = generate_dynamic_next_question(
+                resume_text=candidate.resume_text or "",
+                jd_title=job.title or job.jd_title or "",
+                jd_skill_scores=job.weights_json or job.skill_scores or {},
+                history=history,
+                question_count=len(ordered)
+            )
+            
+            if new_q_data:
+                item.question_text = new_q_data["text"]
+                item.category = new_q_data["category"]
+                item.intent_focus = new_q_data["intent"]
+                item.reference_answer = new_q_data["reference_answer"]
                 db.add(item)
-
                 db.commit()
 
-                db.refresh(item)
-
-            return item
+        if item.started_at is None:
+            item.started_at = datetime.utcnow()
+            db.add(item)
+            db.commit()
+            db.refresh(item)
+        return item
 
     return None
 
@@ -1005,9 +1009,8 @@ def _ensure_question_bank(
 
 
 
-    config = db.query(JobDescriptionConfig).filter(JobDescriptionConfig.id == result.job_id).first()
-
-    project_ratio = float(config.project_question_ratio) if config and config.project_question_ratio is not None else None
+    job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
+    project_ratio = float(job.project_question_ratio) if job and job.project_question_ratio is not None else None
 
 
 

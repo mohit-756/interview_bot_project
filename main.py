@@ -43,32 +43,19 @@ Base.metadata.create_all(bind=engine)
 
 # ── LLM provider startup checks ─────────────────────────────────────────────
 
-# Dynamically handle LLM provider and model
-_llm_provider = (os.getenv("LLM_PROVIDER") or "cohere").strip().lower()
-_llm_model = (os.getenv("LLM_STANDARD_MODEL") or "command-r").strip()
+# Standardized LLM provider and model checks
+_llm_provider = os.getenv("LLM_PROVIDER", "cerebras").strip().lower()
+_llm_model = os.getenv("LLM_MODEL_PRIMARY", "qwen-3-235b-a22b-instruct-2507").strip()
+_llm_api_key = os.getenv("LLM_API_KEY")
 
-if _llm_provider == "groq":
-    _groq_key = os.getenv("GROQ_API_KEY", "")
-    logger.info("LLM provider is groq with model=%s", _llm_model)
-    if not _groq_key:
-        logger.warning(
-            "GROQ_API_KEY is not set. "
-            "Voice transcription and LLM answer scoring may be unavailable. "
-            "Set GROQ_API_KEY in .env when using LLM_PROVIDER=groq."
-        )
-elif _llm_provider == "ollama":
-    logger.info("LLM provider is ollama with model=%s", _llm_model)
-elif _llm_provider == "cohere":
-    _cohere_key = os.getenv("COHERE_API_KEY", "")
-    logger.info("LLM provider is cohere with model=%s", _llm_model)
-    if not _cohere_key:
-        logger.warning(
-            "COHERE_API_KEY is not set. "
-            "LLM answer generation may be unavailable. "
-            "Set COHERE_API_KEY in .env when using LLM_PROVIDER=cohere."
-        )
-else:
-    logger.warning("Unknown LLM_PROVIDER=%s. Expected one of: ollama, groq, cohere", _llm_provider)
+logger.info(f"LLM provider is {_llm_provider} with model={_llm_model}")
+
+if not _llm_api_key:
+    logger.warning(
+        f"LLM_API_KEY is not set. "
+        f"LLM features for {_llm_provider} may be unavailable. "
+        f"Set LLM_API_KEY in .env."
+    )
 
 
 # ── FIX: Pre-load SentenceTransformer on startup ────────────────────────────
