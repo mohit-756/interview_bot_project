@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Mic, MicOff, Send, MessageSquare, CheckCircle2,
-  Activity, AlertTriangle, Eye, EyeOff, Brain,
+  Activity, AlertTriangle, Eye, EyeOff,
   Volume2, VolumeX,
 } from "lucide-react";
 import { interviewApi, proctorApi } from "../services/api";
@@ -116,13 +116,6 @@ function getPreferredAudioMimeType() {
   return candidates.find((t) => window.MediaRecorder.isTypeSupported(t)) || "";
 }
 
-const EMOTION_COLOR = {
-  confident: "text-emerald-400",
-  focused:   "text-blue-400",
-  neutral:   "text-slate-400",
-  nervous:   "text-amber-400",
-};
-
 function VoiceConfidenceBar({ metrics }) {
   if (!metrics) return null;
   const pct = Math.round(metrics.confidence_score * 100);
@@ -190,8 +183,6 @@ export default function Interview() {
   const {
     proctoringEvents,
     voiceMetrics,
-    emotionSignal,
-    emotionEnabled,
     analyseAnswer,
   } = useProctoring({ sessionId, resultId, videoRef, enabled: !!sessionId });
 
@@ -821,16 +812,6 @@ export default function Interview() {
                 </div>
               )}
 
-              {emotionSignal && emotionEnabled && (
-                <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-full border border-white/10 flex items-center gap-1.5">
-                  <Brain size={11} className={EMOTION_COLOR[emotionSignal.emotion] || "text-slate-400"} />
-                  <span className={cn("text-[10px] font-black capitalize", EMOTION_COLOR[emotionSignal.emotion] || "text-slate-400")}>
-                    {emotionSignal.emotion}
-                  </span>
-                  <span className="text-[9px] text-slate-500">{Math.round(emotionSignal.confidence * 100)}%</span>
-                </div>
-              )}
-
               {speaking && (
                 <div className="absolute bottom-10 left-2 flex items-center gap-1 bg-blue-600/80 px-2 py-1 rounded-full border border-blue-400/30">
                   <Volume2 size={10} className="text-white animate-pulse" />
@@ -849,7 +830,6 @@ export default function Interview() {
               {[
                 ["Video",   previewReady ? "Active"    : "Off",    previewReady],
                 ["Session", sessionId    ? `#${sessionId}` : "—", !!sessionId],
-                ["Emotion", emotionEnabled ? (emotionSignal?.emotion || "—") : "Disabled", emotionEnabled],
                 ["Tabs",    tabSwitchCount > 0 ? `${tabSwitchCount} switch${tabSwitchCount > 1 ? "es" : ""}` : "Clean", tabSwitchCount === 0],
               ].map(([label, value, ok]) => (
                 <div key={label} className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5">
@@ -909,25 +889,22 @@ export default function Interview() {
                 </div>
               )}
               {proctoringEvents.map((ev, i) => {
-                const isAlert   = ev.type === "TAB_SWITCH";
-                const isEmotion = ev.type === "EMOTION";
-                const isVoice   = ev.type === "VOICE_CONFIDENCE";
+                const isAlert = ev.type === "TAB_SWITCH";
+                const isVoice = ev.type === "VOICE_CONFIDENCE";
                 return (
                   <div key={i} className={cn(
                     "flex items-start gap-2 px-2.5 py-2 rounded-lg text-[10px] border",
                     isAlert   ? "bg-red-500/10 border-red-500/30 text-red-400"      :
-                    isEmotion ? "bg-blue-500/10 border-blue-500/20 text-blue-400"   :
                     isVoice   ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" :
                                 "bg-slate-800/50 border-slate-700/50 text-slate-500"
                   )}>
                     <span className="font-black flex-shrink-0">
-                      {isAlert ? "⚠" : isEmotion ? "😐" : isVoice ? "🎤" : "·"}
+                      {isAlert ? "⚠" : isVoice ? "🎤" : "·"}
                     </span>
                     <span className="font-bold leading-tight">
                       {isAlert   && "Tab switch detected"}
-                      {isEmotion && `Emotion: ${ev.emotion} (${Math.round(ev.confidence * 100)}%)`}
                       {isVoice   && `Voice: ${ev.confidence_score >= 0.7 ? "confident" : "hesitant"} · ${ev.speaking_rate}wpm`}
-                      {!isAlert && !isEmotion && !isVoice && ev.type}
+                      {!isAlert && !isVoice && ev.type}
                     </span>
                     <span className="ml-auto flex-shrink-0 opacity-50">
                       {new Date(ev.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}

@@ -5,11 +5,11 @@
  *
  * Features (all run asynchronously, none block the UI thread):
  *   1. Tab-switch detection   — visibilitychange event
- *   2. Emotion detection      — lightweight heuristic from face geometry via
- *                               canvas pixel sampling (NO heavy ML model).
- *                               Runs every 4 s, auto-disabled if FPS < 20.
- *   3. Voice confidence       — pure heuristic on transcript text:
+ *   2. Voice confidence       — pure heuristic on transcript text:
  *                               speaking rate, filler words, sentence fragmentation.
+ *
+ * NOTE: Pixel-based emotion detection was removed. Real NLP sentiment/emotion
+ * analysis now runs server-side during evaluation (services/sentiment.py).
  *
  * All events are stored in a local ref array AND sent to the backend via the
  * existing proctorApi.uploadFrame / interviewApi event endpoints.
@@ -17,7 +17,6 @@
  * Usage:
  *   const { proctoringEvents, voiceMetrics } = useProctoring({
  *     sessionId,
- *     videoRef,
  *     enabled: true,
  *   });
  */
@@ -25,10 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // ── constants ─────────────────────────────────────────────────────────────────
-const EMOTION_INTERVAL_MS   = 4000;   // analyse every 4 s
-const FPS_DISABLE_THRESHOLD = 20;     // disable emotion if FPS < 20
-const FPS_SAMPLE_INTERVAL   = 2000;   // measure FPS every 2 s
-const MAX_EVENTS_STORED     = 200;    // cap local event buffer
+const MAX_EVENTS_STORED = 200;
 
 // Filler words that indicate hesitation
 const FILLER_WORDS = [
@@ -38,49 +34,6 @@ const FILLER_WORDS = [
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Estimate emotion from average brightness + variance of the face region.
- *  Not ML — just a brightness/texture heuristic that's near-zero CPU cost.
- *  Returns { emotion, confidence } */
-function estimateEmotionFromFrame(videoEl) {
-  try {
-    if (!videoEl || videoEl.videoWidth === 0) return null;
-    const W = 80, H = 80; // tiny canvas for speed
-    const canvas = document.createElement("canvas");
-    canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(videoEl, 0, 0, W, H);
-    const { data } = ctx.getImageData(0, 0, W, H);
-
-    let sum = 0, sumSq = 0, n = data.length / 4;
-    for (let i = 0; i < data.length; i += 4) {
-      const luma = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      sum += luma;
-      sumSq += luma * luma;
-    }
-    const mean = sum / n;
-    const variance = sumSq / n - mean * mean;
-    const stddev = Math.sqrt(Math.max(0, variance));
-
-    // Heuristic rules derived from typical webcam characteristics:
-    // High brightness + high variance → animated / expressive (confident)
-    // Low brightness + low variance  → under-lit / nervous
-    // Mid brightness + low variance  → neutral
-    let emotion, confidence;
-    if (mean > 140 && stddev > 40) {
-      emotion = "confident"; confidence = Math.min(0.9, 0.6 + stddev / 200);
-    } else if (mean < 80) {
-      emotion = "nervous";   confidence = Math.min(0.8, 0.5 + (80 - mean) / 160);
-    } else if (stddev < 20) {
-      emotion = "neutral";   confidence = 0.7;
-    } else {
-      emotion = "focused";   confidence = 0.65;
-    }
-    return { emotion, confidence: parseFloat(confidence.toFixed(2)) };
-  } catch {
-    return null;
-  }
-}
-
 /** Analyse a transcript string for voice confidence heuristics. */
 function analyseVoiceConfidence(transcript, durationSeconds) {
   if (!transcript || durationSeconds <= 0) return null;
@@ -89,7 +42,7 @@ function analyseVoiceConfidence(transcript, durationSeconds) {
   const wordCount = words.length;
   if (wordCount < 3) return null;
 
-  const speakingRate = Math.round((wordCount / durationSeconds) * 60); // words/min
+  const speakingRate = Math.round((wordCount / durationSeconds) * 60);
 
   const lowerWords = transcript.toLowerCase();
   let fillerCount = 0;
@@ -103,7 +56,6 @@ function analyseVoiceConfidence(transcript, durationSeconds) {
     Math.min(1, fillerCount / Math.max(1, wordCount / 5)).toFixed(2)
   );
 
-  // Speaking rate: 120–180 wpm = confident, < 80 or > 220 = nervous
   let rateScore = 1.0;
   if (speakingRate < 80 || speakingRate > 220) rateScore = 0.5;
   else if (speakingRate < 100 || speakingRate > 200) rateScore = 0.75;
@@ -126,15 +78,8 @@ function analyseVoiceConfidence(transcript, durationSeconds) {
 export function useProctoring({ sessionId, resultId, videoRef, enabled = true }) {
   const [proctoringEvents, setProctoringEvents] = useState([]);
   const [voiceMetrics, setVoiceMetrics]         = useState(null);
-  const [emotionSignal, setEmotionSignal]        = useState(null);
-  const [emotionEnabled, setEmotionEnabled]      = useState(true);
 
-  const eventsRef        = useRef([]);
-  const emotionTimerRef  = useRef(null);
-  const fpsTimerRef      = useRef(null);
-  const frameCountRef    = useRef(0);
-  const lastFpsCheckRef  = useRef(0);
-  const rafRef           = useRef(null);
+  const eventsRef = useRef([]);
 
   // Push an event into local state + ref buffer
   const pushEvent = useCallback((event) => {
@@ -149,9 +94,7 @@ export function useProctoring({ sessionId, resultId, videoRef, enabled = true })
 
     function onVisibilityChange() {
       if (document.hidden) {
-        const event = { type: "TAB_SWITCH", detail: "Candidate switched browser tab" };
-        pushEvent(event);
-        // Use resultId (token) for the event endpoint — falls back to sessionId if resultId is missing.
+        pushEvent({ type: "TAB_SWITCH", detail: "Candidate switched browser tab" });
         const eventTargetId = resultId || sessionId;
         if (eventTargetId) {
           fetch(`/api/interview/${eventTargetId}/event`, {
@@ -164,7 +107,7 @@ export function useProctoring({ sessionId, resultId, videoRef, enabled = true })
               timestamp: new Date().toISOString(),
               meta: { hidden: true },
             }),
-          }).catch(() => {}); // silent fail — never block interview
+          }).catch(() => {});
         }
       }
     }
@@ -173,62 +116,7 @@ export function useProctoring({ sessionId, resultId, videoRef, enabled = true })
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [enabled, sessionId, resultId, pushEvent]);
 
-  // ── 2. EMOTION DETECTION (lightweight, auto-disables on low FPS) ──────────
-  useEffect(() => {
-    if (!enabled || !sessionId) return;
-
-    lastFpsCheckRef.current = Date.now();
-
-    // Start FPS tracking
-    const tick = () => {
-      frameCountRef.current += 1;
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-
-    // Check FPS every 2 s, disable emotion if too low
-    fpsTimerRef.current = setInterval(() => {
-      const now = Date.now();
-      const elapsed = (now - lastFpsCheckRef.current) / 1000;
-      const fps = frameCountRef.current / elapsed;
-      frameCountRef.current = 0;
-      lastFpsCheckRef.current = now;
-
-      if (fps < FPS_DISABLE_THRESHOLD && emotionEnabled) {
-        setEmotionEnabled(false);
-      } else if (fps >= FPS_DISABLE_THRESHOLD + 5 && !emotionEnabled) {
-        setEmotionEnabled(true);
-      }
-    }, FPS_SAMPLE_INTERVAL);
-
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (fpsTimerRef.current) clearInterval(fpsTimerRef.current);
-    };
-  }, [enabled, sessionId, emotionEnabled]);
-
-  useEffect(() => {
-    if (!enabled || !sessionId || !emotionEnabled) {
-      if (emotionTimerRef.current) clearInterval(emotionTimerRef.current);
-      return;
-    }
-
-    emotionTimerRef.current = setInterval(() => {
-      // Run in a setTimeout so it never blocks the render loop
-      setTimeout(() => {
-        const video = videoRef?.current;
-        const result = estimateEmotionFromFrame(video);
-        if (!result) return;
-
-        setEmotionSignal(result);
-        pushEvent({ type: "EMOTION", ...result });
-      }, 0);
-    }, EMOTION_INTERVAL_MS);
-
-    return () => { if (emotionTimerRef.current) clearInterval(emotionTimerRef.current); };
-  }, [enabled, sessionId, emotionEnabled, videoRef, pushEvent]);
-
-  // ── 3. VOICE CONFIDENCE — called externally when an answer is submitted ────
+  // ── 2. VOICE CONFIDENCE — called externally when an answer is submitted ────
   const analyseAnswer = useCallback((transcript, durationSeconds) => {
     const metrics = analyseVoiceConfidence(transcript, durationSeconds);
     if (!metrics) return null;
@@ -237,20 +125,9 @@ export function useProctoring({ sessionId, resultId, videoRef, enabled = true })
     return metrics;
   }, [pushEvent]);
 
-  // ── cleanup ────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      if (rafRef.current)       cancelAnimationFrame(rafRef.current);
-      if (emotionTimerRef.current) clearInterval(emotionTimerRef.current);
-      if (fpsTimerRef.current)  clearInterval(fpsTimerRef.current);
-    };
-  }, []);
-
   return {
-    proctoringEvents,   // all local events (tab switch, emotion, voice)
-    voiceMetrics,       // latest voice confidence metrics
-    emotionSignal,      // latest emotion detection result
-    emotionEnabled,     // false if auto-disabled due to low FPS
-    analyseAnswer,      // call with (transcript, durationSeconds) after each answer
+    proctoringEvents,
+    voiceMetrics,
+    analyseAnswer,
   };
 }
