@@ -597,6 +597,22 @@ body {
   color: #e2e8f0;
 }
 
+/* Auth page entrance animation */
+@keyframes auth-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.auth-card-animate {
+  animation: auth-card-enter 0.5s ease-out both;
+}
+
 @media (max-width: 768px) {
   .page-header {
     align-items: stretch;
