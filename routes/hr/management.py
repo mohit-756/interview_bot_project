@@ -133,6 +133,8 @@ def _candidate_result_scope(db: Session, hr_id: int):
 def _candidate_summaries(db: Session, hr_id: int) -> list[dict[str, object]]:
     scoped_results = _candidate_result_scope(db, hr_id).order_by(Result.id.desc()).all()
     summaries_by_candidate: dict[int, dict[str, object]] = {}
+    application_counts: dict[int, int] = {}
+    jd_ids_per_candidate: dict[int, set] = {}
     changed = False
 
     for result in scoped_results:
@@ -140,9 +142,15 @@ def _candidate_summaries(db: Session, hr_id: int) -> list[dict[str, object]]:
         if not candidate:
             continue
         changed = ensure_candidate_profile(candidate, db) or changed
-        if candidate.id in summaries_by_candidate:
+        cid = candidate.id
+        application_counts[cid] = application_counts.get(cid, 0) + 1
+        if result.job_id:
+            if cid not in jd_ids_per_candidate:
+                jd_ids_per_candidate[cid] = set()
+            jd_ids_per_candidate[cid].add(result.job_id)
+        if cid in summaries_by_candidate:
             continue
-        summaries_by_candidate[candidate.id] = _serialize_candidate_summary(candidate, result)
+        summaries_by_candidate[cid] = _serialize_candidate_summary(candidate, result)
 
     if changed:
         db.commit()
@@ -152,7 +160,12 @@ def _candidate_summaries(db: Session, hr_id: int) -> list[dict[str, object]]:
                 summary["candidate_uid"] = candidate.candidate_uid
                 summary["created_at"] = candidate.created_at
 
-    return list(summaries_by_candidate.values())
+    result_list = list(summaries_by_candidate.values())
+    for summary in result_list:
+        cid = summary["id"]
+        summary["application_count"] = application_counts.get(cid, 1)
+        summary["jd_ids_applied"] = list(jd_ids_per_candidate.get(cid, set()))
+    return result_list
 
 
 # 1) What this does: checks whether one candidate summary matches the search text.
@@ -591,6 +604,61 @@ def hr_ranked_candidates(
     )
     ranked = list(payload.get("candidates") or [])[: max(1, min(50, int(limit)))]
     return {"ok": True, "candidates": ranked}
+
+
+@router.get("/hr/applications")
+def hr_all_applications(
+    job_id: int | None = None,
+    stage: str = "all",
+    current_user: SessionUser = Depends(require_role("hr")),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    scoped_results = _candidate_result_scope(db, current_user.user_id).order_by(Result.id.desc()).all()
+
+    applications = []
+    for result in scoped_results:
+        if job_id and result.job_id != job_id:
+            continue
+        candidate = result.candidate
+        if not candidate:
+            continue
+        latest_session = _latest_session(result)
+        status = _status_payload(result, latest_session)
+        if stage not in {"", "all"} and status["key"] != stage:
+            continue
+        applications.append({
+            "result_id": result.id,
+            "application_id": result.application_id,
+            "candidate": {
+                "id": candidate.id,
+                "candidate_uid": candidate.candidate_uid,
+                "name": candidate.name,
+                "email": candidate.email,
+                "created_at": candidate.created_at,
+            },
+            "job": {
+                "id": result.job.id if result.job else None,
+                "title": (result.job.jd_title or Path(result.job.jd_text).name) if result.job else None,
+            },
+            "score": float(result.score) if result.score is not None else None,
+            "final_score": float(result.final_score) if result.final_score is not None else None,
+            "recommendation": result.recommendation,
+            "score_breakdown": result.score_breakdown_json or {},
+            "shortlisted": bool(result.shortlisted),
+            "status": status,
+            "stage": status,
+            "interview_date": result.interview_date,
+            "hr_decision": result.hr_decision,
+            "hr_final_score": result.hr_final_score,
+            "latest_session": {
+                "id": latest_session.id,
+                "status": latest_session.status,
+                "started_at": latest_session.started_at,
+                "ended_at": latest_session.ended_at,
+            } if latest_session else None,
+        })
+
+    return {"ok": True, "applications": applications, "total": len(applications)}
 
 
 @router.get("/hr/candidates/{candidate_uid}")

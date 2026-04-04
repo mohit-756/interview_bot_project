@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Download, Mail, Calendar, Sparkles, Save } from "lucide-react";
+import { ArrowLeft, Download, Mail, Calendar, Sparkles, Save, Briefcase } from "lucide-react";
 import StatusBadge from "../components/StatusBadge";
+import ScoreBadge from "../components/ScoreBadge";
 import { hrApi } from "../services/api";
 import { ATS_STAGE_OPTIONS } from "../utils/stages";
 
@@ -98,6 +99,9 @@ export default function HRCandidateDetailPage() {
     }
   }
 
+  const allApplications = data?.applications || [];
+  const hasMultipleApplications = allApplications.length > 1;
+
   if (loading) return <p className="center muted">Loading candidate detail...</p>;
   if (error && !data) return <p className="alert error">{error}</p>;
   if (!candidate) return <p className="muted">Candidate not found.</p>;
@@ -138,6 +142,69 @@ export default function HRCandidateDetailPage() {
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {summaryItems.map((item) => <div key={item.label} className="card"><p className="eyebrow">{item.label}</p><h3>{item.value}</h3></div>)}
       </div>
+
+      {hasMultipleApplications && (
+        <div className="card stack">
+          <div className="title-row">
+            <div>
+              <p className="eyebrow">All Applications</p>
+              <h3 className="flex items-center gap-2"><Briefcase size={16} />{candidate.name} has applied to {allApplications.length} positions</h3>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">JD</th>
+                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Resume Score</th>
+                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Final Score</th>
+                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Stage</th>
+                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">HR Decision</th>
+                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Interview Date</th>
+                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+                {allApplications.map((app) => (
+                  <tr key={app.result_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-all">
+                    <td className="px-4 py-3">
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">{app.job?.title || "Unknown JD"}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <ScoreBadge score={app.resumeScore ?? app.score ?? 0} />
+                      <p className="text-[11px] text-slate-500 mt-1">{Math.round(Number(app.resumeScore ?? app.score ?? 0))}%</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <ScoreBadge score={app.finalAIScore ?? app.final_score ?? 0} />
+                      <p className="text-[11px] text-slate-500 mt-1">{Math.round(Number(app.finalAIScore ?? app.final_score ?? 0))}%</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={app.status} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {app.hr_decision ? (
+                        <StatusBadge status={{ key: app.hr_decision, label: app.hr_decision.charAt(0).toUpperCase() + app.hr_decision.slice(1), tone: app.hr_decision === "selected" ? "success" : "danger" }} />
+                      ) : (
+                        <span className="text-xs text-slate-400">Not decided</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-500">
+                      {app.interview_date ? new Date(app.interview_date).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {app.latest_session?.id ? (
+                        <Link to={`/hr/interviews/${app.latest_session.id}`} className="text-xs text-blue-600 hover:underline">Review Interview</Link>
+                      ) : (
+                        <span className="text-xs text-slate-400">No interview yet</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">

@@ -185,6 +185,10 @@ export const hrApi = {
     const response = await request({ method: "get", url: "/hr/candidates", params });
     return { ...response, candidates: (response?.candidates || []).map(normalizeCandidateSummary) };
   },
+  async allApplications(params = {}) {
+    const response = await request({ method: "get", url: "/hr/applications", params });
+    return { ...response, applications: (response?.applications || []).map(normalizeApplication) };
+  },
   async candidateDetail(candidateUid) {
     const response = await request({ method: "get", url: `/hr/candidates/${candidateUid}` });
     return normalizeCandidateDetail(response);
