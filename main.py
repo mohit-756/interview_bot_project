@@ -132,3 +132,15 @@ def root() -> dict[str, str]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/usage")
+def usage() -> dict:
+    from utils.token_utils import get_snapshot
+    snap = get_snapshot()
+    return {
+        "provider": _llm_provider,
+        "model": _llm_model,
+        **snap,
+        "status": "ok" if snap["rpm_pct"] < 90 and snap["tpm_pct"] < 90 else "near_limit",
+    }

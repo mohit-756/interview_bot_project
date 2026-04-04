@@ -125,17 +125,32 @@ class OpenAIAdapter:
             if resp.status_code != 200:
                 logger.error(f"LLM API Error ({resp.status_code}): {resp.text}")
                 resp.raise_for_status()
-            
+
             data = resp.json()
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            
-            # Log token usage
-            log_token_usage(prompt_text, content, model)
-            
+
+            # Extract actual token counts from API response
+            usage = data.get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+
+            # Extract rate-limit headers from Cerebras/Groq
+            rate_headers = {k: v for k, v in resp.headers.items() if k.startswith("x-ratelimit")}
+
+            # Log token usage (actual if available, else estimate)
+            log_token_usage(
+                prompt=prompt_text,
+                response=content,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                rate_headers=rate_headers if rate_headers else None,
+            )
+
             # Save to cache
             _llm_cache[cache_key] = content
             _save_cache(_llm_cache)
-            
+
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
         except Exception as e:
             logger.error(f"LLM request failed: {e}")
