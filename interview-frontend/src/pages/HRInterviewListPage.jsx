@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Eye, Search, PlayCircle, CheckCircle, AlertTriangle, Clock, Calendar } from "lucide-react";
 import MetricCard from "../components/MetricCard";
 import PageHeader from "../components/PageHeader";
+import StatusBadge from "../components/StatusBadge";
 import { hrApi } from "../services/api";
 import { formatDateTime } from "../utils/formatters";
 
@@ -82,27 +84,37 @@ export default function HRInterviewListPage() {
                 <th>Started</th>
                 <th>Events</th>
                 <th>Suspicious</th>
-                <th></th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.map((row) => (
                 <tr key={row.interview_id}>
-                  <td>{row.application_id || "N/A"}</td>
+                  <td className="text-sm font-mono text-slate-500">{row.application_id || "N/A"}</td>
                   <td>
                     <div className="stack-sm">
                       <strong>{row.candidate?.name}</strong>
-                      <span className="muted">{row.candidate?.email}</span>
+                      <span className="muted text-xs">{row.candidate?.email}</span>
                     </div>
                   </td>
                   <td>{row.job?.title || "Job"}</td>
-                  <td>{row.status}</td>
-                  <td>{formatDateTime(row.started_at)}</td>
-                  <td>{row.events_count}</td>
-                  <td>{row.suspicious_events_count ?? 0}</td>
                   <td>
-                    <Link to={`/hr/interviews/${row.interview_id}`} className="button-link subtle-button">
-                      Open review
+                    <StatusBadge status={{ key: row.status, label: row.status, tone: row.status === "completed" ? "success" : row.status === "in_progress" ? "primary" : "secondary" }} />
+                  </td>
+                  <td className="text-sm text-slate-500">{formatDateTime(row.started_at)}</td>
+                  <td className="text-center">{row.events_count || 0}</td>
+                  <td>
+                    {(row.suspicious_events_count ?? 0) > 0 ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-xs font-bold">
+                        <AlertTriangle size={12} />{row.suspicious_events_count}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-sm">0</span>
+                    )}
+                  </td>
+                  <td>
+                    <Link to={`/hr/interviews/${row.interview_id}`} className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+                      <Eye size={14} />View
                     </Link>
                   </td>
                 </tr>

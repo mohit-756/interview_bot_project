@@ -1,10 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Eye, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Eye, RefreshCw, ThumbsDown, ThumbsUp, Users, UserCheck, UserPlus, Calendar, CheckCircle, UserMinus, XCircle } from "lucide-react";
 import StatusBadge from "../components/StatusBadge";
 import ScoreBadge from "../components/ScoreBadge";
 import { hrApi } from "../services/api";
 import { ATS_STAGE_DEFINITIONS as PIPELINE_STAGES, normalizeStageKey } from "../utils/stages";
+
+const STAGE_ICONS = {
+  applied: UserPlus,
+  screening: Users,
+  shortlisted: UserCheck,
+  interview_scheduled: Calendar,
+  interview_completed: CheckCircle,
+  selected: CheckCircle,
+  rejected: XCircle,
+};
+
+const STAGE_COLORS = {
+  primary: "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800",
+  success: "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800",
+  danger: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800",
+  secondary: "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+  dark: "bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600",
+};
 
 function getCandidateJdId(candidate) {
   const jdId = candidate?.assignedJd?.id ?? candidate?.job?.id ?? null;
@@ -108,6 +126,15 @@ export default function HRPipelinePage() {
   }, [filteredCandidates]);
 
   const totalCandidates = filteredCandidates.length;
+  const stageCounts = useMemo(() => {
+    const counts = {};
+    PIPELINE_STAGES.forEach((stage) => { counts[stage.key] = 0; });
+    filteredCandidates.forEach((candidate) => {
+      const key = normalizeStageKey(candidate?.interviewStatus?.key);
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [filteredCandidates]);
 
   function updateCandidateStageLocally(candidateId, nextStage) {
     const normalizedStage = normalizeStageKey(nextStage);
@@ -168,6 +195,23 @@ export default function HRPipelinePage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        {PIPELINE_STAGES.map((stage) => {
+          const IconComponent = STAGE_ICONS[stage.key] || Users;
+          const count = stageCounts[stage.key] || 0;
+          const colorClass = STAGE_COLORS[stage.tone] || STAGE_COLORS.secondary;
+          return (
+            <div key={stage.key} className={`card p-4 flex items-center gap-3 ${colorClass} ${count > 0 ? 'border' : ''}`}>
+              <IconComponent size={20} className="text-slate-600 dark:text-slate-300" />
+              <div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">{stage.label}</p>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">{count}</h3>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {error ? <p className="alert error">{error}</p> : null}
       {updatingResultId ? <p className="muted text-sm">Updating stage for result #{updatingResultId}...</p> : null}
 
@@ -179,22 +223,37 @@ export default function HRPipelinePage() {
         </section>
       ) : (
         <div className="space-y-6">
-          {PIPELINE_STAGES.map((stage) => {
+          {PIPELINE_STAGES.map((stage, index) => {
             const stageCandidates = groupedCandidates[stage.key] || [];
-            if (!stageCandidates.length) return null;
+            const IconComponent = STAGE_ICONS[stage.key] || Users;
+            const colorClass = STAGE_COLORS[stage.tone] || STAGE_COLORS.secondary;
+            const count = stageCounts[stage.key] || 0;
+            
             return (
-              <div key={stage.key} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                  <h3 className="font-bold text-slate-900 dark:text-white">{stage.label} <span className="text-slate-500 text-sm">({stageCandidates.length} candidates)</span></h3>
-                  <span className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-sm font-bold rounded-full">{stageCandidates.length}</span>
-                </div>
-                <div className="p-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {stageCandidates.map((candidate) => (
-                      <CandidateCard key={candidate.result_id} candidate={candidate} onQuickAction={handleQuickAction} quickActionLoadingId={updatingResultId} />
-                    ))}
+              <div key={stage.key} className={`bg-white dark:bg-slate-900 rounded-2xl border overflow-hidden ${count > 0 ? colorClass : 'border-slate-200 dark:border-slate-800'}`}>
+                <div className="px-5 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${count > 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-100 dark:bg-slate-700'}`}>
+                      <IconComponent size={18} className={count > 0 ? "text-blue-600 dark:text-blue-400" : "text-slate-400"} />
+                    </div>
+                    <h3 className="font-bold text-slate-900 dark:text-white">{stage.label}</h3>
+                    <span className="px-2.5 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-full">{count}</span>
                   </div>
+                  {count > 0 && <span className="text-sm font-medium text-slate-500 dark:text-slate-400">{count} candidate{count !== 1 ? 's' : ''}</span>}
                 </div>
+                {count > 0 ? (
+                  <div className="p-4 bg-white dark:bg-slate-900">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {stageCandidates.map((candidate) => (
+                        <CandidateCard key={candidate.result_id} candidate={candidate} onQuickAction={handleQuickAction} quickActionLoadingId={updatingResultId} />
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="px-5 py-8 text-center">
+                    <p className="muted text-sm">No candidates in this stage yet</p>
+                  </div>
+                )}
               </div>
             );
           })}
