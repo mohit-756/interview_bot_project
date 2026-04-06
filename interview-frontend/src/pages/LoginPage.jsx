@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/useAuth";
 import {
@@ -120,8 +121,10 @@ export default function LoginPage() {
           </div>
 
           {/* Login Type Toggle */}
-          <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-8">
+          <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-3">
             <button
+              type="button"
+              aria-pressed={loginType === "candidate"}
               onClick={() => setLoginType("candidate")}
               className={cn(
                 "flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
@@ -134,6 +137,8 @@ export default function LoginPage() {
               <span>Candidate</span>
             </button>
             <button
+              type="button"
+              aria-pressed={loginType === "hr"}
               onClick={() => setLoginType("hr")}
               className={cn(
                 "flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
@@ -146,6 +151,9 @@ export default function LoginPage() {
               <span>HR / Recruiter</span>
             </button>
           </div>
+          <p className="mb-8 text-xs text-slate-500 dark:text-slate-400">
+            Candidate login opens the applicant dashboard. HR login opens the recruiter workspace.
+          </p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
@@ -163,6 +171,7 @@ export default function LoginPage() {
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 group-focus-within:text-blue-500 transition-colors" />
                 <input
                   type="email"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-12 pr-4 py-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all dark:text-white placeholder:text-slate-400"
@@ -188,6 +197,7 @@ export default function LoginPage() {
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 group-focus-within:text-blue-500 transition-colors" />
                 <input
                   type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-12 pr-12 py-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all dark:text-white placeholder:text-slate-400"
@@ -198,7 +208,7 @@ export default function LoginPage() {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>

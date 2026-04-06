@@ -1,5 +1,6 @@
 import { cn } from "../utils/utils";
 import { toStatusObject } from "../utils/stages";
+import { cn } from "../utils/utils";
 
 const statusStyles = {
   analyzed: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-green-200 dark:border-green-800",

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Users, UserCheck, UserX, CheckCircle2, Plus, BarChart3, Sparkles, TrendingUp } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from "recharts";
 import MetricCard from "../components/MetricCard";
 import CandidateTable from "../components/CandidateTable";
 import StatusBadge from "../components/StatusBadge";
+import PageHeader from "../components/PageHeader";
 import { hrApi } from "../services/api";
 
 const CHART_COLORS = ["#2563eb", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#06b6d4"];
@@ -29,7 +31,8 @@ export default function HRDashboardPage() {
   const [candidatesData, setCandidatesData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tableLoading, setTableLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [dashboardError, setDashboardError] = useState("");
+  const [tableError, setTableError] = useState("");
 
   const overview = dashboard?.analytics?.overview || {};
   const pipeline = dashboard?.analytics?.pipeline ?? EMPTY_LIST;
@@ -39,7 +42,7 @@ export default function HRDashboardPage() {
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setDashboardError("");
     try {
       const [dashboardResponse, rankedResponse] = await Promise.all([
         hrApi.dashboard(),
@@ -48,7 +51,7 @@ export default function HRDashboardPage() {
       setDashboard(dashboardResponse);
       setRanked(rankedResponse?.candidates || []);
     } catch (loadError) {
-      setError(loadError.message);
+      setDashboardError(loadError.message);
     } finally {
       setLoading(false);
     }
@@ -56,12 +59,12 @@ export default function HRDashboardPage() {
 
   const loadCandidates = useCallback(async () => {
     setTableLoading(true);
-    setError("");
+    setTableError("");
     try {
       const response = await hrApi.listCandidates({ page: 1, sort: "highest_score" });
       setCandidatesData(response);
     } catch (loadError) {
-      setError(loadError.message);
+      setTableError(loadError.message);
     } finally {
       setTableLoading(false);
     }
@@ -76,7 +79,7 @@ export default function HRDashboardPage() {
       await loadCandidates();
       await loadDashboard();
     } catch (deleteError) {
-      setError(deleteError.message);
+      setDashboardError(deleteError.message);
     }
   }
 
@@ -92,23 +95,24 @@ export default function HRDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 page-enter">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white font-display">HR Dashboard</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Production-style ATS analytics, rankings, funnel health, and recent candidate activity.</p>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <button type="button" onClick={() => navigate("/hr/compare")} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
-            Compare Candidates
-          </button>
-          <button type="button" onClick={() => navigate("/hr/candidates")} className="bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white px-5 py-2.5 rounded-xl font-bold flex items-center space-x-2 transition-all shadow-lg shadow-blue-200 dark:shadow-blue-900/30">
-            <Plus size={20} />
-            <span>Manage Candidates</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="HR Dashboard"
+        subtitle="Production-style ATS analytics, rankings, funnel health, and recent candidate activity."
+        actions={(
+          <>
+            <button type="button" onClick={() => navigate("/hr/compare")} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+              Compare Candidates
+            </button>
+            <button type="button" onClick={() => navigate("/hr/candidates")} className="bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white px-5 py-2.5 rounded-xl font-bold flex items-center space-x-2 transition-all shadow-lg shadow-blue-200 dark:shadow-blue-900/30">
+              <Plus size={20} />
+              <span>Manage Candidates</span>
+            </button>
+          </>
+        )}
+      />
 
-      {error ? <p className="alert error">{error}</p> : null}
+      {dashboardError ? <p className="alert error">{dashboardError}</p> : null}
+      {tableError ? <p className="alert error">{tableError}</p> : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 page-enter-delay-1">
         <MetricCard title="Total Candidates" value={overview.total_candidates || 0} icon={Users} color="blue" />

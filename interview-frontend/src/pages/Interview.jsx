@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Mic, MicOff, Send, MessageSquare, CheckCircle2,
@@ -578,6 +579,12 @@ export default function Interview() {
 
           {error && <p className="alert error">{error}</p>}
           <TabSwitchAlert count={tabSwitchCount} />
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/80 px-5 py-4 text-sm text-slate-300 shadow-lg">
+            <p className="font-bold text-white">Interview setup</p>
+            <p className="mt-1 leading-relaxed">
+              Keep camera and microphone access enabled, answer in your own words, and use the recording button when speaking feels easier.
+            </p>
+          </div>
 
           {/* Progress + timers + mute toggle */}
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">

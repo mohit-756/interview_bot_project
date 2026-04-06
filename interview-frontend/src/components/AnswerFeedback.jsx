@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useState } from "react";
 import { CheckCircle2, XCircle, TrendingUp, ChevronRight, Zap } from "lucide-react";
 import { cn } from "../utils/utils";
 

@@ -25,7 +25,7 @@ export default function CandidateTable({ candidates, onDeleteCandidate, onSchedu
               </td>
             </tr>
           ) : candidates.map((candidate) => (
-            <tr key={candidate.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+            <tr key={candidate.uid || candidate.candidate_uid || candidate.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
               <td className="px-6 py-4">
                 <div className="flex items-center">
                   <img src={candidate.avatar} alt="" className="w-9 h-9 rounded-full bg-slate-100 mr-3" />
@@ -55,8 +55,9 @@ export default function CandidateTable({ candidates, onDeleteCandidate, onSchedu
               </td>
               <td className="px-6 py-4">
                 <div className="flex items-center space-x-2">
-                  <Link 
+                  <Link
                     to={`/hr/candidates/${candidate.uid || candidate.candidate_uid}`}
+                    aria-label={`Open ${candidate.name || "candidate"} profile`}
                     className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-all"
                   >
                     <Eye size={18} />
@@ -64,6 +65,7 @@ export default function CandidateTable({ candidates, onDeleteCandidate, onSchedu
                   <button
                     type="button"
                     onClick={() => onScheduleCandidate?.(candidate)}
+                    aria-label={`Schedule interview for ${candidate.name || "candidate"}`}
                     className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-md transition-all"
                   >
                     <Calendar size={18} />
@@ -71,6 +73,7 @@ export default function CandidateTable({ candidates, onDeleteCandidate, onSchedu
                   <button
                     type="button"
                     onClick={() => onDeleteCandidate?.(candidate)}
+                    aria-label={`Delete ${candidate.name || "candidate"}`}
                     className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-all"
                   >
                     <Trash2 size={18} />
