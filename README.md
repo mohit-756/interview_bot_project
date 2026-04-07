@@ -149,7 +149,7 @@ EMAIL_ADDRESS=your_email@gmail.com
 EMAIL_PASSWORD=your_app_password
 
 # Frontend
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=http://43.205.95.22:8000
 PROCTOR_PAUSE_ENABLED=false
 ```
 
