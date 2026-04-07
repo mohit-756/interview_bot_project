@@ -47,7 +47,7 @@ def transcribe_audio_bytes(
 ) -> dict[str, object]:
     """
     Transcribe audio using available API key dynamically.
-    Priority: Groq > OpenAI > Gemini
+    Priority: OpenAI > Groq > Gemini
     """
     if not audio_bytes:
         return {
@@ -57,48 +57,18 @@ def transcribe_audio_bytes(
             "language": language or "en",
         }
 
-    # Get available keys
-    llm_api_key = os.getenv("LLM_API_KEY", "")
-    gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    openai_key = os.getenv("OPENAI_API_KEY", "") or os.getenv("LLM_API_KEY", "")
     groq_api_key = os.getenv("GROQ_API_KEY", "")
-    
-    # Determine provider
-    provider = os.getenv("LLM_PROVIDER", "").lower()
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "")
     
     suffix = _resolve_suffix(filename)
     mime_type = _mime(suffix)
 
-    # Build prompt
     prompt = "Transcribe this audio to text. Return only the transcript."
     if context_hint:
         prompt += f" Context: {context_hint}"
 
-    # Try Groq first (they have Whisper API - same as OpenAI)
-    if groq_api_key or (provider == "cerebras" and llm_api_key):
-        try:
-            api_key = groq_api_key or llm_api_key
-            url = "https://api.groq.com/openai/v1/audio/transcriptions"
-            files = {"file": (filename or "audio.webm", audio_bytes, mime_type)}
-            data = {"model": "whisper-large-v3", "language": language or "en", "prompt": prompt}
-            headers = {"Authorization": f"Bearer {api_key}"}
-            
-            response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
-            response.raise_for_status()
-            result = response.json()
-            text = result.get("text", "").strip() if result else ""
-            
-            logger.info("Groq transcription successful")
-            return {
-                "text": text,
-                "confidence": 0.95 if text else 0.0,
-                "low_confidence": not bool(text),
-                "language": language or "en",
-            }
-        except Exception as exc:
-            logger.warning("Groq transcription failed: %s", exc)
-
-    # Try OpenAI Whisper
-    openai_key = os.getenv("OPENAI_API_KEY", "")
+    # Try OpenAI Whisper first
     if openai_key:
         try:
             url = "https://api.openai.com/v1/audio/transcriptions"
@@ -121,7 +91,30 @@ def transcribe_audio_bytes(
         except Exception as exc:
             logger.warning("OpenAI transcription failed: %s", exc)
 
-    # Try Gemini (only if explicitly configured)
+    # Try Groq second (they have Whisper API - same as OpenAI)
+    if groq_api_key:
+        try:
+            url = "https://api.groq.com/openai/v1/audio/transcriptions"
+            files = {"file": (filename or "audio.webm", audio_bytes, mime_type)}
+            data = {"model": "whisper-large-v3", "language": language or "en", "prompt": prompt}
+            headers = {"Authorization": f"Bearer {groq_api_key}"}
+            
+            response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            text = result.get("text", "").strip() if result else ""
+            
+            logger.info("Groq transcription successful")
+            return {
+                "text": text,
+                "confidence": 0.95 if text else 0.0,
+                "low_confidence": not bool(text),
+                "language": language or "en",
+            }
+        except Exception as exc:
+            logger.warning("Groq transcription failed: %s", exc)
+
+    # Try Gemini last (only if explicitly configured)
     if gemini_api_key:
         try:
             encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')

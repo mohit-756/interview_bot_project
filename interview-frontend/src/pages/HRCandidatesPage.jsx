@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Search, Download, RefreshCw, ChevronLeft, ChevronRight, Eye, ArrowUpDown, GitCompareArrows, Calendar, CheckCircle, XCircle, Users, Filter } from "lucide-react";
+import { Search, Download, RefreshCw, ChevronLeft, ChevronRight, Eye, Trash2, ArrowUpDown, GitCompareArrows, Calendar, CheckCircle, XCircle, Users, Filter } from "lucide-react";
 import StatusBadge from "../components/StatusBadge";
 import ScoreBadge from "../components/ScoreBadge";
 import EmptyState from "../components/EmptyState";
@@ -42,6 +42,7 @@ export default function HRCandidatesPage() {
   const [bulkStage, setBulkStage] = useState("");
   const [bulkLoading, setBulkLoading] = useState(false);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [deletingId, setDeletingId] = useState(null);
   const toast = useToast();
 
   const loadAllCandidates = useCallback(async () => {
@@ -137,12 +138,15 @@ export default function HRCandidatesPage() {
 
   async function handleDeleteCandidate(candidateUid) {
     if (!window.confirm("Are you sure you want to delete this candidate?")) return;
+    setDeletingId(candidateUid);
     try {
       await hrApi.deleteCandidate(candidateUid);
       await loadAllCandidates();
-      toast.success("Candidate deleted successfully");
+      toast.success("Candidate deleted");
     } catch (deleteError) {
       toast.error(deleteError.message || "Failed to delete candidate.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -394,7 +398,27 @@ export default function HRCandidatesPage() {
                   <td className="px-4 py-3"><ScoreBadge score={candidate?.finalAIScore || 0} /></td>
                   <td className="px-4 py-3"><StatusBadge status={candidate?.interviewStatus} /></td>
                   <td className="px-4 py-3">
-                    <Link to={`/hr/candidates/${candidate?.candidate_uid}`} className="text-blue-600 hover:underline text-sm font-medium">View</Link>
+                    <div className="flex items-center gap-2">
+                      <Link 
+                        to={`/hr/candidates/${candidate?.candidate_uid}`} 
+                        className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-all"
+                        title="View candidate"
+                      >
+                        <Eye size={16} />
+                      </Link>
+                      <button 
+                        onClick={() => handleDeleteCandidate(candidate?.candidate_uid)}
+                        disabled={deletingId === candidate?.candidate_uid}
+                        className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-40"
+                        title="Delete candidate"
+                      >
+                        {deletingId === candidate?.candidate_uid ? (
+                          <span className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+                      </button>
+                    </div>
                   </td>
                 </tr>;
               })}
