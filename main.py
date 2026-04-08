@@ -150,14 +150,14 @@ app.add_middleware(
 # ── CORS Configuration ───────────────────────────────────────────────────────
 # In production, allow the Vercel domain + localhost for dev.
 # Use allow_origin_regex to also cover Vercel preview deployments.
-DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://interview-bot-project-1.vercel.app"
+DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://interview-bot-project-1.vercel.app,https://dfuwgnqei5yls.cloudfront.net"
 raw_origins = os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS)
 allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_origin_regex=r"https://interview-bot-project-1(-[a-zA-Z0-9_-]+)?\.vercel\.app",
+    allow_origin_regex=r"https://interview-bot-project-1(-[a-zA-Z0-9_-]+)?\.vercel\.app|https://[a-z0-9]+\.cloudfront\.net",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
