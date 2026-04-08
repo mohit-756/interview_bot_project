@@ -339,8 +339,8 @@ def forgot_password(payload: ForgotPasswordBody, db: Session = Depends(get_db)) 
     db.add(reset_token)
     db.commit()
 
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    reset_link = f"{frontend_url}/reset-password/{token}"
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+    reset_link = f"{frontend_url}/#/reset-password/{token}"
 
     email_addr = os.getenv("EMAIL_ADDRESS", "")
     email_pass = os.getenv("EMAIL_PASSWORD", "")
