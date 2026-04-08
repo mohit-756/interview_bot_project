@@ -148,9 +148,13 @@ app.add_middleware(
 )
 
 # ── CORS Configuration ───────────────────────────────────────────────────────
-# In production, allow the Vercel domain + localhost for dev.
-# Use allow_origin_regex to also cover Vercel preview deployments.
-DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://interview-bot-project-1.vercel.app,https://dfuwgnqei5yls.cloudfront.net"
+# LOCAL DEV: Uses Vite proxy -> http://127.0.0.1:8000 (no CORS needed for proxy)
+# PRODUCTION: Update CORS_ORIGINS env var or DEFAULT_ORIGINS below
+# - For AWS CloudFront: add your cloudfront URL
+# - For Vercel: add your vercel.app URL
+# DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://your-domain.com"
+DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://dfuwgnqei5yls.cloudfront.net"
+# DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://interview-bot-project-1.vercel.app,https://dfuwgnqei5yls.cloudfront.net"
 raw_origins = os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS)
 allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
