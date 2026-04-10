@@ -9,8 +9,8 @@ import { ATS_STAGE_OPTIONS } from "../utils/stages";
 function downloadHref(path) {
   if (!path) return "";
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  const normalized = path.replace(/\\/g, "/");
-  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+  const filename = path.split(/[/\\]/).pop();
+  return `/uploads/${filename}`;
 }
 
 function safeList(value) {
@@ -126,7 +126,7 @@ export default function HRCandidateDetailPage() {
         <Link to="/hr/candidates" className="flex items-center space-x-2 text-slate-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} /><span>Back to Candidates</span></Link>
         <div className="flex items-center gap-3 flex-wrap">
           <Link to="/hr/compare" className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">Compare Candidates</Link>
-          {candidate?.resume_path ? <button onClick={() => window.open(downloadHref(candidate.resume_path), "_blank")} type="button" className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center space-x-2"><Download size={20} /><span>Open Resume</span></button> : null}
+          {candidate?.resume_path ? <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); console.log("Resume path:", candidate?.resume_path); console.log("URL:", downloadHref(candidate.resume_path)); window.open(downloadHref(candidate.resume_path), "_blank"); }} type="button" className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center space-x-2"><Download size={20} /><span>Open Resume</span></button> : null}
         </div>
       </div>
 
