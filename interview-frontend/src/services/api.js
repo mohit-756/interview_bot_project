@@ -185,50 +185,19 @@ export const candidateApi = {
     }),
 
   // ✅ NEW S3 UPLOAD FLOW
-  uploadResume: async (file, jobId) => {
-    const API_GATEWAY =
-      "https://lp6t2xn0q4.execute-api.ap-south-1.amazonaws.com/prod";
+  uploadResume: (file, jobId) => {
+  const formData = new FormData();
+  formData.append("resume", file);
+  if (jobId) formData.append("job_id", jobId);
 
-    try {
-      console.log("[UPLOAD] Starting S3 upload:", file?.name);
+  console.log("[UPLOAD] Sending file to backend");
 
-      // 1. Unique filename
-      const fileName = Date.now() + "_" + file.name;
-
-      // 2. Get presigned URL from Lambda
-      const res = await fetch(
-        `${API_GATEWAY}/upload?fileName=${fileName}&fileType=${file.type}`
-      );
-      const data = await res.json();
-
-      console.log("[UPLOAD] Presigned URL received");
-
-      // 3. Upload file directly to S3
-      await fetch(data.uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": file.type,
-        },
-        body: file,
-      });
-
-      console.log("[UPLOAD] File uploaded to S3:", data.fileUrl);
-
-      // 4. Send S3 URL to backend
-      return request({
-        method: "post",
-        url: "/candidate/upload-resume",
-        data: {
-          resume_url: data.fileUrl,
-          job_id: jobId,
-        },
-      });
-
-    } catch (error) {
-      console.error("[UPLOAD ERROR]", error);
-      throw error;
-    }
-  },
+  return request({
+    method: "post",
+    url: "/candidate/upload-resume",
+    data: formData
+  });
+},
 
   scheduleInterview: (resultId, interviewDate) =>
     request({
