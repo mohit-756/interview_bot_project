@@ -8,9 +8,14 @@ import { ATS_STAGE_OPTIONS } from "../utils/stages";
 
 function downloadHref(path) {
   if (!path) return "";
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  const filename = path.split(/[/\\]/).pop();
-  return `/uploads/${filename}`;
+
+  // If already S3 URL → return directly
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+
+  // ❌ REMOVE local uploads logic
+  return path;
 }
 
 function safeList(value) {

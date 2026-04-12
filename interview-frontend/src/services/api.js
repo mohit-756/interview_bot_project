@@ -164,18 +164,85 @@ export const authApi = {
 
 // ── Candidate ────────────────────────────────────────────────────────────────
 export const candidateApi = {
-  dashboard: (jobId) => request({ method: "get", url: "/candidate/dashboard", params: jobId ? { job_id: jobId } : undefined }),
-  jds: () => request({ method: "get", url: "/candidate/jds" }),
-  selectJd: (jdId) => request({ method: "post", url: "/candidate/select-jd", data: { jd_id: jdId } }),
-  uploadResume: (file, jobId) => {
-    const formData = new FormData();
-    formData.append("resume", file);
-    if (jobId) formData.append("job_id", String(jobId));
-    console.log("[UPLOAD] Starting resume upload, file:", file?.name, "jobId:", jobId);
-    return request({ method: "post", url: "/candidate/upload-resume", data: formData });
+  dashboard: (jobId) =>
+    request({
+      method: "get",
+      url: "/candidate/dashboard",
+      params: jobId ? { job_id: jobId } : undefined,
+    }),
+
+  jds: () =>
+    request({
+      method: "get",
+      url: "/candidate/jds",
+    }),
+
+  selectJd: (jdId) =>
+    request({
+      method: "post",
+      url: "/candidate/select-jd",
+      data: { jd_id: jdId },
+    }),
+
+  // ✅ NEW S3 UPLOAD FLOW
+  uploadResume: async (file, jobId) => {
+    const API_GATEWAY =
+      "https://lp6t2xn0q4.execute-api.ap-south-1.amazonaws.com/prod";
+
+    try {
+      console.log("[UPLOAD] Starting S3 upload:", file?.name);
+
+      // 1. Unique filename
+      const fileName = Date.now() + "_" + file.name;
+
+      // 2. Get presigned URL from Lambda
+      const res = await fetch(
+        `${API_GATEWAY}/upload?fileName=${fileName}&fileType=${file.type}`
+      );
+      const data = await res.json();
+
+      console.log("[UPLOAD] Presigned URL received");
+
+      // 3. Upload file directly to S3
+      await fetch(data.uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": file.type,
+        },
+        body: file,
+      });
+
+      console.log("[UPLOAD] File uploaded to S3:", data.fileUrl);
+
+      // 4. Send S3 URL to backend
+      return request({
+        method: "post",
+        url: "/candidate/upload-resume",
+        data: {
+          resume_url: data.fileUrl,
+          job_id: jobId,
+        },
+      });
+
+    } catch (error) {
+      console.error("[UPLOAD ERROR]", error);
+      throw error;
+    }
   },
-  scheduleInterview: (resultId, interviewDate) => request({ method: "post", url: "/candidate/select-interview-date", data: { result_id: resultId, interview_date: interviewDate } }),
-  practiceKit: (jobId) => request({ method: "get", url: "/candidate/practice-kit", params: jobId ? { job_id: jobId } : undefined }),
+
+  scheduleInterview: (resultId, interviewDate) =>
+    request({
+      method: "post",
+      url: "/candidate/select-interview-date",
+      data: { result_id: resultId, interview_date: interviewDate },
+    }),
+
+  practiceKit: (jobId) =>
+    request({
+      method: "get",
+      url: "/candidate/practice-kit",
+      params: jobId ? { job_id: jobId } : undefined,
+    }),
 };
 
 // ── HR ───────────────────────────────────────────────────────────────────────
