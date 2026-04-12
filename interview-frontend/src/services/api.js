@@ -198,9 +198,12 @@ export const candidateApi = {
 
   // 2. Upload to S3
   await fetch(data.uploadUrl, {
-    method: "PUT",
-    body: file
-  });
+  method: "PUT",
+  body: file,
+  headers: {
+    "Content-Type": "application/octet-stream"
+  }
+}); 
 
   console.log("[UPLOAD] Uploaded to S3:", data.fileUrl);
 

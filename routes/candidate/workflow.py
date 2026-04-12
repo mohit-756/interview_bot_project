@@ -6,7 +6,6 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi import Body
 from sqlalchemy.orm import Session
 from services.question_generation import build_question_bundle
 from ai_engine.phase1.scoring import compute_resume_skill_match
@@ -214,7 +213,7 @@ def upload_resume(
     if not resume_url:
         raise HTTPException(status_code=400, detail="Resume URL missing")
 
-    # ✅ store S3 URL (already uploaded via Lambda)
+    # ✅ store S3 URL
     candidate.resume_path = resume_url
 
     # ✅ extract text from S3
@@ -233,24 +232,31 @@ def upload_resume(
 
     logger.info(f"UPLOAD_RESUME resume_path saved to DB: {candidate.resume_path}")
 
-    # ✅ JD handling (same as before)
+    # ✅ JD handling (FIXED: no silent return)
     selected_jd_id = job_id or candidate.selected_jd_id
+
     if not selected_jd_id:
-        return {
-            "ok": True,
-            "message": "Resume uploaded. No job description selected.",
-            "resume_path": resume_url,
-            "available_jobs": list_available_jobs(db),
-            "available_jds": list_active_jds(db),
-            "selected_job_id": None,
-            "selected_jd_id": None,
-        }
+        raise HTTPException(
+            status_code=400,
+            detail="Please select a Job Description before uploading resume"
+        )
+
+    logger.info(f"JOB_ID_RECEIVED: {selected_jd_id}")
 
     selected_jd = _selected_jd_or_404(db, selected_jd_id)
     candidate.selected_jd_id = selected_jd.id
 
     db.commit()
     db.refresh(candidate)
+
+    # ✅ validate extracted text BEFORE evaluation
+    resume_text = (candidate.resume_text or "").strip()
+
+    if not resume_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Resume text could not be extracted. Please upload a valid file."
+        )
 
     # ✅ evaluate resume
     logger.info("UPLOAD_RESUME calling evaluate_resume_for_job")
@@ -261,15 +267,6 @@ def upload_resume(
     except Exception as e:
         logger.error(f"UPLOAD_RESUME evaluation FAILED: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Resume evaluation failed: {str(e)}")
-
-    # ✅ validate extracted text
-    resume_text = (candidate.resume_text or "").strip()
-
-    if not resume_text:
-        raise HTTPException(
-            status_code=400,
-            detail="Resume text could not be extracted. Please upload a valid file."
-        )
 
     # ✅ save result
     result = upsert_result(
@@ -294,7 +291,7 @@ def upload_resume(
     db.commit()
     db.refresh(result)
 
-    # ✅ final response (UNCHANGED functionality)
+    # ✅ FINAL RESPONSE (unchanged)
     return {
         "ok": True,
         "message": "Resume uploaded and scoring completed.",
