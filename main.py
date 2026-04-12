@@ -137,8 +137,9 @@ if not _secret_key or _secret_key == "2e7c1b7e8a9f4c2d8b1a6e5f3c4d7a8b9e0f1c2b3a
 app.add_middleware(
     SessionMiddleware,
     secret_key=_secret_key,
-    same_site="none",
-    https_only=True,
+    same_site="none" if IS_PROD else "lax",
+    securecookie=IS_PROD,
+    https_only=IS_PROD,
     session_cookie="interview_bot_sid",
 )
 
