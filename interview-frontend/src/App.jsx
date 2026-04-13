@@ -20,6 +20,7 @@ import HRPipelinePage from "./pages/HRPipelinePage";
 import CandidateComparisonPage from "./pages/CandidateComparisonPage";
 import CandidateDashboardPage from "./pages/CandidateDashboardPage";
 import PracticeInterviewPage from "./pages/PracticeInterviewPage";
+import PublicSchedulePage from "./pages/PublicSchedulePage";
 import PreCheck from "./pages/PreCheck";
 import Interview from "./pages/Interview";
 import Completed from "./pages/Completed";
@@ -57,6 +58,7 @@ export default function App() {
       <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
       <Route path="/forgot-password" element={<PublicOnlyRoute><ForgotPasswordPage /></PublicOnlyRoute>} />
       <Route path="/reset-password/:token" element={<PublicOnlyRoute><ResetPasswordPage /></PublicOnlyRoute>} />
+      <Route path="/schedule/:token" element={<PublicSchedulePage />} />
 
       {/* ── INTERVIEW ROUTES — NO LOGIN REQUIRED ─────────────────────────────
           These are accessed directly from the email link.

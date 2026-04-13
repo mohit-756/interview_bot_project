@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Upload, CheckCircle2, AlertCircle, ArrowRight, FileSearch, Clock, Calendar, RefreshCw, Sparkles } from "lucide-react";
+import { Upload, CheckCircle2, AlertCircle, ArrowRight, FileSearch, Clock, RefreshCw, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import StatusBadge from "../components/StatusBadge";
 import StepChecklist from "../components/StepChecklist";
@@ -39,8 +39,6 @@ export default function CandidateDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [scheduling, setScheduling] = useState(false);
-  const [scheduleDate, setScheduleDate] = useState("");
   const [message, setMessage] = useState("");
 
   const selectedJd = useMemo(() => (dashboard?.available_jds || []).find((jd) => jd.id === dashboard?.selected_jd_id) || null, [dashboard]);
@@ -63,7 +61,6 @@ export default function CandidateDashboardPage() {
       const response = await candidateApi.dashboard(jobId);
       setDashboard(response);
       setMessage("");
-      if (response?.result?.interview_date) setScheduleDate(String(response.result.interview_date).slice(0, 16));
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -89,23 +86,12 @@ export default function CandidateDashboardPage() {
       const response = await candidateApi.uploadResume(file, dashboard.selected_jd_id);
       console.log("[UPLOAD] Response received:", response);
       setDashboard(response);
-      setMessage("Resume uploaded and scored successfully.");
+      setMessage(response.message || "Resume uploaded and scored successfully.");
     } catch (e) { 
       console.error("[UPLOAD] Error:", e.message);
       setError(e.message); 
     }
     finally { setUploading(false); e.target.value = ""; }
-  }
-
-  async function handleScheduleInterview() {
-    if (!result?.id || !scheduleDate) { setError("Pick a date first."); return; }
-    setScheduling(true); setError(""); setMessage("");
-    try {
-      const response = await candidateApi.scheduleInterview(result.id, scheduleDate);
-      setDashboard((c) => c ? { ...c, result: response.result } : c);
-      setMessage(response.message || "Interview scheduled.");
-    } catch (e) { setError(e.message); }
-    finally { setScheduling(false); }
   }
 
   const steps = [
@@ -176,8 +162,6 @@ export default function CandidateDashboardPage() {
             </div>
 
             {resumeAdvice && <div className="grid md:grid-cols-2 gap-6"><div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm"><h4 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center"><CheckCircle2 className="text-emerald-500 mr-2" size={18} />Strengths</h4><ul className="space-y-3">{(resumeAdvice.strengths || []).map((item) => <li key={item} className="flex items-start text-sm text-slate-600 dark:text-slate-300"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2 mr-3 flex-shrink-0" />{item}</li>)}{!resumeAdvice.strengths?.length && <li className="text-sm text-slate-500">Upload resume to see advice.</li>}</ul></div><div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm"><h4 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center"><AlertCircle className="text-amber-500 mr-2" size={18} />Rewrite Tips</h4><ul className="space-y-3">{(resumeAdvice.rewrite_tips || []).map((item) => <li key={item} className="flex items-start text-sm text-slate-600 dark:text-slate-300"><div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-2 mr-3 flex-shrink-0" />{item}</li>)}</ul></div></div>}
-
-            {result.shortlisted && !interviewCompleted && !finalDecision && <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-8 rounded-3xl text-white"><h3 className="text-xl font-bold font-display mb-2">Schedule Your Interview</h3><p className="text-blue-100 mb-6">Pick a date and time to unlock your interview link.</p><div className="flex flex-col sm:flex-row gap-3"><div className="relative"><Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-700 w-4 h-4" /><input id="interview_date" name="interview_date" type="datetime-local" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} disabled={scheduling} className="pl-10 pr-4 py-3 rounded-2xl text-slate-900 bg-white outline-none min-w-[250px]" /></div><button onClick={handleScheduleInterview} disabled={scheduling} className="px-8 py-3 rounded-2xl bg-white text-blue-600 font-black hover:scale-[1.01] transition-all shadow-xl disabled:opacity-60">{scheduling ? "Scheduling..." : result.interview_date ? "Reschedule" : "Schedule Interview"}</button></div>{result.interview_date && <p className="mt-4 text-sm text-blue-100">Scheduled for: <span className="font-bold">{new Date(result.interview_date).toLocaleString()}</span></p>}</div>}
           </div>}
         </div>
 

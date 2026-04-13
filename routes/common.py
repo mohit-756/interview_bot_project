@@ -30,9 +30,15 @@ def interview_entry_url(result_id: int | None) -> str | None:
     if not result_id:
         return None
     base_url = frontend_base_url()
-    if "cloudfront.net" in base_url or "vercel.app" in base_url:
-        return f"{base_url}/#/interview/{int(result_id)}"
-    return f"{base_url}/interview/{int(result_id)}"
+    return f"{base_url}/#/interview/{int(result_id)}"
+
+
+def schedule_entry_url(token: str | None) -> str | None:
+    token_value = str(token or "").strip()
+    if not token_value:
+        return None
+    base_url = frontend_base_url()
+    return f"{base_url}/#/schedule/{token_value}"
 
 
 def _latest_interview_session(result: Result | None):
@@ -61,6 +67,23 @@ def _application_stage(result: Result | None, latest_session) -> str | None:
     return normalize_stage(result.stage)
 
 
+def parse_interview_datetime(raw_value: str | None) -> datetime | None:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def interview_access_state(result: Result | None) -> dict[str, object]:
     if not result:
         return {
@@ -82,6 +105,16 @@ def interview_access_state(result: Result | None) -> dict[str, object]:
             "interview_ready": False,
             "interview_locked_reason": "schedule_required",
         }
+
+    scheduled_at = parse_interview_datetime(result.interview_date)
+    if scheduled_at:
+        current_time = datetime.now(scheduled_at.tzinfo) if scheduled_at.tzinfo else datetime.now()
+        if current_time < scheduled_at:
+            return {
+                "interview_scheduled": True,
+                "interview_ready": False,
+                "interview_locked_reason": "scheduled_time_not_reached",
+            }
 
     latest_session = _latest_interview_session(result)
     latest_status = str(getattr(latest_session, "status", "") or "").strip().lower()

@@ -4,6 +4,7 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
+from secrets import token_urlsafe
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -20,14 +21,16 @@ from routes.common import (
     interview_entry_url,
     list_active_jds,
     list_available_jobs,
+    schedule_entry_url,
     serialize_result,
     upsert_result,
 )
 from routes.dependencies import SessionUser, require_role
-from routes.schemas import CandidateSelectJDBody, ScheduleInterviewBody
+from routes.schemas import CandidateSelectJDBody, PublicScheduleInterviewBody, ScheduleInterviewBody
 from services.practice import build_practice_kit
+from services.pipeline import record_stage_change
 from services.resume_advice import build_resume_advice
-from utils.email_service import send_interview_email
+from utils.email_service import send_interview_email, send_shortlisted_email
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -76,6 +79,21 @@ def _resume_advice_payload(
         explanation=explanation or {},
         candidate_name=getattr(candidate, 'name', None) or None,
     )
+
+
+def _result_by_schedule_token_or_404(db: Session, token: str) -> Result:
+    token_value = (token or "").strip()
+    if not token_value:
+        raise HTTPException(status_code=404, detail="Scheduling token is missing")
+    result = (
+        db.query(Result)
+        .filter(Result.interview_token == token_value)
+        .order_by(Result.id.desc())
+        .first()
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Scheduling link is invalid or expired")
+    return result
 
 
 @router.get("/candidate/dashboard")
@@ -293,9 +311,32 @@ def upload_resume(
     db.commit()
     db.refresh(result)
 
+    shortlist_email_sent = False
+    if result.shortlisted:
+        result.interview_token = token_urlsafe(24)
+        db.commit()
+        db.refresh(result)
+        try:
+            shortlist_email_sent = bool(
+                send_shortlisted_email(
+                    candidate.email,
+                    candidate.name,
+                    selected_jd.title or selected_jd.jd_title or "the role",
+                    schedule_entry_url(result.interview_token) or "",
+                )
+            )
+        except Exception:
+            shortlist_email_sent = False
+
+    response_message = "Resume uploaded and scoring completed."
+    if result.shortlisted and shortlist_email_sent:
+        response_message = "Resume uploaded, shortlisted, and scheduling email sent."
+    elif result.shortlisted:
+        response_message = "Resume uploaded and shortlisted. Scheduling email could not be delivered."
+
     return {
         "ok": True,
-        "message": "Resume uploaded and scoring completed.",
+        "message": response_message,
         "uploaded_resume": safe_filename,
         "candidate": {
             "id": candidate.id,
@@ -311,12 +352,87 @@ def upload_resume(
         "selected_job_id": selected_jd.id,
         "selected_jd_id": selected_jd.id,
         "result": serialize_result(result),
+        "shortlist_email_sent": shortlist_email_sent,
         "question_count": len(questions or []),
         "resume_advice": _resume_advice_payload(
             candidate=candidate,
             selected_jd=selected_jd,
             explanation=result.explanation if result else None,
         ),
+    }
+
+
+@router.get("/candidate/schedule/{token}")
+def public_schedule_detail(
+    token: str,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    result = _result_by_schedule_token_or_404(db, token)
+    if not result.shortlisted:
+        raise HTTPException(status_code=400, detail="This application is not shortlisted")
+
+    candidate = get_candidate_or_404(db, result.candidate_id)
+    job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
+    return {
+        "ok": True,
+        "candidate": {
+            "name": candidate.name,
+            "email": candidate.email,
+        },
+        "job": {
+            "id": job.id if job else None,
+            "title": (job.title or job.jd_title) if job else "Interview",
+        },
+        "result": {
+            "id": result.id,
+            "shortlisted": bool(result.shortlisted),
+            "interview_date": result.interview_date,
+        },
+    }
+
+
+@router.post("/candidate/schedule/{token}")
+def public_schedule_interview(
+    token: str,
+    payload: PublicScheduleInterviewBody,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if not (payload.interview_date or "").strip():
+        raise HTTPException(status_code=400, detail="Interview date is required")
+
+    result = _result_by_schedule_token_or_404(db, token)
+    if not result.shortlisted:
+        raise HTTPException(status_code=400, detail="Interview can be scheduled only for shortlisted result")
+
+    result.interview_date = payload.interview_date.strip()
+    result.interview_link = interview_entry_url(result.id)
+    result.interview_token = None
+    if result.stage != "interview_scheduled":
+        record_stage_change(
+            db,
+            result,
+            stage="interview_scheduled",
+            changed_by_role="candidate",
+            changed_by_user_id=result.candidate_id,
+            note="Candidate selected an interview slot from shortlist email",
+        )
+    db.commit()
+    db.refresh(result)
+
+    candidate = get_candidate_or_404(db, result.candidate_id)
+    email_sent = True
+    message = "Interview link sent to your registered email."
+    try:
+        send_interview_email(candidate.email, candidate.name, result.interview_date, result.interview_link)
+    except Exception:
+        email_sent = False
+        message = "Interview scheduled, but email delivery failed."
+
+    return {
+        "ok": True,
+        "email_sent": email_sent,
+        "message": message,
+        "result": serialize_result(result),
     }
 
 
@@ -342,6 +458,15 @@ def select_interview_date(
     result.interview_token = None
     result.interview_date = payload.interview_date.strip()
     result.interview_link = interview_entry_url(result.id)
+    if result.stage != "interview_scheduled":
+        record_stage_change(
+            db,
+            result,
+            stage="interview_scheduled",
+            changed_by_role="candidate",
+            changed_by_user_id=current_user.user_id,
+            note="Candidate selected an interview slot",
+        )
     db.commit()
 
     candidate = get_candidate_or_404(db, current_user.user_id)

@@ -1,7 +1,9 @@
 """Professional SMTP helper for Quadrant Technologies Recruitment correspondence."""
 
+import html
 import os
 import smtplib
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from core.config import config
 
@@ -22,7 +24,7 @@ Hitech City, Madhapur, Hyderabad, Telangana 500081
 An E-Verified Company
 """
 
-def _send_generic_email(to_email, subject, body):
+def _send_generic_email(to_email, subject, body, html_body=None):
     """Internal helper to send a standardized email using Quadrant branding."""
     email_address = config.EMAIL_ADDRESS
     email_password = config.EMAIL_PASSWORD
@@ -31,11 +33,25 @@ def _send_generic_email(to_email, subject, body):
 
     # Combine body with the professional signature
     full_body = f"{body}\n\n{QUADRANT_SIGNATURE}"
-    
-    msg = MIMEText(full_body)
+    signature_html = (
+        "<br><br>"
+        "Best Regards,<br>"
+        "Recruitment Team | Quadrant Technologies<br><br>"
+        "M : +91 9154077551<br>"
+        "Email: recruit@quadranttechnologies.com<br>"
+        "www.quadranttechnologies.com<br><br>"
+        "Building No. 21, 4th floor, Raheja Mindspace IT Park,<br>"
+        "Hitech City, Madhapur, Hyderabad, Telangana 500081<br><br>"
+        "An E-Verified Company"
+    )
+
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = f"Quadrant Technologies Recruitment <{email_address}>"
     msg["To"] = to_email
+    msg.attach(MIMEText(full_body, "plain"))
+    if html_body:
+        msg.attach(MIMEText(f"{html_body}{signature_html}", "html"))
 
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
@@ -62,6 +78,37 @@ Please ensure you join the link 5 minutes prior to your scheduled time with a st
 
 We look forward to speaking with you!"""
     return _send_generic_email(to_email, subject, body)
+
+
+def send_shortlisted_email(to_email, candidate_name, role_title, scheduling_link):
+    """Send shortlist email with a scheduling button for the candidate."""
+    subject = f"Shortlisted for Interview - {role_title} | Quadrant Technologies"
+    body = f"""Hello {candidate_name},
+
+Congratulations! Your profile has been shortlisted for the {role_title} position at Quadrant Technologies.
+
+Please use the scheduling link below to choose your interview date and time:
+{scheduling_link}
+
+Once you confirm a slot, we will email you the interview link to begin your interview.
+
+We look forward to speaking with you!"""
+    safe_name = html.escape(candidate_name or "Candidate")
+    safe_role = html.escape(role_title or "the role")
+    safe_link = html.escape(scheduling_link or "")
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6;">
+      <p>Hello {safe_name},</p>
+      <p>Congratulations! Your profile has been shortlisted for the <strong>{safe_role}</strong> position at Quadrant Technologies.</p>
+      <p>Please click the button below to choose your interview date and time.</p>
+      <p style="margin: 24px 0;">
+        <a href="{safe_link}" style="background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 10px; display: inline-block; font-weight: 700;">Schedule Interview</a>
+      </p>
+      <p>Once you confirm a slot, we will email you the interview link to begin your interview.</p>
+      <p>We look forward to speaking with you!</p>
+    </div>
+    """
+    return _send_generic_email(to_email, subject, body, html_body=html_body)
 
 def send_selection_email(to_email, candidate_name, role_title):
     """Send formal selection/offer notice."""

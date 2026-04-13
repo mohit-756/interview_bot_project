@@ -178,6 +178,8 @@ export const candidateApi = {
   dashboard: (jobId) => request({ method: "get", url: "/candidate/dashboard", params: jobId ? { job_id: jobId } : undefined }),
   jds: () => request({ method: "get", url: "/candidate/jds" }),
   selectJd: (jdId) => request({ method: "post", url: "/candidate/select-jd", data: { jd_id: jdId } }),
+  publicScheduleDetail: (token) => request({ method: "get", url: `/candidate/schedule/${token}` }),
+  publicScheduleInterview: (token, interviewDate) => request({ method: "post", url: `/candidate/schedule/${token}`, data: { interview_date: interviewDate } }),
   uploadResume: (file, jobId) => {
     const formData = new FormData();
     formData.append("resume", file);

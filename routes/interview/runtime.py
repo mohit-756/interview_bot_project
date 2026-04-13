@@ -42,7 +42,7 @@ from models import (
     Result,
 )
 
-from routes.common import interview_access_state, interview_entry_url
+from routes.common import interview_access_state, interview_entry_url, parse_interview_datetime
 
 from routes.dependencies import SessionUser, require_role
 
@@ -622,6 +622,22 @@ def _ensure_interview_ready(result: Result) -> None:
     if access["interview_locked_reason"] == "already_completed":
 
         raise HTTPException(status_code=400, detail="Interview session has already been submitted")
+
+    if access["interview_locked_reason"] == "scheduled_time_not_reached":
+
+        scheduled_at = parse_interview_datetime(result.interview_date)
+
+        if scheduled_at:
+
+            raise HTTPException(
+
+                status_code=403,
+
+                detail=f"Interview will be available at {scheduled_at.strftime('%Y-%m-%d %I:%M %p')}",
+
+            )
+
+        raise HTTPException(status_code=403, detail="Interview is not available yet")
 
     raise HTTPException(status_code=400, detail="Schedule your interview before starting")
 
@@ -1290,6 +1306,8 @@ def interview_access(
 
 
     result = _resolve_candidate_result(db, candidate.id, result_id)
+
+    _ensure_interview_ready(result)
 
     access = interview_access_state(result)
 
