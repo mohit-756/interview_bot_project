@@ -47,113 +47,10 @@ def _is_date_range_string(text: str | None) -> bool:
 
 
 # ============================================================================
-# V2 SYSTEM PROMPT - Natural Flow, Resume-Grounded
+# V2 SYSTEM PROMPT - Ultra Simple
 # ============================================================================
 
-LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer. 
-Generate interview questions that flow naturally, like a real conversation, grounded in the candidate's actual resume, projects, and the job description.
-
-CORE PRINCIPLES
-
-Every question must:
-1. Reference SPECIFIC projects, technologies, or achievements from this resume
-2. Be answerable ONLY by someone who did that exact work
-3. Be clear enough for an interviewer to understand and follow up on
-4. End with exactly ONE question mark
-5. Be conversational, not academic
-
-Never:
-- Ask about skills NOT on the resume or JD
-- Invent project names, company names, or outcomes
-- Use vague phrases like "in your project" or "walk me through"
-- Ask generic questions that fit any candidate (like "What is X?")
-
-WHAT A GOOD QUESTION LOOKS LIKE
-
-✓ Good: "In your Data Pipeline project, you mentioned reducing latency by 40%. What was the bottleneck you identified first?"
-✗ Bad: "Tell me about a challenging project you worked on."
-
-✓ Good: "You built the Admin Dashboard with React. What state management decisions did you make, and why?"
-✗ Bad: "What is your experience with React?"
-
-✓ Good: "You said the Payment Service went down during peak hours. Walk me through what you found in the logs."
-✗ Bad: "How do you handle failures?"
-
-INTERVIEW FLOW (Natural, not rigid)
-
-Think of a real interview:
-1. Opener (1 question): "Tell me about your background and what drew you to this role."
-2. Deep Dive into Strongest Project (2-3 questions): Execution details, decisions, what went wrong
-3. Secondary Project or Adjacent Skill (1-2 questions): Different angle—scaling, debugging, design
-4. Behavioral / Soft Skills (1 question): How you collaborate, handle pressure, make trade-offs
-5. Role-Specific (0-1 question): If design role, ask about system design. If lead, ask about mentoring.
-
-Total: 6-8 questions that feel like a conversation.
-
-DISTRIBUTION (Natural, not forced)
-
-Aim for something like this (out of 8 questions):
-- Opener: 1
-- Project execution: 2-3
-- Decision/trade-off: 1-2
-- Debugging/failure: 1
-- Behavioral/soft skills: 1
-- Role-specific (design/scaling/mentoring): 0-1
-
-This is guidance, not law. If no leadership signals, skip that. If all work in one project, go deep there.
-
-QUESTION CHARACTERISTICS BY TYPE
-
-Opener: Open-ended, conversational, sets tone.
-  Example: "Walk me through your most recent role and what you're looking for next."
-
-Project Execution: Specific to their work, ask about HOW not WHAT.
-  Example: "You reduced latency by 40%. Walk me through what you measured and how."
-
-Decision/Trade-off: Get at their reasoning.
-  Example: "You used PostgreSQL. Why not NoSQL for that use case?"
-
-Debugging/Failure: Shows problem-solving.
-  Example: "The service was down for 2 hours. Walk me through your debugging steps."
-
-Behavioral/Soft Skills: How they work with others.
-  Example: "Tell me about a time you had to push back on a requirement."
-
-Role-Specific: Design/scaling/mentoring (if relevant).
-  Example: "How would you scale that system to 100x users?"
-
-FORMAT (JSON)
-
-Return ONLY valid JSON, no preamble:
-
-{
-  "questions": [
-    {
-      "text": "one question, specific project/outcome from resume",
-      "type": "opener|project|decision|debugging|behavioral|role_specific",
-      "focus": "what you're assessing",
-      "project": "project name from resume (if applicable)",
-      "intent": "why you're asking this",
-      "reference_answer": "what a strong answer would include"
-    }
-  ]
-}
-
-QUALITY CHECKLIST
-
-Before returning, verify:
-- Every question references a REAL project or skill from the resume
-- Could an interviewer understand each question without context?
-- Is each question answerable ONLY by someone who did that work?
-- Does the flow feel natural (not rigid)?
-- Is there behavioral / soft skill coverage?
-- No duplicate concepts or phrasing?
-- Each question has exactly one "?"?
-
-TONE
-
-Professional but conversational. Curious, not interrogating. Technical but accessible.
-Assume the interviewer is smart but may not know all the details of the candidate's project."""
+LLM_QUESTION_SYSTEM_PROMPT = """You are a Q&A generator. Output only JSON."""
 
 
 @dataclass
@@ -483,60 +380,18 @@ def build_structured_question_input(
 # ============================================================================
 
 def _llm_user_prompt_v2(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> str:
-    """
-    Build user prompt with evidence snapshot and clear instructions.
-    Focus on: what we know about the candidate, what we want, constraints.
-    """
-    projects = structured_input.resume_projects or []
-    roles = structured_input.resume_recent_roles or []
+    """Build ultra-simple prompt - no personal info."""
     skills = structured_input.overlap_skills or []
-    impact = structured_input.resume_measurable_impact or []
-    jd_title = structured_input.jd_title or "Role"
+    jd_title = structured_input.jd_title or "technical role"
     
-    # Build evidence snapshot (compact, readable)
-    evidence_lines = []
+    skills_str = ", ".join(skills[:6]) if skills else "Python, SQL, APIs"
     
-    if projects:
-        evidence_lines.append("CANDIDATE'S PROJECTS:")
-        for p in projects[:5]:
-            evidence_lines.append(f"  • {p}")
-    
-    if roles:
-        evidence_lines.append("\nRECENT ROLES:")
-        for r in roles[:3]:
-            evidence_lines.append(f"  • {r}")
-    
-    if impact:
-        evidence_lines.append("\nMEASURABLE OUTCOMES:")
-        for m in impact[:3]:
-            evidence_lines.append(f"  • {m}")
-    
-    if skills:
-        evidence_lines.append("\nSKILLS (matches JD):")
-        evidence_lines.append(f"  {', '.join(skills[:8])}")
-    
-    evidence_snapshot = "\n".join(evidence_lines)
-    
-    # Build instructions (simple, clear)
-    instructions = [
-        f"Generate exactly {question_count} questions for a {jd_title} interview.",
-        "Ground each question in the candidate's resume projects, roles, or outcomes above.",
-        "Make questions flow naturally—like a real conversation, not an interrogation.",
-        "Include mix: 1 opener, 2-3 technical deep-dives, 1 behavioral, 1-2 role-specific.",
-        "Each question = exactly 1 '?', clear language, 20-100 words.",
-        "Reference specific project names, not 'your project.'",
-        "Don't ask about skills that aren't on the resume above.",
-    ]
+    prompt = f'Generate {question_count} questions for {jd_title}. Skills: {skills_str}. JSON: {{"questions": [{{"text": "...", "type": "technical", "focus": "skill", "intent": "assess", "reference": "key"}}]}}'
     
     if retry_note:
-        instructions.append(f"\nFEEDBACK FROM FIRST ATTEMPT:\n{retry_note}")
+        prompt += f" Note: {retry_note}"
     
-    return (
-        "=== CANDIDATE EVIDENCE ===\n" 
-        + evidence_snapshot 
-        + "\n\n=== INSTRUCTIONS ===\n" 
-        + "\n".join(instructions)
-    )
+    return prompt
 
 
 # ============================================================================
