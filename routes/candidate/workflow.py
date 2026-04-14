@@ -5,7 +5,8 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+import requests
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from services.question_generation import build_question_bundle
 from ai_engine.phase1.scoring import compute_resume_skill_match
@@ -298,6 +299,99 @@ def upload_resume(
         "ok": True,
         "message": "Resume uploaded and scoring completed.",
         "uploaded_resume": safe_filename,
+        "candidate": {
+            "id": candidate.id,
+            "candidate_uid": candidate.candidate_uid,
+            "name": candidate.name,
+            "email": candidate.email,
+            "gender": candidate.gender,
+            "resume_path": candidate.resume_path,
+            "created_at": candidate.created_at,
+        },
+        "available_jobs": list_available_jobs(db),
+        "available_jds": list_active_jds(db),
+        "selected_job_id": selected_jd.id,
+        "selected_jd_id": selected_jd.id,
+        "result": serialize_result(result),
+        "question_count": len(questions or []),
+        "resume_advice": _resume_advice_payload(
+            candidate=candidate,
+            selected_jd=selected_jd,
+            explanation=result.explanation if result else None,
+        ),
+    }
+
+
+@router.post("/candidate/upload-resume-s3")
+def upload_resume_s3(
+    resume_url: str = Body(..., embed=True),
+    job_id: int | None = Body(None),
+    current_user: SessionUser = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Upload resume via S3 URL (frontend uploads to S3 directly)."""
+    logger.info(f"UPLOAD_RESUME_S3_START candidate_id={current_user.user_id} url={resume_url}")
+    candidate = get_candidate_or_404(db, current_user.user_id)
+    profile_changed = ensure_candidate_profile(candidate, db)
+
+    candidate.resume_path = resume_url
+    if profile_changed:
+        db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+
+    selected_jd_id = job_id or candidate.selected_jd_id
+    if not selected_jd_id:
+        raise HTTPException(status_code=400, detail="Select a JD before uploading resume")
+
+    selected_jd = _selected_jd_or_404(db, selected_jd_id)
+    candidate.selected_jd_id = selected_jd.id
+    db.commit()
+    db.refresh(candidate)
+
+    try:
+        response = requests.get(resume_url, timeout=30)
+        response.raise_for_status()
+        file_ext = Path(resume_url).suffix.lower()
+        temp_path = UPLOAD_DIR / f"resume_{candidate.id}_{uuid.uuid4().hex}{file_ext}"
+        with temp_path.open("wb") as f:
+            f.write(response.content)
+        
+        resume_text = extract_text_from_file(temp_path)
+        candidate.resume_text = resume_text
+        temp_path.unlink(missing_ok=True)
+        logger.info(f"UPLOAD_RESUME_S3 text extracted len={len(resume_text)}")
+    except Exception as e:
+        logger.warning(f"UPLOAD_RESUME_S3 text extraction failed: {e}")
+
+    if not candidate.resume_text:
+        raise HTTPException(status_code=400, detail="Resume text could not be extracted. Please upload a valid PDF, DOCX, or TXT file.")
+
+    try:
+        score, explanation, _ = evaluate_resume_for_job(candidate, selected_jd)
+        logger.info(f"UPLOAD_RESUME_S3 evaluation done, score={score}")
+    except Exception as e:
+        logger.error(f"UPLOAD_RESUME_S3 evaluation FAILED: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Resume evaluation failed: {str(e)}")
+
+    result = upsert_result(
+        db,
+        candidate.id,
+        selected_jd.id,
+        score,
+        explanation,
+        cutoff_score=float(selected_jd.qualify_score if selected_jd.qualify_score is not None else 65.0),
+        job=selected_jd,
+    )
+
+    questions = _generate_result_question_bank(result=result, resume_text=candidate.resume_text or "", job=selected_jd)
+    db.commit()
+    db.refresh(result)
+
+    return {
+        "ok": True,
+        "message": "Resume uploaded and scoring completed.",
+        "uploaded_resume": Path(resume_url).name,
         "candidate": {
             "id": candidate.id,
             "candidate_uid": candidate.candidate_uid,
