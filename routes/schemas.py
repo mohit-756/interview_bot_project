@@ -114,3 +114,8 @@ class CandidateAssignJDBody(BaseModel):
 
 class HrCandidateNotesBody(BaseModel):
     notes: str = Field(default="", max_length=5000)
+
+
+class TTSSchema(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    voice: str = Field(..., pattern="^(indian_female|indian_male)$")

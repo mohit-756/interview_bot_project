@@ -265,6 +265,10 @@ export const interviewApi = {
   getEvents: (sessionId) => request({ method: "get", url: "/interview/events", params: { session_id: sessionId } }),
 };
 
+export const ttsApi = {
+  generate: (question, voice) => request({ method: "post", url: "/interview/tts", data: { question, voice } }),
+};
+
 export const proctorApi = {
   uploadFrame: (sessionId, frameData, eventType = "scan") => {
     const formData = new FormData();

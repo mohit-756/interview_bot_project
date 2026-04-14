@@ -284,3 +284,15 @@ class UserPreferences(Base):
     role = Column(String(20), nullable=False)
     preferences_json = Column(JSON, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TTSCache(Base):
+    """Cache for TTS audio to avoid regenerating same question+voice combinations."""
+    __tablename__ = "tts_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cache_key = Column(String(64), unique=True, nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    voice_type = Column(String(30), nullable=False)
+    audio_url = Column(String(500), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

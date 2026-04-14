@@ -81,6 +81,20 @@ def _run_migrations():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_preferences_id ON user_preferences (id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_preferences_user_id ON user_preferences (user_id)"))
             logger.info("Created user_preferences table")
+        if "tts_cache" not in inspector.get_table_names():
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS tts_cache (
+                    id SERIAL PRIMARY KEY,
+                    cache_key VARCHAR(64) UNIQUE NOT NULL,
+                    question TEXT NOT NULL,
+                    voice_type VARCHAR(30) NOT NULL,
+                    audio_url VARCHAR(500) NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW() NOT NULL
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tts_cache_id ON tts_cache (id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tts_cache_cache_key ON tts_cache (cache_key)"))
+            logger.info("Created tts_cache table")
 
 
 _run_migrations()

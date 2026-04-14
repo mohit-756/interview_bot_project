@@ -306,6 +306,42 @@ export default function PreCheck() {
             ))}
           </div>
 
+          <div className="pt-4">
+            <div className="mb-4 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl">
+              <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-3">
+                Select Interviewer Voice
+              </label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setSelectedVoice("indian_female"); sessionStorage.setItem(`interview-voice:${resultId}`, "indian_female"); }}
+                  className={cn(
+                    "flex-1 py-3 px-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2",
+                    selectedVoice === "indian_female"
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  )}
+                >
+                  <span className="w-2 h-2 rounded-full bg-current opacity-80" />
+                  Female Interviewer
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedVoice("indian_male"); sessionStorage.setItem(`interview-voice:${resultId}`, "indian_male"); }}
+                  className={cn(
+                    "flex-1 py-3 px-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2",
+                    selectedVoice === "indian_male"
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  )}
+                >
+                  <span className="w-2 h-2 rounded-full bg-current opacity-80" />
+                  Male Interviewer
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="flex items-center gap-4">
             <button
               onClick={startCheck}
