@@ -842,7 +842,15 @@ def _call_llm(structured_input: StructuredQuestionInput, question_count: int, re
         logger.warning("llm_question_request_failure provider=%s model=%s retry=%s error=%s", provider, model, bool(retry_note), exc)
         raise
     
-    payload = _extract_json_object(response.choices[0].message.content or "")
+    raw_content = response.choices[0].message.content or ""
+    logger.info("llm_raw_response provider=%s model=%s content_len=%s content_preview=%s", provider, model, len(raw_content), raw_content[:200] if raw_content else "EMPTY")
+    
+    if not raw_content.strip():
+        raise ValueError(f"LLM returned empty response. provider={provider}, model={model}")
+    
+    logger.info("llm_cleaned_response content_len=%s content_preview=%s", len(raw_content), raw_content[:500] if raw_content else "EMPTY")
+    
+    payload = _extract_json_object(raw_content)
     questions = _normalize_llm_questions_v2(
         raw_questions=list(payload.get("questions") or []),
         structured_input=structured_input,
@@ -1036,6 +1044,73 @@ def _make_grounded_emergency_fallback(
             "intent": "Assess pragmatism, technical judgment, and communication.",
             "reference_answer": "Thoughtful discussion of trade-offs with a concrete example from their work.",
         })
+    
+    # Additional technical questions to fill up to 20
+    additional_questions = [
+        {
+            "text": f"What technologies or tools did you use in {top_project}, and why did you choose them?",
+            "type": "technical",
+            "focus": "tool selection rationale",
+            "project": top_project,
+            "intent": "Assess technology choices and reasoning.",
+            "reference_answer": "Specific tools, alternatives considered, and why the choice was made.",
+        },
+        {
+            "text": f"Describe the architecture of {top_project}. How did different components communicate?",
+            "type": "system_design",
+            "focus": "system architecture",
+            "project": top_project,
+            "intent": "Assess system design thinking.",
+            "reference_answer": "Component diagram, communication patterns, data flow.",
+        },
+        {
+            "text": "What's your approach to testing code before shipping? Walk me through your process.",
+            "type": "technical",
+            "focus": "testing strategy",
+            "intent": "Assess quality mindset.",
+            "reference_answer": "Unit tests, integration tests, manual testing, monitoring.",
+        },
+        {
+            "text": "How do you handle technical debt in a codebase? Give an example.",
+            "type": "decision",
+            "focus": "technical debt management",
+            "intent": "Assess long-term thinking.",
+            "reference_answer": "Tracking debt, prioritization, when to pay down vs. defer.",
+        },
+        {
+            "text": "Walk me through how you'd design a system to handle 10x your current load.",
+            "type": "system_design",
+            "focus": "scalability",
+            "intent": "Assess scalability thinking.",
+            "reference_answer": "Horizontal scaling, caching, database sharding, CDN.",
+        },
+        {
+            "text": "What's the hardest bug you've debugged?Walk me through your process.",
+            "type": "debugging",
+            "focus": "debugging methodology",
+            "intent": "Assess troubleshooting skills.",
+            "reference_answer": "Specific bug, tools used, root cause analysis, fix.",
+        },
+        {
+            "text": "How do you stay current with new technologies? What have you learned recently?",
+            "type": "behavioral",
+            "focus": "learning mindset",
+            "intent": "Assess growth mindset.",
+            "reference_answer": "Sources of learning, recent technologies explored.",
+        },
+        {
+            "text": "Describe a time you had to explain technical concepts to a non-technical audience.",
+            "type": "communication",
+            "focus": "technical communication",
+            "intent": "Assess communication skills.",
+            "reference_answer": "Specific situation, how you adapted, outcome.",
+        },
+    ]
+    
+    for q in additional_questions:
+        if len(questions) >= desired_count:
+            break
+        questions.append(q)
     
     # Scale down to desired count
     return questions[:desired_count]
