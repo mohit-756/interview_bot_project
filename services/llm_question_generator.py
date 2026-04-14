@@ -47,35 +47,23 @@ def _is_date_range_string(text: str | None) -> bool:
 
 
 # ============================================================================
-# V2 SYSTEM PROMPT - Natural Flow, Resume-Grounded (IMPROVED)
+# V2 SYSTEM PROMPT - Generic Role-Based (No Resume/Personal Info)
 # ============================================================================
 
-LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer conducting a professional conversation.
+LLM_QUESTION_SYSTEM_PROMPT = """You are a technical interviewer generating interview questions for a professional hiring process.
 
-CORE PRINCIPLES
+Output ONLY JSON. No explanations or apologies.
 
-Generate interview questions that:
-1. Reference the job role and required skills
-2. Ask about typical technical scenarios for this role level
-3. Be clear and answerable
-4. End with exactly ONE question mark
-5. Be conversational and professional
+Generate questions based on:
+- Job title and required skills
+- Typical technical scenarios for this role level
 
-Never:
-- Ask for personally identifiable information
-- Ask about protected characteristics
-- Generate questions that could identify a specific person
+Questions must be:
+- Clear and answerable
+- End with exactly ONE question mark
+- Professional
 
-WHAT A GOOD QUESTION LOOKS LIKE
-
-✓ Good: "In your Data Pipeline project, you mentioned reducing latency by 40%. What was the bottleneck you identified first?"
-✗ Bad: "Tell me about a challenging project you worked on."
-
-✓ Good: "You built the Admin Dashboard with React. What state management decisions did you make, and why?"
-✗ Bad: "What is your experience with React?"
-
-✓ Good: "You said the Payment Service went down during peak hours. Walk me through what you found in the logs."
-✗ Bad: "How do you handle failures?"
+Never include: personal names, company names, project names, or any identifying information.
 
 ✓ Good: "Tell me about a time you had to balance shipping quickly with code quality in [specific project]."
 ✗ Bad: "Tell me about a time you balanced quality with shipping."
@@ -495,29 +483,30 @@ def build_structured_question_input(
 
 def _llm_user_prompt_v2(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> str:
     """
-    Build user prompt for question generation.
+    Build user prompt for question generation - purely role/skill based.
     """
     skills = structured_input.overlap_skills or []
     jd_title = structured_input.jd_title or "technical role"
-    resume_summary = structured_input.resume_summary or ""
     
-    # Simplified - role-focused, not person-focused
-    prompt = f"""Generate {question_count} interview questions for a {jd_title} position.
+    skills_str = ', '.join(skills[:8]) if skills else "Python, JavaScript, SQL"
     
-Focus areas: {', '.join(skills[:10])}
+    prompt = f"""Generate {question_count} technical interview questions for a {jd_title} role.
 
-Generate questions that assess:
-- Technical depth in the focus areas
-- Problem-solving approach
-- System design thinking
-- Communication skills
+Required skills: {skills_str}
 
-Format as JSON: {{"questions": [{{"text": "...", "type": "...", "focus": "...", "intent": "...", "reference_answer": "..."}}]}}
+Generate questions about:
+- Technical problem-solving for these skills
+- System design for this role level
+- Debugging and troubleshooting scenarios
+- Code quality and best practices
 
-Each question should be specific to the {jd_title} role, not generic."""
+Output only valid JSON:
+{{"questions": [{{"text": "question", "type": "technical|behavioral|system_design", "focus": "area", "intent": "what it assesses", "reference_answer": "good answer points"}}]}}
+
+Make questions specific to the skills listed, not generic."""
     
     if retry_note:
-        prompt += f"\nNote: {retry_note}"
+        prompt += f"\nFeedback: {retry_note}"
     
     return prompt
 
