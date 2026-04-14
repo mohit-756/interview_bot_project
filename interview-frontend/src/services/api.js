@@ -1,6 +1,7 @@
 import axios from "axios";
 import { toStatusObject } from "../utils/stages";
 import { uploadFileToS3 } from "../utils/s3Upload";
+const configuredBaseUrl = String(import.meta.env?.VITE_API_BASE_URL || "/api").trim();
 const baseURL = configuredBaseUrl === "/" ? "/api" : configuredBaseUrl.replace(/\/+$/, "");
 const isProduction = configuredBaseUrl.includes("cloudfront.net");
 
