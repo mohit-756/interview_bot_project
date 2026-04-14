@@ -1,20 +1,58 @@
-const S3_UPLOAD_API = "https://lp6t2xn0q4.execute-api.ap-south-1.amazonaws.com/prod/generate-upload-url";
+const S3_UPLOAD_API = import.meta.env.VITE_S3_UPLOAD_API;
 
-export const uploadFileToS3 = async (file) => {
+const ALLOWED_FILE_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+];
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+export const uploadFileToS3 = async (file, onProgress) => {
+  if (!file) throw new Error("No file provided");
+
+  if (file.size > MAX_FILE_SIZE) {
+    throw new Error("File exceeds 5MB limit");
+  }
+
+  if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+    throw new Error("Invalid file type");
+  }
+
+  // Step 1: Get pre-signed URL
   const res = await fetch(
-    `${S3_UPLOAD_API}?fileName=${file.name}&fileType=${encodeURIComponent(file.type)}`
+    `${S3_UPLOAD_API}?fileName=${encodeURIComponent(file.name)}&fileType=${encodeURIComponent(file.type)}`
   );
 
   if (!res.ok) throw new Error("Failed to get upload URL");
 
-  const data = await res.json();
+  const { uploadUrl, fileUrl } = await res.json();
 
-  const uploadRes = await fetch(data.uploadUrl, {
-    method: "PUT",
-    body: file
+  // Step 2: Upload to S3
+  const xhr = new XMLHttpRequest();
+  xhr.open("PUT", uploadUrl, true);
+
+  const uploadPromise = new Promise((resolve, reject) => {
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(fileUrl);
+      } else {
+        reject(new Error(`Upload failed: ${xhr.status}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Upload failed"));
   });
 
-  if (!uploadRes.ok) throw new Error("S3 upload failed");
+  if (onProgress) {
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+  }
 
-  return data.fileUrl;
+  xhr.send(file);
+
+  return uploadPromise;
 };
