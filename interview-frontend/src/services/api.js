@@ -14,6 +14,8 @@ const apiClient = axios.create({
   withCredentials: true,
 });
 
+export { apiClient };
+
 function buildAvatar(name) {
   const seed = String(name || "user").trim() || "user";
   return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`;
