@@ -324,7 +324,7 @@ def upload_resume(
 
 @router.post("/candidate/upload-resume-s3")
 def upload_resume_s3(
-    resume_url: str = Body(..., embed=True),
+    resume_url: str = Body(...),
     job_id: int | None = Body(None),
     current_user: SessionUser = Depends(require_role("candidate")),
     db: Session = Depends(get_db),
@@ -352,7 +352,16 @@ def upload_resume_s3(
     try:
         response = requests.get(resume_url, timeout=30)
         response.raise_for_status()
-        file_ext = Path(resume_url).suffix.lower()
+        
+        # Extract file extension from URL or content-type
+        content_type = response.headers.get("content-type", "")
+        if "pdf" in content_type:
+            file_ext = ".pdf"
+        elif "word" in content_type or "document" in content_type:
+            file_ext = ".docx"
+        else:
+            file_ext = Path(resume_url).suffix.lower() or ".pdf"
+        
         temp_path = UPLOAD_DIR / f"resume_{candidate.id}_{uuid.uuid4().hex}{file_ext}"
         with temp_path.open("wb") as f:
             f.write(response.content)
@@ -361,6 +370,9 @@ def upload_resume_s3(
         candidate.resume_text = resume_text
         temp_path.unlink(missing_ok=True)
         logger.info(f"UPLOAD_RESUME_S3 text extracted len={len(resume_text)}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"UPLOAD_RESUME_S3 failed to download from S3: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not download resume from S3: {str(e)}")
     except Exception as e:
         logger.warning(f"UPLOAD_RESUME_S3 text extraction failed: {e}")
 
