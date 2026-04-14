@@ -50,25 +50,21 @@ def _is_date_range_string(text: str | None) -> bool:
 # V2 SYSTEM PROMPT - Natural Flow, Resume-Grounded (IMPROVED)
 # ============================================================================
 
-LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer. 
-Generate interview questions that flow naturally, like a real conversation, grounded in the candidate's actual resume, projects, and the job description.
+LLM_QUESTION_SYSTEM_PROMPT = """You are a senior technical interviewer conducting a professional conversation.
 
 CORE PRINCIPLES
 
-Every question must:
-1. Reference SPECIFIC projects, technologies, or achievements from this resume
-2. Be answerable ONLY by someone who did that exact work
-3. Be clear enough for an interviewer to understand and follow up on
+Generate interview questions that:
+1. Reference the job role and required skills
+2. Ask about typical technical scenarios for this role level
+3. Be clear and answerable
 4. End with exactly ONE question mark
-5. Be conversational, not academic
-6. Be specific enough that a generic candidate couldn't answer it
+5. Be conversational and professional
 
 Never:
-- Ask about skills NOT on the resume or JD
-- Invent project names, company names, or outcomes
-- Use vague phrases like "in your project" or "walk me through"
-- Ask generic questions that fit any candidate (like "What is X?")
-- Ask questions that could apply to 10 different candidates
+- Ask for personally identifiable information
+- Ask about protected characteristics
+- Generate questions that could identify a specific person
 
 WHAT A GOOD QUESTION LOOKS LIKE
 
@@ -499,67 +495,31 @@ def build_structured_question_input(
 
 def _llm_user_prompt_v2(structured_input: StructuredQuestionInput, question_count: int, retry_note: str | None = None) -> str:
     """
-    Build user prompt with evidence snapshot and clear instructions.
-    Focus on: what we know about the candidate, what we want, constraints.
+    Build user prompt for question generation.
     """
-    projects = structured_input.resume_projects or []
-    roles = structured_input.resume_recent_roles or []
     skills = structured_input.overlap_skills or []
-    impact = structured_input.resume_measurable_impact or []
-    leadership = structured_input.resume_leadership_signals or []
-    jd_title = structured_input.jd_title or "Role"
+    jd_title = structured_input.jd_title or "technical role"
+    resume_summary = structured_input.resume_summary or ""
     
-    # Build evidence snapshot (compact, readable)
-    evidence_lines = []
+    # Simplified - role-focused, not person-focused
+    prompt = f"""Generate {question_count} interview questions for a {jd_title} position.
     
-    if projects:
-        evidence_lines.append("CANDIDATE'S PROJECTS:")
-        for p in projects[:5]:
-            evidence_lines.append(f"  • {p}")
-    
-    if roles:
-        evidence_lines.append("\nRECENT ROLES:")
-        for r in roles[:3]:
-            evidence_lines.append(f"  • {r}")
-    
-    if impact:
-        evidence_lines.append("\nMEASURABLE OUTCOMES:")
-        for m in impact[:3]:
-            evidence_lines.append(f"  • {m}")
-    
-    if leadership:
-        evidence_lines.append("\nLEADERSHIP INDICATORS:")
-        for l in leadership[:2]:
-            evidence_lines.append(f"  • {l}")
-    
-    if skills:
-        evidence_lines.append("\nSKILLS (matches JD):")
-        evidence_lines.append(f"  {', '.join(skills[:8])}")
-    
-    evidence_snapshot = "\n".join(evidence_lines)
-    
-    # Build instructions (simple, clear, STRICT on quality)
-    instructions = [
-        f"Generate exactly {question_count} questions for a {jd_title} interview.",
-        "MUST GROUND each question in the candidate's projects, roles, outcomes, or skills above.",
-        "NO GENERIC QUESTIONS. Every question must reference something specific from this resume.",
-        "Make questions flow naturally—like a real conversation, not an interrogation.",
-        "Include mix: 1 opener (references resume), 2-3 technical deep-dives, 1 behavioral (grounded), 1-2 role-specific.",
-        "Each question = exactly 1 '?', clear language, 20-100 words.",
-        "Use specific project names, not 'your project.' Use their actual roles, not 'your experience.'",
-        "Behavioral questions MUST reference specific projects/outcomes, not be generic.",
-        "Don't ask about skills that aren't in the resume above.",
-    ]
+Focus areas: {', '.join(skills[:10])}
+
+Generate questions that assess:
+- Technical depth in the focus areas
+- Problem-solving approach
+- System design thinking
+- Communication skills
+
+Format as JSON: {{"questions": [{{"text": "...", "type": "...", "focus": "...", "intent": "...", "reference_answer": "..."}}]}}
+
+Each question should be specific to the {jd_title} role, not generic."""
     
     if retry_note:
-        instructions.append(f"\nFEEDBACK FROM FIRST ATTEMPT:\n{retry_note}")
+        prompt += f"\nNote: {retry_note}"
     
-    return (
-        "=== CANDIDATE EVIDENCE ===\n" 
-        + evidence_snapshot 
-        + "\n\n=== INSTRUCTIONS ===\n" 
-        + "\n".join(instructions)
-    )
+    return prompt
 
 
 # ============================================================================

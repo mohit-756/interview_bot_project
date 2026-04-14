@@ -2,9 +2,11 @@ import axios from "axios";
 import { toStatusObject } from "../utils/stages";
 import { uploadFileToS3 } from "../utils/s3Upload";
 const baseURL = configuredBaseUrl === "/" ? "/api" : configuredBaseUrl.replace(/\/+$/, "");
+const isProduction = configuredBaseUrl.includes("cloudfront.net");
 
 console.log("[API] VITE_API_BASE_URL:", import.meta.env?.VITE_API_BASE_URL);
 console.log("[API] Resolved baseURL:", baseURL);
+console.log("[API] Production mode:", isProduction);
 
 const apiClient = axios.create({
   // Defaults to /api for Vite proxy. Override via VITE_API_BASE_URL when needed.
@@ -179,13 +181,22 @@ export const candidateApi = {
   selectJd: (jdId) => request({ method: "post", url: "/candidate/select-jd", data: { jd_id: jdId } }),
   uploadResume: async (file, jobId, onProgress) => {
     try {
-      console.log("[UPLOAD] Starting resume upload to S3, file:", file?.name, "jobId:", jobId);
+      console.log("[UPLOAD] Starting resume upload, file:", file?.name, "jobId:", jobId, "production:", isProduction);
       
-      // Step 1: Upload to S3
+      if (isProduction) {
+        console.log("[UPLOAD] Using direct backend upload");
+        const formData = new FormData();
+        formData.append("resume", file);
+        if (jobId) formData.append("job_id", String(jobId));
+        
+        return apiClient.post("/candidate/upload-resume", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      }
+      
       const s3Url = await uploadFileToS3(file, onProgress);
       console.log("[UPLOAD] S3 upload success:", s3Url);
 
-      // Step 2: Send S3 URL to backend for processing
       return request({ 
         method: "post", 
         url: "/candidate/upload-resume-s3", 

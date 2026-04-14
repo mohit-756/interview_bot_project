@@ -1,4 +1,7 @@
+import { apiClient } from "../services/api";
+
 const S3_UPLOAD_API = import.meta.env.VITE_S3_UPLOAD_API;
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 
 const ALLOWED_FILE_TYPES = [
   "application/pdf",
@@ -7,6 +10,8 @@ const ALLOWED_FILE_TYPES = [
 ];
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+const isProduction = API_BASE.includes("cloudfront.net");
 
 export const uploadFileToS3 = async (file, onProgress) => {
   if (!file) throw new Error("No file provided");
@@ -19,7 +24,18 @@ export const uploadFileToS3 = async (file, onProgress) => {
     throw new Error("Invalid file type");
   }
 
-  // Step 1: Get pre-signed URL from Lambda
+  if (isProduction) {
+    console.log("[UPLOAD] Production mode - using direct upload to backend");
+    const formData = new FormData();
+    formData.append("resume", file);
+    
+    const response = await apiClient.post("/candidate/upload-resume", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return response.uploaded_resume || response.candidate?.resume_path || "uploaded";
+  }
+
+  console.log("[UPLOAD] Development mode - using S3 upload");
   const res = await fetch(
     `${S3_UPLOAD_API}?fileName=${encodeURIComponent(file.name)}&fileType=${encodeURIComponent(file.type)}`
   );
@@ -28,7 +44,6 @@ export const uploadFileToS3 = async (file, onProgress) => {
 
   const { uploadUrl, fileUrl } = await res.json();
 
-  // Step 2: Upload to S3 with CORS support
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl, true);
