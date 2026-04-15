@@ -34,6 +34,13 @@ class SkillWeightsBody(BaseModel):
 class ScheduleInterviewBody(BaseModel):
     result_id: int
     interview_date: str
+    interview_time: str | None = None
+
+
+class SetInterviewScheduleBody(BaseModel):
+    result_id: int
+    interview_date: str
+    interview_time: str
 
 
 class InterviewScoreBody(BaseModel):

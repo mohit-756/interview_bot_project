@@ -115,6 +115,7 @@ class Result(Base):
     shortlisted = Column(Boolean)
     explanation = Column(JSON)  # resume scorecard only going forward
     interview_date = Column(String, nullable=True)
+    interview_time = Column(String, nullable=True)
     interview_link = Column(String, nullable=True)
     interview_questions = Column(JSON, nullable=True)
     interview_token = Column(String, nullable=True)

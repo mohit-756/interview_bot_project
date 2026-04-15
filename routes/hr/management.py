@@ -21,12 +21,13 @@ from routes.common import (
     _latest_interview_session,
     ensure_candidate_profile,
     evaluate_resume_for_job,
+    frontend_base_url,
     safe_delete_upload,
     serialize_result,
     upsert_result,
 )
 from routes.dependencies import SessionUser, require_role
-from routes.schemas import HrJDCreateBody, HrJDUpdateBody, InterviewScoreBody, SkillWeightsBody, StageUpdateBody, CandidateCompareBody, CandidateAssignJDBody, HrCandidateNotesBody
+from routes.schemas import HrJDCreateBody, HrJDUpdateBody, InterviewScoreBody, SkillWeightsBody, StageUpdateBody, CandidateCompareBody, CandidateAssignJDBody, HrCandidateNotesBody, SetInterviewScheduleBody
 from services.hr_dashboard import build_hr_dashboard_analytics
 from services.pipeline import normalize_stage, record_stage_change, stage_payload
 from services.local_exports import create_local_backup_archive
@@ -1001,6 +1002,50 @@ def hr_update_candidate_stage(
     db.commit()
     db.refresh(result)
     return {"ok": True, "result_id": result.id, "stage": stage_payload(result.stage)}
+
+
+@router.post("/hr/results/{result_id}/schedule")
+def hr_set_interview_schedule(
+    result_id: int,
+    payload: SetInterviewScheduleBody,
+    current_user: SessionUser = Depends(require_role("hr")),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    result = (
+        _candidate_result_scope(db, current_user.user_id)
+        .filter(Result.id == result_id)
+        .first()
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    result.interview_date = payload.interview_date.strip()
+    result.interview_time = payload.interview_time.strip()
+    result.interview_link = f"{frontend_base_url()}/interview/{result.id}"
+    
+    record_stage_change(
+        db,
+        result,
+        stage="interview_scheduled",
+        changed_by_role="hr",
+        changed_by_user_id=current_user.user_id,
+        note=f"Interview scheduled for {payload.interview_date} at {payload.interview_time}",
+    )
+    result.shortlisted = True
+    
+    db.commit()
+    db.refresh(result)
+
+    from utils.email_service import send_interview_email
+    candidate = result.candidate
+    if candidate and candidate.email:
+        interview_datetime = f"{payload.interview_date} at {payload.interview_time}"
+        try:
+            send_interview_email(candidate.email, candidate.name, interview_datetime, result.interview_link)
+        except Exception:
+            pass
+
+    return {"ok": True, "result_id": result.id, "interview_date": result.interview_date, "interview_time": result.interview_time}
 
 
 @router.post("/hr/candidates/compare")

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from core.config import config
+from utils.email_service import send_schedule_request_email
 from ai_engine.phase1.scoring import compute_resume_scorecard
 from ai_engine.phase1.matching import extract_text_from_file
 from models import Candidate, HR, JobDescription, Result
@@ -233,6 +234,7 @@ def serialize_result(result: Result | None) -> dict[str, object] | None:
         "recommendation": result.recommendation,
         "stage": stage_payload(_application_stage(result, latest_session)),
         "interview_date": result.interview_date,
+        "interview_time": result.interview_time,
         "interview_scheduled": bool(access["interview_scheduled"]),
         "interview_ready": bool(access["interview_ready"]),
         "interview_locked_reason": access["interview_locked_reason"],
@@ -378,6 +380,7 @@ def upsert_result(
 
     if current:
         previous_stage = current.stage
+        was_shortlisted = current.shortlisted
         current.score = score
         current.shortlisted = shortlisted
         current.explanation = explanation
@@ -394,6 +397,20 @@ def upsert_result(
             current.interview_token = None
         if previous_stage != target_stage:
             record_stage_change(db, current, stage=target_stage, changed_by_role="system", changed_by_user_id=None, note="Resume screening updated")
+        
+        # Send email to HR when candidate gets newly shortlisted
+        if shortlisted and not was_shortlisted:
+            candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+            hr = db.query(HR).join(JobDescription, JobDescription.company_id == HR.id).filter(JobDescription.id == job_id).first()
+            if candidate and hr and hr.email:
+                hr_manage_url = f"{frontend_base_url()}/hr/candidates/{candidate.candidate_uid}"
+                job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+                role_title = job.jd_title if job and job.jd_title else "the position"
+                try:
+                    send_schedule_request_email(hr.email, candidate.name, role_title, hr_manage_url)
+                except Exception:
+                    pass
+        
         db.commit()
         db.refresh(current)
         return current
@@ -414,6 +431,20 @@ def upsert_result(
     db.add(result)
     db.flush()
     record_stage_change(db, result, stage=target_stage, changed_by_role="system", changed_by_user_id=None, note="Application created")
+    
+    # Send email to HR when candidate gets newly shortlisted (new result)
+    if shortlisted:
+        candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+        hr = db.query(HR).join(JobDescription, JobDescription.company_id == HR.id).filter(JobDescription.id == job_id).first()
+        if candidate and hr and hr.email:
+            hr_manage_url = f"{frontend_base_url()}/hr/candidates/{candidate.candidate_uid}"
+            job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+            role_title = job.jd_title if job and job.jd_title else "the position"
+            try:
+                send_schedule_request_email(hr.email, candidate.name, role_title, hr_manage_url)
+            except Exception:
+                pass
+    
     db.commit()
     db.refresh(result)
     return result

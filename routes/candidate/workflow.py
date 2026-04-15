@@ -448,6 +448,8 @@ def select_interview_date(
 
     result.interview_token = None
     result.interview_date = payload.interview_date.strip()
+    if payload.interview_time:
+        result.interview_time = payload.interview_time.strip()
     result.interview_link = interview_entry_url(result.id)
     db.commit()
 
@@ -455,7 +457,8 @@ def select_interview_date(
     email_sent = True
     message = "Interview link sent to your registered email."
     try:
-        send_interview_email(candidate.email, candidate.name, result.interview_date, result.interview_link)
+        interview_datetime = f"{result.interview_date}" + (f" at {result.interview_time}" if result.interview_time else "")
+        send_interview_email(candidate.email, candidate.name, interview_datetime, result.interview_link)
     except Exception:
         email_sent = False
         message = "Interview scheduled, but email delivery failed."

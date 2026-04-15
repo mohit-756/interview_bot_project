@@ -63,6 +63,20 @@ Please ensure you join the link 5 minutes prior to your scheduled time with a st
 We look forward to speaking with you!"""
     return _send_generic_email(to_email, subject, body)
 
+def send_schedule_request_email(to_email, candidate_name, role_title, hr_manage_url):
+    """Send email to HR asking to schedule interview date/time for shortlisted candidate."""
+    subject = f"Schedule Interview - {candidate_name} for {role_title} | Quadrant Technologies"
+    body = f"""Hello,
+
+The candidate {candidate_name} has passed the initial screening for the {role_title} position.
+
+Please log in to the HR dashboard and schedule an interview date and time for this candidate.
+
+Manage Candidate: {hr_manage_url}
+
+This is an automated notification from the recruitment system."""
+    return _send_generic_email(to_email, subject, body)
+
 def send_selection_email(to_email, candidate_name, role_title):
     """Send formal selection/offer notice."""
     subject = f"Congratulations! Selection Notice - {role_title} | Quadrant Technologies"
