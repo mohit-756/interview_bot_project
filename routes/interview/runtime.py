@@ -627,6 +627,10 @@ def _ensure_interview_ready(result: Result) -> None:
 
         raise HTTPException(status_code=400, detail="Interview session has already been submitted")
 
+    if access["interview_locked_reason"] == "scheduled_for_future":
+        # Allow starting early if the interview is scheduled for future
+        return
+
     raise HTTPException(status_code=400, detail="Schedule your interview before starting")
 
 
