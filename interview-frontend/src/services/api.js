@@ -184,27 +184,17 @@ export const candidateApi = {
   selectJd: (jdId) => request({ method: "post", url: "/candidate/select-jd", data: { jd_id: jdId } }),
   uploadResume: async (file, jobId, onProgress) => {
     try {
-      console.log("[UPLOAD] Starting resume upload, file:", file?.name, "jobId:", jobId, "production:", isProduction);
+      console.log("[UPLOAD] Starting resume upload, file:", file?.name, "jobId:", jobId);
       
-      if (isProduction) {
-        console.log("[UPLOAD] Using direct backend upload");
-        const formData = new FormData();
-        formData.append("resume", file);
-        if (jobId) formData.append("job_id", String(jobId));
-        
-        return apiClient.post("/candidate/upload-resume", formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-      }
+      console.log("[UPLOAD] Using direct backend upload");
+      const formData = new FormData();
+      formData.append("resume", file);
+      if (jobId) formData.append("job_id", String(jobId));
       
-      const s3Url = await uploadFileToS3(file, onProgress);
-      console.log("[UPLOAD] S3 upload success:", s3Url);
-
-      return request({ 
-        method: "post", 
-        url: "/candidate/upload-resume-s3", 
-        data: { resume_url: s3Url, job_id: jobId } 
+      const response = await apiClient.post("/candidate/upload-resume", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
+      return response.data;
     } catch (err) {
       console.error("[UPLOAD] Resume upload failed:", err.message);
       throw err;
