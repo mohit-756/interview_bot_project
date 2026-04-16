@@ -410,9 +410,16 @@ def hr_delete_jd(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     jd = _get_hr_owned_jd_or_404(db, jd_id, current_user.user_id)
-    applications_count = db.query(Result).filter(Result.job_id == jd_id).count()
+    
+    # Check only for results belonging to this HR (not all results)
+    applications_count = (
+        db.query(Result)
+        .join(JobDescription, Result.job_id == JobDescription.id)
+        .filter(Result.job_id == jd_id, JobDescription.company_id == current_user.user_id)
+        .count()
+    )
     if applications_count:
-        raise HTTPException(status_code=400, detail="Cannot delete a JD with applications")
+        raise HTTPException(status_code=400, detail="Cannot delete a JD with active applications")
 
     selected_candidates_count = db.query(Candidate).filter(Candidate.selected_jd_id == jd_id).count()
     if selected_candidates_count:
@@ -1125,11 +1132,54 @@ def hr_delete_candidate(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    # Check if candidate has any results owned by THIS HR
     owned_results = (
         db.query(Result)
         .join(JobDescription, Result.job_id == JobDescription.id)
         .filter(Result.candidate_id == candidate.id, JobDescription.company_id == current_user.user_id)
         .count()
+    )
+    if not owned_results:
+        raise HTTPException(status_code=404, detail="Candidate not found for this HR")
+
+    # Check if candidate has results for OTHER HR companies - if yes, just unlink from this HR
+    foreign_results = (
+        db.query(Result)
+        .join(JobDescription, Result.job_id == JobDescription.id)
+        .filter(Result.candidate_id == candidate.id, JobDescription.company_id != current_user.user_id)
+        .count()
+    )
+    
+    try:
+        # If there are foreign results, just delete OUR results (not the candidate)
+        # If no foreign results, delete the candidate entirely
+        if foreign_results > 0:
+            # Delete only results belonging to this HR
+            results_to_delete = (
+                db.query(Result)
+                .join(JobDescription, Result.job_id == JobDescription.id)
+                .filter(Result.candidate_id == candidate.id, JobDescription.company_id == current_user.user_id)
+                .all()
+            )
+            for result in results_to_delete:
+                db.delete(result)
+            message = "Applications deleted for this HR"
+        else:
+            # Safe to delete candidate - will cascade delete results and sessions
+            safe_delete_upload(candidate.resume_path)
+            db.delete(candidate)
+            message = "Candidate deleted"
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        import logging
+        logging.getLogger("uvicorn").error(f"[DELETE] Failed to delete candidate {candidate_uid}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")
+
+    return JSONResponse(
+        content={"ok": True, "message": message, "candidate_uid": candidate_uid},
+        status_code=200,
     )
     if not owned_results:
         raise HTTPException(status_code=404, detail="Candidate not found for this HR")
