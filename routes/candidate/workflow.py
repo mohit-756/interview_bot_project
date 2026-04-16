@@ -570,11 +570,25 @@ def candidate_practice_kit(
         if not resume_text:
             raise HTTPException(status_code=400, detail="Resume text is not available. Please re-upload your resume.")
 
+        # Get existing interview questions to exclude from practice
+        existing_questions = set()
+        result = db.query(Result).filter(
+            Result.candidate_id == candidate.id,
+            Result.jd_id == selected_jd_id,
+            Result.interview_questions.isnot(None)
+        ).first()
+        if result and result.interview_questions:
+            for q in result.interview_questions:
+                q_text = (q.get("text") or "").strip().lower()
+                if q_text:
+                    existing_questions.add(q_text)
+
         practice = build_practice_kit(
             resume_text=resume_text,
             jd_title=selected_jd.title,
             jd_skill_scores=selected_jd.weights_json or {},
             question_count=int(selected_jd.total_questions if selected_jd.total_questions is not None else 6),
+            exclude_questions=existing_questions,
         )
         score, explanation, _ = evaluate_resume_for_job(candidate, selected_jd)
         advice = build_resume_advice(
