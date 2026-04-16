@@ -21,9 +21,9 @@ def build_practice_kit(
     return {
         "questions": list(bundle["questions"]),
         "meta": {
-            "total_questions": int(bundle["total_questions"]),
-            "project_questions_count": int(bundle["project_questions_count"]),
-            "theory_questions_count": int(bundle["theory_questions_count"]),
-            "projects": bundle["projects"],
+            "total_questions": int(bundle.get("total_questions", len(bundle.get("questions", [])))),
+            "project_questions_count": int(bundle.get("by_type", {}).get("project", 0)) + int(bundle.get("by_type", {}).get("role_specific", 0)) + int(bundle.get("by_type", {}).get("decision", 0)) + int(bundle.get("by_type", {}).get("debugging", 0)),
+            "theory_questions_count": int(bundle.get("by_type", {}).get("behavioral", 0)) + int(bundle.get("by_type", {}).get("opener", 0)),
+            "projects": bundle.get("projects", []),
         },
     }
