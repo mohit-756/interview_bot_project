@@ -137,7 +137,7 @@ export default function HRCandidateDetailPage() {
         <div className="px-8 pb-8">
           <div className="relative flex flex-col md:flex-row md:items-end -mt-12 md:space-x-8">
             <div className="w-32 h-32 rounded-3xl border-4 border-white dark:border-slate-900 overflow-hidden shadow-lg bg-slate-100 flex items-center justify-center">
-              <img src={candidate?.avatar} alt={candidate?.name || "Candidate"} className="w-full h-full object-cover" />
+              <img src={candidate?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${candidate?.name || 'user'}`} alt={candidate?.name || "Candidate"} className="w-full h-full object-cover" />
             </div>
             <div className="flex-1 mt-6 md:mt-0 flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div>

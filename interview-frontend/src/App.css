@@ -227,27 +227,35 @@ body {
 .table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
 }
 
 .table th,
 .table td {
   border-bottom: 1px solid #e2e8f0;
-  padding: 0.9rem 1rem;
+  padding: 0.875rem 1rem;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 
 .table th {
   color: #475569;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  background: #f8fafc;
 }
 
 .dark .table th,
 .dark .table td {
   border-color: #1e293b;
+}
+
+.dark .table th {
+  background: #1e293b;
 }
 
 .dark .table td {

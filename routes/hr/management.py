@@ -717,12 +717,14 @@ def hr_candidate_detail(
         db.commit()
         db.refresh(candidate)
 
+    # Get all results for this candidate that belong to THIS HR's JDs
     results = (
         _candidate_result_scope(db, current_user.user_id)
         .filter(Result.candidate_id == candidate.id)
         .order_by(Result.id.desc())
         .all()
     )
+    
     if not results:
         raise HTTPException(status_code=404, detail="Candidate not found for this HR")
 
