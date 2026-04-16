@@ -6,7 +6,6 @@ import MetricCard from "../components/MetricCard";
 import CandidateTable from "../components/CandidateTable";
 import StatusBadge from "../components/StatusBadge";
 import PageHeader from "../components/PageHeader";
-import CalendarModal from "../components/CalendarModal";
 import { hrApi } from "../services/api";
 
 const CHART_COLORS = ["#2563eb", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#06b6d4"];
@@ -33,9 +32,6 @@ export default function HRDashboardPage() {
   const [tableLoading, setTableLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
   const [tableError, setTableError] = useState("");
-  const [showCalendar, setShowCalendar] = useState(false);
-  const [calendarData, setCalendarData] = useState(null);
-  const [calendarLoading, setCalendarLoading] = useState(false);
 
   const overview = dashboard?.analytics?.overview || {};
   const pipeline = dashboard?.analytics?.pipeline ?? EMPTY_LIST;
@@ -81,28 +77,10 @@ export default function HRDashboardPage() {
       await hrApi.deleteCandidate(candidate.uid || candidate.candidate_uid);
       await loadCandidates();
       await loadDashboard();
-      if (calendarData) loadCalendarData();
     } catch (deleteError) {
       setDashboardError(deleteError.message);
     }
   }
-
-  const loadCalendarData = useCallback(async () => {
-    setCalendarLoading(true);
-    try {
-      const response = await hrApi.calendar();
-      setCalendarData(response);
-    } catch (e) {
-      console.error("Calendar load error:", e);
-    } finally {
-      setCalendarLoading(false);
-    }
-  }, []);
-
-  const handleOpenCalendar = async () => {
-    setShowCalendar(true);
-    if (!calendarData) await loadCalendarData();
-  };
 
   function handleScheduleCandidate(candidate) {
     navigate(`/hr/candidates/${candidate.uid || candidate.candidate_uid}`);
@@ -123,10 +101,6 @@ export default function HRDashboardPage() {
           <>
             <button type="button" onClick={() => navigate("/hr/compare")} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
               Compare Candidates
-            </button>
-            <button type="button" onClick={handleOpenCalendar} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center gap-2">
-              <Calendar size={18} />
-              <span>Calendar</span>
             </button>
             <button type="button" onClick={() => navigate("/hr/candidates")} className="bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white px-5 py-2.5 rounded-xl font-bold flex items-center space-x-2 transition-all shadow-lg shadow-blue-200 dark:shadow-blue-900/30">
               <Plus size={20} />
@@ -212,8 +186,6 @@ export default function HRDashboardPage() {
       <ChartCard title="Recent Candidates" subtitle="ATS list view preview with ranking and recommendations.">
         {tableLoading ? <p className="center muted py-8">Loading candidates...</p> : <CandidateTable candidates={candidatesData?.candidates || []} onDeleteCandidate={handleDeleteCandidate} onScheduleCandidate={handleScheduleCandidate} />}
       </ChartCard>
-
-      <CalendarModal isOpen={showCalendar} onClose={() => setShowCalendar(false)} calendarData={calendarData} loading={calendarLoading} />
     </div>
   );
 }
