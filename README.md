@@ -83,6 +83,14 @@
 - ✅ Screening bands: `strong_shortlist` (≥80), `review_shortlist` (65-79), `reject` (<65)
 - ✅ **Resume Text Persistence**: Extracted text stored in `candidates.resume_text` (PostgreSQL). Interview access reads from DB — never re-reads from ephemeral filesystem
 - ✅ **Upload Validation**: Returns HTTP 400 if resume text extraction fails — no silent empty uploads
+- ✅ **Practice Kit Generation**: Generates timed practice question bundles from resume + JD for candidate preparation
+
+#### HR Dashboard
+- ✅ **Analytics Charts**: Pipeline visualization with candidate shortlist/review/reject distribution
+- ✅ **Score Matrix**: Interactive ranking table sortable by score, date, status
+- ✅ **Candidate Detail View**: Comprehensive candidate profile with resume, scores, interview history
+- ✅ **Bulk Actions**: Multi-select candidates for bulk shortlisting/rejection
+- ✅ **Interview Calendar**: Interactive modal for scheduling candidate interviews
 
 #### Interview Workflow (Phase 3)
 - ✅ **Indestructible AI Generation**: The LLM question generator and LLM answer evaluator have extreme, unbreakable fallbacks ensuring your interview flow cannot crash even if the LLM provider times out or responds with garbage JSON.
@@ -90,6 +98,9 @@
 - ✅ **LLM Answer Scoring**: provider-based (Gemini/Ollama) with local emergency fallback (never "Pending forever")
 - ✅ **llm_eval_status Tracking**: `pending` → `running` → `completed` / `failed`
 - ✅ **Graceful CV Failure**: OpenCV proctoring errors are swallowed securely to prevent backend 500 crashes during demonstrations.
+- ✅ **Integrated Proctoring**: Real-time webcam analysis with face detection, motion tracking, shoulder visibility
+- ✅ **Audio Recording & TTS**: Browser-based audio recording with Web Speech API TTS for question reading
+- ✅ **Session Persistence**: Interview session state persisted in database for resume capability
 
 #### HR Decision Management
 - ✅ **Dedicated Columns**: `hr_decision`, `hr_final_score`, `hr_behavioral_score`, `hr_communication_score`, `hr_notes`, `hr_red_flags`
@@ -218,11 +229,16 @@ Frontend URL: `http://localhost:5173`
 - `POST /api/candidate/upload-resume` — upload + auto-score
 - `POST /api/candidate/select-interview-date` — schedule interview
 - `GET /api/candidate/practice-kit` — timed practice questions
+- `GET /api/candidate/results` — candidate's screening results history
+- `GET /api/candidate/results/:id` — detailed result view with scores breakdown
 
 ### HR Endpoints
 - `POST /api/hr/jds` / `GET /api/hr/jds` — CRUD JD configurations
 - `GET /api/hr/candidates` — paginated search with filters
 - `GET /api/hr/dashboard` — shortlist pipeline + analytics
+- `GET /api/hr/candidates/:id` — detailed candidate profile with scores & interview history
+- `POST /api/hr/candidates/:id/shortlist` — shortlist candidate
+- `POST /api/hr/candidates/:id/reject` — reject candidate
 - `POST /api/hr/upload-jd` — upload JD file → extract skills
 - `GET /api/hr/interviews/{interview_id}` — session detail + answer scores + proctoring timeline
 - `POST /api/hr/interviews/{interview_id}/re-evaluate` — retry LLM scoring
