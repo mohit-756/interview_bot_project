@@ -524,6 +524,32 @@ def _resolve_candidate_result(db: Session, candidate_id: int, result_id: int | N
 
         if not result:
 
+            # Backward-compatible fallback: some clients may send an interview
+
+            # session id in place of result_id. Resolve it only for the same
+
+            # candidate to preserve access isolation.
+
+            session = db.query(InterviewSession).filter(
+
+                InterviewSession.id == result_id,
+
+                InterviewSession.candidate_id == candidate_id,
+
+            ).first()
+
+            if session:
+
+                result = db.query(Result).filter(
+
+                    Result.id == session.result_id,
+
+                    Result.candidate_id == candidate_id,
+
+                ).first()
+
+        if not result:
+
             raise HTTPException(status_code=404, detail="Interview result not found")
 
         return result
