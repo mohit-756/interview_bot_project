@@ -2510,11 +2510,6 @@ def upload_proctor_frame(
     shoulder_score_raw = _float_or_none(frame.get("shoulder_score"))
 
     upper_bodies_count = int(frame.get("upper_bodies_count") or 0)
-    
-    image_quality_score = _float_or_none(frame.get("face_quality_score"))
-    mediapipe_enabled = bool(frame.get("mediapipe_enabled"))
-
-
 
     baseline_signature = None
 
