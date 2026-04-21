@@ -1317,6 +1317,7 @@ def upload_jd(
     project_question_ratio: str = Form("0.8"),
     current_user: SessionUser = Depends(require_role("hr")),
 ) -> dict[str, object]:
+    from core.config import config
     _ = gender_requirement
     safe_filename = Path(jd_file.filename or "jd").name
     allowed_extensions = {".pdf", ".docx", ".doc", ".txt", ".rtf"}
