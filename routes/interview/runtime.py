@@ -1298,15 +1298,30 @@ def synthesize_question_speech(
     text: str,
     voice: str = "kajal",
 ):
-    """Synthesize speech for interview question using Amazon Polly."""
-    from services.polly_tts import synthesize_speech_url
+    """Synthesize speech for interview question using Amazon Polly via Lambda."""
+    import requests
 
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
 
+    if not config.LAMBDA_S3_URL:
+        raise HTTPException(status_code=500, detail="TTS Lambda not configured")
+
     try:
-        result = synthesize_speech_url(text, voice)
-        return {"ok": True, **result}
+        resp = requests.get(
+            config.LAMBDA_S3_URL,
+            params={"text": text, "voice": voice},
+            timeout=30
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if "error" in data:
+            raise Exception(data["error"])
+
+        logger.info("TTS synthesis success voice=%s text_len=%d", voice, len(text))
+        return {"ok": True, **data}
+
     except Exception as exc:
         logger.error("TTS synthesis failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(exc)}")

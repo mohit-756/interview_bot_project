@@ -61,15 +61,10 @@ class Config:
     BASE_DIR = Path(__file__).resolve().parent.parent
     UPLOAD_DIR = BASE_DIR / "uploads"
 
-    # S3 Configuration (for proctoring via Lambda)
+    # S3 Configuration (for proctoring, PDF, and Polly TTS via Lambda)
     LAMBDA_S3_URL = os.getenv("LAMBDA_S3_URL", "https://lp6t2xn0q4.execute-api.ap-south-1.amazonaws.com/prod/generate-upload-url")
     S3_PROCTOR_PREFIX = os.getenv("S3_PROCTOR_PREFIX", "proctoring")
     S3_REPORT_PREFIX = os.getenv("S3_REPORT_PREFIX", "reports")
-
-    # AWS Configuration (for Polly TTS)
-    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "").strip()
-    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
-    AWS_REGION = os.getenv("AWS_REGION", "us-east-1").strip()
 
 # Instantiate for global use
 config = Config()

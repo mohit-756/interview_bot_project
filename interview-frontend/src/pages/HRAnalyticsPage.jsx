@@ -85,67 +85,104 @@ export default function HRAnalyticsPage() {
   const [selectedJd, setSelectedJd] = useState("all");
   const [expandedRole, setExpandedRole] = useState(null);
 
+  // Load dashboard and candidates when selected JD changes
   useEffect(() => {
-    async function loadAll() {
+    async function loadDashboard() {
       setLoading(true);
       setError("");
       try {
-        const [dashRes, jdsRes] = await Promise.all([hrApi.dashboard(), hrApi.listJds()]);
+        const jobId = selectedJd === "all" ? undefined : selectedJd;
+        const [dashRes, jdsRes] = await Promise.all([
+          hrApi.dashboard(jobId),
+          hrApi.listJds()
+        ]);
         setDashboard(dashRes);
         setJds(Array.isArray(jdsRes) ? jdsRes : jdsRes?.jds || jdsRes?.jobs || []);
 
-        // Load all candidates with details for deeper analytics
+        // Load candidates filtered by JD (or all if "all")
+        let allCandidates = [];
         let pageNumber = 1;
         let hasMore = true;
-        let allCandidates = [];
         while (hasMore) {
-          const response = await hrApi.listCandidates({ page: pageNumber });
+          const response = await hrApi.listCandidates({ page: pageNumber, job_id: jobId });
           allCandidates = allCandidates.concat(response.candidates || []);
           hasMore = response.has_next;
           pageNumber += 1;
         }
         // Enrich with application detail using batch API
         const candidateUids = allCandidates.map((c) => c.candidate_uid);
-        const batchResponse = await hrApi.batchCandidateDetails(candidateUids);
-        const candidatesData = batchResponse.candidates || {};
-        const details = candidateUids.map((uid) => candidatesData[uid] || { candidate: {}, applications: [] });
-        const enriched = allCandidates.map((c, i) => {
-          const detail = details[i];
-          const app = detail?.applications?.[0] || {};
-          const dc = detail?.candidate || {};
-          return {
-            ...c,
-            jobId: app.job?.id,
-            jobTitle: app.job?.title || c.role || "Unknown",
-            resumeScore: Number(dc.resumeScore || c.score || 0),
-            interviewScore: Number(dc.interviewScore || 0),
-            finalAIScore: Number(dc.finalAIScore || c.score || 0),
-            skillMatchScore: Number(dc.skillMatchScore || 0),
-            interviewStatus: app.status || c.status,
-            finalDecision: dc.finalDecision || c.finalDecision,
-            explanation: app.explanation || {},
-          };
-        });
-        setCandidates(enriched);
+        if (candidateUids.length > 0) {
+          const batchResponse = await hrApi.batchCandidateDetails(candidateUids);
+          const candidatesData = batchResponse.candidates || {};
+          const details = candidateUids.map((uid) => candidatesData[uid] || { candidate: {}, applications: [] });
+          const enriched = allCandidates.map((c, i) => {
+            const detail = details[i];
+            const app = detail?.applications?.[0] || {};
+            const dc = detail?.candidate || {};
+            return {
+              ...c,
+              jobId: app.job?.id,
+              jobTitle: app.job?.title || c.role || "Unknown",
+              resumeScore: Number(dc.resumeScore || c.score || 0),
+              interviewScore: Number(dc.interviewScore || 0),
+              finalAIScore: Number(dc.finalAIScore || c.score || 0),
+              skillMatchScore: Number(dc.skillMatchScore || 0),
+              interviewStatus: app.status || c.status,
+              finalDecision: dc.finalDecision || c.finalDecision,
+              explanation: app.explanation || {},
+            };
+          });
+          setCandidates(enriched);
+        } else {
+          setCandidates([]);
+        }
       } catch (e) {
         setError(e.message);
       } finally {
         setLoading(false);
       }
     }
-    loadAll();
-  }, []);
+loadDashboard();
+  }, [selectedJd]);
 
-  // Filter candidates by selected JD
-  const filtered = useMemo(() => {
-    if (selectedJd === "all") return candidates;
-    return candidates.filter((c) => String(c.jobId) === selectedJd || c.jobTitle === selectedJd);
-  }, [candidates, selectedJd]);
+  // For "all" - use all candidates
+  const filtered = candidates;
 
   const overview = dashboard?.analytics?.overview || {};
   const pipeline = dashboard?.analytics?.pipeline || [];
   const missingSkills = dashboard?.analytics?.top_missing_skills || [];
   const matchedSkills = dashboard?.analytics?.top_matched_skills || [];
+
+  // Compute metrics from filtered candidates when JD is selected
+  const computedMetrics = useMemo(() => {
+    if (selectedJd === "all") {
+      return {
+        applications: overview.total_applications || 0,
+        activeCandidates: overview.active_candidates || 0,
+        avgResumeScore: overview.avg_resume_score || 0,
+        shortlistRate: overview.shortlist_rate || 0,
+      };
+    }
+    const filteredCandidates = filtered;
+    const total = filteredCandidates.length;
+    if (total === 0) {
+      return { applications: 0, activeCandidates: 0, avgResumeScore: 0, shortlistRate: 0 };
+    }
+    const withScore = filteredCandidates.filter((c) => c.resumeScore > 0);
+    const avgScore = withScore.length > 0
+      ? withScore.reduce((sum, c) => sum + c.resumeScore, 0) / withScore.length
+      : 0;
+    const shortlisted = filteredCandidates.filter((c) =>
+      c.status?.key === "shortlisted" || c.finalDecision?.key === "shortlisted" ||
+      c.status?.key === "selected" || c.finalDecision?.key === "selected"
+    ).length;
+    return {
+      applications: total,
+      activeCandidates: total,
+      avgResumeScore: avgScore,
+      shortlistRate: total > 0 ? (shortlisted / total) * 100 : 0,
+    };
+  }, [filtered, selectedJd, overview]);
 
   // --- Deep analytics computed from candidates ---
 
@@ -246,10 +283,10 @@ export default function HRAnalyticsPage() {
       {/* Top metric cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <MetricCard title="Total Jobs" value={overview.total_jobs || 0} color="blue" />
-        <MetricCard title="Applications" value={filtered.length || overview.total_applications || 0} color="purple" />
-        <MetricCard title="Active Candidates" value={overview.active_candidates || 0} color="green" />
-        <MetricCard title="Avg Resume Score" value={`${Math.round(Number(overview.avg_resume_score || 0))}%`} color="yellow" />
-        <MetricCard title="Shortlist Rate" value={`${Math.round(Number(overview.shortlist_rate || 0))}%`} color="green" />
+        <MetricCard title="Applications" value={selectedJd === "all" ? (filtered.length || overview.total_applications || 0) : computedMetrics.applications} color="purple" />
+        <MetricCard title="Active Candidates" value={selectedJd === "all" ? (overview.active_candidates || 0) : computedMetrics.activeCandidates} color="green" />
+        <MetricCard title="Avg Resume Score" value={`${Math.round(selectedJd === "all" ? (overview.avg_resume_score || 0) : computedMetrics.avgResumeScore)}%`} color="yellow" />
+        <MetricCard title="Shortlist Rate" value={`${Math.round(selectedJd === "all" ? (overview.shortlist_rate || 0) : computedMetrics.shortlistRate)}%`} color="green" />
       </div>
 
       {/* 3-column main grid */}
