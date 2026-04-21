@@ -238,7 +238,35 @@ export default function PreCheck() {
           await document.documentElement.requestFullscreen();
         } catch {}
       }
-      await interviewApi.access(Number(resultId));
+      const access = await interviewApi.access(Number(resultId));
+
+      if (access?.interview_locked_reason === "scheduled_for_future" || access?.can_start_now === false) {
+        const opensAt = access?.interview_window_open_utc
+          ? new Date(access.interview_window_open_utc).toLocaleString()
+          : null;
+        setError(
+          opensAt
+            ? `Interview can start only within the allowed window. Please try again after ${opensAt}.`
+            : "Interview can start only within the allowed window. Please try again closer to your scheduled time."
+        );
+        return;
+      }
+
+      if (access?.interview_locked_reason === "start_window_expired") {
+        setError("Interview start window has expired. Please reschedule your interview.");
+        return;
+      }
+
+      if (access?.interview_locked_reason === "already_completed") {
+        navigate(`/interview/${resultId}/completed`);
+        return;
+      }
+
+      if (access?.interview_ready === false) {
+        setError("Interview is not ready to start yet. Please recheck your schedule and try again.");
+        return;
+      }
+
       sessionStorage.setItem(`interview-consent:${resultId}`, "true");
       navigate(`/interview/${resultId}/live`);
     } catch (e) {
