@@ -24,6 +24,16 @@ UPLOAD_DIR = config.UPLOAD_DIR
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
 
 
+def utc_isoformat(value: datetime | None) -> str | None:
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def frontend_base_url() -> str:
     return config.FRONTEND_URL.rstrip("/")
 
@@ -330,10 +340,10 @@ def serialize_result(result: Result | None) -> dict[str, object] | None:
         "stage": stage_payload(_application_stage(result, latest_session)),
         "interview_date": result.interview_date,
         "interview_time": result.interview_time,
-        "interview_datetime": result.interview_datetime.isoformat() if result.interview_datetime else None,
-        "interview_datetime_utc": schedule["scheduled_utc"].isoformat() if schedule["scheduled_utc"] else None,
-        "interview_window_open_utc": schedule["window_open_utc"].isoformat() if schedule["window_open_utc"] else None,
-        "interview_window_close_utc": schedule["window_close_utc"].isoformat() if schedule["window_close_utc"] else None,
+        "interview_datetime": utc_isoformat(result.interview_datetime),
+        "interview_datetime_utc": utc_isoformat(schedule["scheduled_utc"]),
+        "interview_window_open_utc": utc_isoformat(schedule["window_open_utc"]),
+        "interview_window_close_utc": utc_isoformat(schedule["window_close_utc"]),
         "interview_scheduled": bool(access["interview_scheduled"]),
         "interview_ready": bool(access["interview_ready"]),
         "interview_locked_reason": access["interview_locked_reason"],
