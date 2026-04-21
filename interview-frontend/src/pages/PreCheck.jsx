@@ -137,6 +137,7 @@ export default function PreCheck() {
     const saved = sessionStorage.getItem(`interview-voice:${resultId}`);
     return saved || "kajal";
   });
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
 
   // Check MediaRecorder support on mount
   useEffect(() => {
@@ -310,6 +311,67 @@ export default function PreCheck() {
                 {check.status === "denied" && <AlertCircle size={24} className="animate-bounce" />}
               </div>
             ))}
+          </div>
+
+          {/* Voice Selection */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-700 dark:text-slate-300">🎤 Voice Selection</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  const testText = "Hello! This is a sample voice. Your interview questions will be read in this voice.";
+                  try {
+                    setIsTestingVoice(true);
+                    const { interviewApi } = await import("../services/api");
+                    await interviewApi.tts(testText, selectedVoice);
+                  } catch (e) {
+                    console.warn("Voice test failed:", e);
+                  } finally {
+                    setIsTestingVoice(false);
+                  }
+                }}
+                disabled={isTestingVoice}
+                className="text-xs px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-bold transition-colors flex items-center gap-1"
+              >
+                {isTestingVoice ? "Playing..." : "🔊 Test Voice"}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedVoice("kajal");
+                  sessionStorage.setItem(`interview-voice:${resultId}`, "kajal");
+                }}
+                className={cn(
+                  "flex-1 py-3 px-3 rounded-xl font-bold text-sm transition-all border-2",
+                  selectedVoice === "kajal"
+                    ? "bg-pink-50 dark:bg-pink-900/20 border-pink-400 text-pink-700 dark:text-pink-300"
+                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-pink-300"
+                )}
+              >
+                👩‍🦱 Female (Kajal)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedVoice("matthew");
+                  sessionStorage.setItem(`interview-voice:${resultId}`, "matthew");
+                }}
+                className={cn(
+                  "flex-1 py-3 px-3 rounded-xl font-bold text-sm transition-all border-2",
+                  selectedVoice === "matthew"
+                    ? "bg-blue-50 dark:bg-blue-900/20 border-blue-400 text-blue-700 dark:text-blue-300"
+                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-blue-300"
+                )}
+              >
+                👨‍🦱 Male (Matthew)
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Selected: <span className="font-bold">{selectedVoice === "kajal" ? "Kajal (Indian Female)" : "Matthew (US Male)"}</span>
+            </p>
           </div>
 
           <div className="flex items-center gap-4">

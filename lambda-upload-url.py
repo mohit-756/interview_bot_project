@@ -11,6 +11,7 @@ REGION = os.environ.get("REGION", "ap-south-1")
 
 POLLY_VOICES = {
     "kajal": {"voice_id": "Kajal", "engine": "neural", "lang": "en-IN"},
+    "matthew": {"voice_id": "Matthew", "engine": "neural", "lang": "en-US"},
 }
 
 ALLOWED_VOICES = list(POLLY_VOICES.keys())
@@ -129,13 +130,11 @@ def handle_tts(params):
             ContentType="audio/mpeg"
         )
 
-        s3.put_object_acl(
-            Bucket=BUCKET_NAME,
-            Key=unique_key,
-            ACL="public-read"
+        presigned_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BUCKET_NAME, "Key": unique_key},
+            ExpiresIn=3600
         )
-
-        public_url = f"https://{BUCKET_NAME}.s3.{REGION}.amazonaws.com/{unique_key}"
 
         return {
             "statusCode": 200,
@@ -146,7 +145,7 @@ def handle_tts(params):
                 "Access-Control-Max-Age": "3600"
             },
             "body": json.dumps({
-                "audio_url": public_url,
+                "audio_url": presigned_url,
                 "voice": voice,
                 "voice_id": voice_config["voice_id"],
                 "engine": voice_config["engine"]
