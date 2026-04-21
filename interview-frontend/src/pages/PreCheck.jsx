@@ -135,7 +135,7 @@ export default function PreCheck() {
   const [error, setError] = useState("");
   const [selectedVoice, setSelectedVoice] = useState(() => {
     const saved = sessionStorage.getItem(`interview-voice:${resultId}`);
-    return saved || "indian_female";
+    return saved || "kajal";
   });
 
   // Check MediaRecorder support on mount

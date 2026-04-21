@@ -176,7 +176,7 @@ export default function Interview() {
 
   const selectedVoice = (() => {
     const saved = sessionStorage.getItem(`interview-voice:${resultId}`);
-    return saved || "indian_female";
+    return saved || "kajal";
   })();
 
   const videoRef             = useRef(null);
