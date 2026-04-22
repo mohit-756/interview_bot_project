@@ -1,6 +1,9 @@
 import re
 import logging
+import subprocess
+import tempfile
 from threading import Lock
+from pathlib import Path
 
 from typing import Any
 
@@ -39,6 +42,50 @@ def _get_model() -> Any | None:
 # --------------------------------------------------
 # TEXT EXTRACTION
 # --------------------------------------------------
+def _clean_extracted_text(text: str) -> str:
+    text = re.sub(r'\n{3,}', '\n\n', text or "")
+    text = re.sub(r'[\x00-\x1F\x7F]+', '', text)
+    return text.strip()
+
+
+def _extract_pdf_text_with_ocr(file_path: str) -> str:
+    """Best-effort OCR fallback for scanned/image-only PDFs.
+
+    Requires system binaries: pdftoppm from poppler-utils and tesseract.
+    If either binary is unavailable, this returns an empty string and logs why.
+    """
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_prefix = str(Path(temp_dir) / "page")
+            subprocess.run(
+                ["pdftoppm", "-r", "200", "-png", "-f", "1", "-l", "5", file_path, output_prefix],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=60,
+            )
+            chunks: list[str] = []
+            for image_path in sorted(Path(temp_dir).glob("page-*.png")):
+                result = subprocess.run(
+                    ["tesseract", str(image_path), "stdout", "--psm", "6"],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=60,
+                )
+                chunks.append(result.stdout)
+            return _clean_extracted_text("\n".join(chunks))
+    except FileNotFoundError as exc:
+        logger.warning("PDF OCR fallback unavailable. Install poppler-utils and tesseract-ocr. missing=%s", exc.filename)
+    except subprocess.CalledProcessError as exc:
+        logger.warning("PDF OCR fallback failed command=%s stderr=%s", exc.cmd, (exc.stderr or "")[:500])
+    except Exception as exc:
+        logger.warning("PDF OCR fallback failed for %s: %s", file_path, exc)
+    return ""
+
+
 def extract_text_from_file(file_path):
     if not file_path:
         return ""
@@ -48,35 +95,52 @@ def extract_text_from_file(file_path):
         
         if file_path.endswith(".pdf"):
             # Use PyMuPDF (fitz) for robust PDF extraction
+            fitz_error = None
             try:
                 import fitz  # PyMuPDF
                 doc = fitz.open(file_path)
                 text = "\n".join(page.get_text("text") for page in doc)
-                text = re.sub(r'\n{3,}', '\n\n', text)  # Collapse excessive breaks
-                text = re.sub(r'[\x00-\x1F\x7F]+', '', text)  # Remove control chars
-                return text
+                text = _clean_extracted_text(text)
+                if text:
+                    return text
+                logger.warning("PyMuPDF extracted empty text from PDF; trying PyPDF2. file=%s pages=%s", file_path, len(doc))
             except Exception as e:
-                # fallback to PyPDF2 if fitz fails
-                try:
-                    import PyPDF2
-                    with open(file_path, "rb") as f:
-                        reader = PyPDF2.PdfReader(f)
-                        text = "\n".join(page.extract_text() or '' for page in reader.pages)
-                        text = re.sub(r'\n{3,}', '\n\n', text)
-                        text = re.sub(r'[\x00-\x1F\x7F]+', '', text)
+                fitz_error = e
+                logger.warning("PyMuPDF PDF extraction failed for %s: %s", file_path, e)
+
+            pypdf_error = None
+            try:
+                import PyPDF2
+                with open(file_path, "rb") as f:
+                    reader = PyPDF2.PdfReader(f)
+                    text = "\n".join(page.extract_text() or '' for page in reader.pages)
+                    text = _clean_extracted_text(text)
+                    if text:
                         return text
-                except Exception as e2:
-                    return ""
+                    logger.warning("PyPDF2 extracted empty text from PDF; trying OCR. file=%s pages=%s", file_path, len(reader.pages))
+            except Exception as e2:
+                pypdf_error = e2
+                logger.warning("PyPDF2 PDF extraction failed for %s: %s", file_path, e2)
+
+            text = _extract_pdf_text_with_ocr(file_path)
+            if text:
+                logger.info("PDF OCR extracted text successfully. file=%s chars=%s", file_path, len(text))
+                return text
+
+            if fitz_error or pypdf_error:
+                logger.error("All PDF extraction methods failed or returned empty. file=%s fitz_error=%s pypdf_error=%s", file_path, fitz_error, pypdf_error)
+            else:
+                logger.error("PDF appears to contain no extractable text and OCR returned empty. file=%s", file_path)
+            return ""
 
         elif file_path.endswith(".docx"):
             try:
                 from docx import Document
                 doc = Document(file_path)
                 text = "\n".join(para.text for para in doc.paragraphs if para.text.strip())
-                text = re.sub(r'\n{3,}', '\n\n', text)
-                text = re.sub(r'[\x00-\x1F\x7F]+', '', text)
-                return text
+                return _clean_extracted_text(text)
             except Exception as e:
+                logger.warning("DOCX extraction failed for %s: %s", file_path, e)
                 return ""
 
         elif file_path.endswith(".txt"):
