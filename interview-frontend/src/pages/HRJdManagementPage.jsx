@@ -71,6 +71,7 @@ function JdForm({ initialData, onSave, onCancel }) {
     initialData?.project_question_ratio != null ? Math.round(initialData.project_question_ratio * 100) : 80
   );
   const [uploading, setUploading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const isEdit = Boolean(initialData?.id);
@@ -83,8 +84,25 @@ function JdForm({ initialData, onSave, onCancel }) {
       const result = await hrApi.uploadJd(file);
       if (result.ai_skills && Object.keys(result.ai_skills).length > 0) setSkills(result.ai_skills);
       if (result.jd_title && !title) setTitle(result.jd_title);
+      if (result.education_requirement) setEducationRequirement(result.education_requirement);
+      if (result.experience_requirement != null) setExperienceRequirement(result.experience_requirement);
+      if (result.min_academic_percent != null) setMinAcademicPercent(result.min_academic_percent);
     } catch (err) { setError(err.message); }
     finally { setUploading(false); e.target.value = ""; }
+  }
+
+  async function handleExtractFromText() {
+    if (!jdText.trim()) { setError("Paste JD text first."); return; }
+    setExtracting(true); setError("");
+    try {
+      const result = await hrApi.parseJdText(jdText, title);
+      if (result.ai_skills && Object.keys(result.ai_skills).length > 0) setSkills(result.ai_skills);
+      if (result.jd_title && !title) setTitle(result.jd_title);
+      if (result.education_requirement) setEducationRequirement(result.education_requirement);
+      if (result.experience_requirement != null) setExperienceRequirement(result.experience_requirement);
+      if (result.min_academic_percent != null) setMinAcademicPercent(result.min_academic_percent);
+    } catch (err) { setError(err.message); }
+    finally { setExtracting(false); }
   }
 
   async function handleSave() {
@@ -187,6 +205,12 @@ function JdForm({ initialData, onSave, onCancel }) {
         <textarea rows={5} value={jdText} onChange={(e) => setJdText(e.target.value)}
           placeholder="Paste job description here, or upload a file above..."
           className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white resize-none" />
+        {!isEdit && jdText.trim() && (
+          <button onClick={handleExtractFromText} disabled={extracting}
+            className="mt-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold disabled:opacity-50 transition-all flex items-center gap-2">
+            {extracting ? <><Loader2 size={16} className="animate-spin" /> Extracting...</> : <><Upload size={16} /> Extract Details from Text</>}
+          </button>
+        )}
       </div>
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -197,7 +221,7 @@ function JdForm({ initialData, onSave, onCancel }) {
           <SkillsEditor skills={skills} onChange={setSkills} />
         ) : (
           <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 p-6 text-center">
-            <p className="text-sm text-slate-500">Upload a JD file to auto-extract skills.</p>
+            <p className="text-sm text-slate-500">Upload a JD file or paste text and click Extract Details.</p>
           </div>
         )}
       </div>

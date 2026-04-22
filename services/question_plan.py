@@ -43,11 +43,12 @@ def _materialize_questions(
     return questions
 
 
-def build_question_context(*, resume_text: str, jd_title: str | None, jd_skill_scores: Mapping[str, int] | None, question_count: int | None = None) -> dict[str, object]:
+def build_question_context(*, resume_text: str, jd_title: str | None, jd_skill_scores: Mapping[str, int] | None, question_count: int | None = None, project_ratio: float | None = None) -> dict[str, object]:
     resume = extract_structured_resume(resume_text or "")
     jd = extract_structured_jd(jd_title, jd_skill_scores)
     role_family, seniority = infer_role_family(jd_title or jd.title, resume, jd)
-    distribution = distribution_for_role(role_family, max(2, min(20, int(question_count or 8))))
+    ratio = project_ratio if project_ratio is not None else 0.8
+    distribution = distribution_for_role(role_family, max(2, min(20, int(question_count or 8))), ratio)
     topic_priorities = make_topic_candidates(resume, jd, role_family)
     return {
         "role_title": _clean(jd_title or jd.title),
@@ -68,12 +69,13 @@ def build_question_context(*, resume_text: str, jd_title: str | None, jd_skill_s
 
 
 
-def build_question_plan(*, resume_text: str, jd_title: str | None, jd_skill_scores: Mapping[str, int] | None, question_count: int | None = None) -> dict[str, object]:
+def build_question_plan(*, resume_text: str, jd_title: str | None, jd_skill_scores: Mapping[str, int] | None, question_count: int | None = None, project_ratio: float | None = None) -> dict[str, object]:
     total_questions = max(6, min(9, int(question_count or 8)))
     resume = extract_structured_resume(resume_text or "")
     jd = extract_structured_jd(jd_title, jd_skill_scores)
     role_family, seniority = infer_role_family(jd_title or jd.title, resume, jd)
     topic_priorities = make_topic_candidates(resume, jd, role_family)
+    ratio = project_ratio if project_ratio is not None else 0.8
     context = PlannerContext(
         role_family=role_family,
         seniority=seniority,
@@ -81,7 +83,7 @@ def build_question_plan(*, resume_text: str, jd_title: str | None, jd_skill_scor
         resume=resume,
         jd=jd,
         topic_priorities=topic_priorities,
-        distribution=distribution_for_role(role_family, total_questions),
+        distribution=distribution_for_role(role_family, total_questions, ratio),
     )
 
     rt = role_track(context)

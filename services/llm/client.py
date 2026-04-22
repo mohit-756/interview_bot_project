@@ -282,6 +282,39 @@ def evaluate_answer_detailed(**kwargs) -> dict[str, Any]:
         logger.error(f"evaluation failed: {e}")
         return {"score": 50, "feedback": "Evaluation failed."}
 
+def extract_jd_requirements(jd_text: str) -> dict[str, Any]:
+    """Extract structured requirements from JD text: skills + education + experience + min academic %."""
+    prompt = (
+        "Analyze the job description below and extract structured requirements. "
+        "Return ONLY a JSON object with these exact keys:\n\n"
+        "1. 'skills': Object with skill names as keys and importance weight (1-10) as values. "
+        "   Include ONLY hard technical skills (languages, frameworks, databases, cloud, DevOps). "
+        "   Ignore soft skills, methodologies, company info.\n\n"
+        "2. 'education_requirement': String - one of: 'bachelor', 'master', 'phd', or null if not specified.\n\n"
+        "3. 'experience_requirement': Integer - minimum years of experience or 0 if not specified.\n\n"
+        "4. 'min_academic_percent': Integer - minimum academic percentage or 0 if not specified.\n\n"
+        "RULES:\n"
+        "- For education: look for 'B.Tech', 'BE', 'Bachelor', 'B.Sc' = 'bachelor'. "
+        "'M.Tech', 'Master', 'M.Sc' = 'master'. 'PhD', 'doctorate' = 'phd'. Otherwise null.\n"
+        "- For experience: look for patterns like '3+ years', '3 years', 'minimum 5 years'. Extract the number.\n"
+        "- For min %: look for patterns like 'minimum 60%', '65% aggregate', '60 percent'. Extract the number.\n"
+        "- If any field is not clearly stated, use null for education or 0 for numbers.\n\n"
+        f"Job Description:\n{jd_text[:4000]}"
+    )
+    try:
+        resp = _get_client().create(messages=[{"role": "user", "content": prompt}], temperature=0.1, max_tokens=500)
+        result = json.loads(_clean_json(resp.choices[0].message.content))
+        return {
+            "skills": result.get("skills", {}),
+            "education_requirement": result.get("education_requirement"),
+            "experience_requirement": result.get("experience_requirement", 0),
+            "min_academic_percent": result.get("min_academic_percent", 0),
+        }
+    except Exception as e:
+        logger.error(f"extract_jd_requirements failed: {e}")
+        return {"skills": {}, "education_requirement": None, "experience_requirement": 0, "min_academic_percent": 0}
+
+
 def score_answer(question: str, answer: str) -> dict[str, Any]:
     eval_res = evaluate_answer_detailed(question=question, answer=answer)
     return {"score": eval_res.get("score", 0), "feedback": eval_res.get("feedback", "")}

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from ai_engine.phase1.scoring import compute_interview_scoring, compute_resume_skill_match
 from ai_engine.phase1.matching import extract_skills_from_jd, extract_text_from_file
 from database import get_db
-from services.llm.client import extract_skills as llm_extract_skills
+from services.llm.client import extract_jd_requirements, extract_skills as llm_extract_skills
 from models import Candidate, InterviewSession, JobDescription, Result, ApplicationStageHistory
 from routes.common import (
     UPLOAD_DIR,
@@ -876,7 +876,11 @@ def hr_candidate_detail(
     skill_gap = None
     resume_advice = None
     if latest_job and resume_text.strip():
-        skill_gap = compute_resume_skill_match(resume_text, (latest_job.skill_scores or {}).keys())
+        skill_gap = compute_resume_skill_match(
+            resume_text,
+            (latest_job.skill_scores or {}).keys(),
+            latest_job.skill_scores
+        )
         resume_advice = build_resume_advice(
             resume_text=resume_text,
             jd_skill_scores=latest_job.skill_scores or {},
@@ -1190,7 +1194,11 @@ def hr_candidate_skill_gap(
     # 1) What this does: calculates matched and missing skills.
     # 2) Why needed: this is the same local-only logic already used elsewhere in the app.
     # 3) How it works: reuses the existing compute_resume_skill_match helper with the JD skill keys.
-    skill_gap = compute_resume_skill_match(resume_text, (target_job.skill_scores or {}).keys())
+    skill_gap = compute_resume_skill_match(
+            resume_text,
+            (target_job.skill_scores or {}).keys(),
+            target_job.skill_scores
+        )
 
     return {
         "ok": True,
@@ -1360,23 +1368,29 @@ def upload_jd(
     with jd_path.open("wb") as buffer:
         shutil.copyfileobj(jd_file.file, buffer)
 
-    # Extract text and skills after file is closed
+    # Extract text and all requirements after file is closed
     jd_raw_text = extract_text_from_file(str(jd_path))
-    ai_skills = llm_extract_skills(jd_raw_text)
+    requirements = extract_jd_requirements(jd_raw_text)
+    ai_skills = requirements.get("skills") or {}
     if not ai_skills:
         extracted_skills = extract_skills_from_jd(str(jd_path))
         ai_skills = {skill: 5 for skill in extracted_skills}
+
+    extracted_education = requirements.get("education_requirement") or education_requirement
+    extracted_experience = requirements.get("experience_requirement") or years
+    extracted_min_percent = requirements.get("min_academic_percent") or 0
 
     request.session["temp_jd"] = {
         "jd_title": jd_title.strip() if jd_title else None,
         "jd_path": str(jd_path),
         "jd_raw_text": jd_raw_text[:8000],
         "gender_requirement": None,
-        "education_requirement": education_requirement or None,
-        "experience_requirement": years,
+        "education_requirement": extracted_education,
+        "experience_requirement": extracted_experience,
         "cutoff_score": cutoff,
         "question_count": questions,
         "project_question_ratio": ratio,
+        "min_academic_percent": extracted_min_percent,
     }
 
     return {
@@ -1388,6 +1402,35 @@ def upload_jd(
         "cutoff_score": cutoff,
         "question_count": questions,
         "project_question_ratio": ratio,
+        "education_requirement": extracted_education,
+        "experience_requirement": extracted_experience,
+        "min_academic_percent": extracted_min_percent,
+    }
+
+
+@router.post("/hr/parse-jd-text")
+def parse_jd_text(
+    request: Request,
+    jd_text: str = Form(...),
+    jd_title: str = Form(""),
+    current_user: SessionUser = Depends(require_role("hr")),
+) -> dict[str, Any]:
+    if not jd_text or not jd_text.strip():
+        raise HTTPException(status_code=400, detail="JD text is required")
+
+    requirements = extract_jd_requirements(jd_text)
+    ai_skills = requirements.get("skills") or {}
+    if not ai_skills:
+        ai_skills = {"Add skills manually": 5}
+
+    return {
+        "ok": True,
+        "jd_title": jd_title.strip() or None,
+        "jd_text": jd_text[:500],
+        "ai_skills": ai_skills,
+        "education_requirement": requirements.get("education_requirement"),
+        "experience_requirement": requirements.get("experience_requirement", 0),
+        "min_academic_percent": requirements.get("min_academic_percent", 0),
     }
 
 

@@ -46,11 +46,13 @@ def _generate_result_question_bank(
     resume_text: str,
     job: JobDescription,
 ) -> list[dict[str, object]]:
+    project_ratio = float(job.project_question_ratio) if job and job.project_question_ratio is not None else 0.8
     bundle = build_question_bundle(
         resume_text=resume_text,
         jd_title=job.jd_title,
         jd_skill_scores=(job.skill_scores or {}),
         question_count=int(job.question_count if job.question_count is not None else 8),
+        project_ratio=project_ratio,
     )
     questions = bundle.get("questions") or []
     result.interview_questions = questions
@@ -197,7 +199,11 @@ def candidate_skill_match(
     resume_text = (candidate.resume_text or "").strip()
     if not resume_text:
         raise HTTPException(status_code=400, detail="Resume text is not available. Please re-upload your resume.")
-    skill_match = compute_resume_skill_match(resume_text, (job.skill_scores or {}).keys())
+    skill_match = compute_resume_skill_match(
+        resume_text,
+        (job.skill_scores or {}).keys(),
+        job.skill_scores
+    )
     return {"ok": True, "job_id": job.id, **skill_match}
 
 

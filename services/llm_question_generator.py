@@ -1088,12 +1088,14 @@ def _build_fallback_bundle(
     jd_title: str | None,
     jd_skill_scores: Mapping[str, int] | None,
     question_count: int,
+    project_ratio: float | None = None,
 ) -> dict[str, Any]:
     fallback_bundle = build_question_plan(
         resume_text=resume_text,
         jd_title=jd_title,
         jd_skill_scores=jd_skill_scores or {},
         question_count=question_count,
+        project_ratio=project_ratio,
     ) or {}
     return fallback_bundle if isinstance(fallback_bundle, dict) else {}
 
@@ -1336,6 +1338,7 @@ def generate_question_bundle_with_fallback(
             jd_title=jd_title,
             jd_skill_scores=jd_skill_scores,
             question_count=desired_count,
+            project_ratio=project_ratio,
         )
     except Exception as exc:
         logger.error("Fallback bundle generation failed: %s", exc)

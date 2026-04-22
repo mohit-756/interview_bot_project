@@ -229,11 +229,18 @@ export const hrApi = {
   toggleJdActive: (jdId) => request({ method: "post", url: `/hr/jds/${jdId}/toggle-active` }),
   deleteJd: (jdId) => request({ method: "delete", url: `/hr/jds/${jdId}` }),
 
-  // JD file upload + LLM skill extraction
+  // JD file upload + LLM extraction (skills + requirements)
   uploadJd: (file) => {
     const formData = new FormData();
     formData.append("jd_file", file);
     return request({ method: "post", url: "/hr/upload-jd", data: formData });
+  },
+  // Parse JD text (for pasted text - extracts skills + requirements)
+  parseJdText: (jdText, jdTitle = "") => {
+    const formData = new FormData();
+    formData.append("jd_text", jdText);
+    formData.append("jd_title", jdTitle);
+    return request({ method: "post", url: "/hr/parse-jd-text", data: formData });
   },
   confirmJd: (payload) => request({ method: "post", url: "/hr/confirm-jd", data: payload }),
   updateSkillWeights: (payload) => request({ method: "post", url: "/hr/update-skill-weights", data: payload }),

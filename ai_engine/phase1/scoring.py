@@ -85,33 +85,57 @@ def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9+#.-]+", (text or "").lower())
 
 
-def compute_resume_skill_match(resume_text: str, jd_skills: Iterable[str]) -> dict[str, object]:
-    """Compute overlap between JD-required skills and detected resume skills."""
+def compute_resume_skill_match(resume_text: str, jd_skills: Iterable[str], skill_weights: dict[str, int] | None = None) -> dict[str, object]:
+    """Compute overlap between JD-required skills and detected resume skills.
+    
+    Now supports weighted skill matching:
+    - If skill_weights provided: weighted percentage = (matched_weight / total_weight) × 100
+    - If skill_weights not provided: simple count percentage (backward compatible)
+    """
 
     normalized_required = sorted({_normalize_skill(skill) for skill in jd_skills if _normalize_skill(skill)})
     if not normalized_required:
         return {
             "matched_percentage": 100.0,
+            "weighted_percentage": 100.0,
             "matched_skills": [],
             "missing_skills": [],
+            "matched_weight": 0.0,
+            "total_weight": 0.0,
         }
 
     resume_text = resume_text or ""
     matched_skills: list[str] = []
     missing_skills: list[str] = []
+    matched_weight: float = 0.0
+    total_weight: float = 0.0
 
     for required_skill in normalized_required:
+        skill_weight = 0
+        if skill_weights:
+            normalized_weight_key = _normalize_skill(required_skill)
+            skill_weight = int(skill_weights.get(normalized_weight_key, skill_weights.get(required_skill, 0)))
+            if skill_weight > 0:
+                total_weight += skill_weight
+
         aliases = SKILL_ALIASES.get(required_skill, [required_skill])
         if any(_contains_skill(resume_text, alias) for alias in aliases):
             matched_skills.append(required_skill)
+            if skill_weight > 0:
+                matched_weight += skill_weight
         else:
             missing_skills.append(required_skill)
 
-    matched_percentage = round((len(matched_skills) / len(normalized_required)) * 100, 2)
+    simple_percentage = round((len(matched_skills) / len(normalized_required)) * 100, 2)
+    weighted_percentage = round((matched_weight / total_weight) * 100, 2) if total_weight > 0 else simple_percentage
+
     return {
-        "matched_percentage": matched_percentage,
+        "matched_percentage": simple_percentage,
+        "weighted_percentage": weighted_percentage,
         "matched_skills": matched_skills,
         "missing_skills": missing_skills,
+        "matched_weight": matched_weight,
+        "total_weight": total_weight,
     }
 
 
@@ -317,7 +341,7 @@ def compute_resume_scorecard(
 
     resume_text = resume_text or ""
     jd_text = jd_text or ""
-    skill_match = compute_resume_skill_match(resume_text, (jd_skill_scores or {}).keys())
+    skill_match = compute_resume_skill_match(resume_text, (jd_skill_scores or {}).keys(), jd_skill_scores)
 
     weighted_skill_score = _weighted_skill_score(jd_skill_scores, list(skill_match["matched_skills"]))
     semantic_score = _semantic_percentage(semantic_similarity, jd_text, resume_text)
