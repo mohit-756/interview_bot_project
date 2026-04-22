@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Navbar from "./Navbar";
+import HelpSupportButton from "../components/HelpSupportButton";
 
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= 1024 : true));
@@ -25,6 +26,7 @@ export default function DashboardLayout() {
           </div>
         </main>
       </div>
+      <HelpSupportButton supportEmail="support@quadranttech.com" />
     </div>
   );
 }

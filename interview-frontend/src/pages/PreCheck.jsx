@@ -8,6 +8,7 @@ import { interviewApi } from "../services/api";
 import { useAuth } from "../context/useAuth";
 import { formatUtcDateTime } from "../utils/formatters";
 import { cn } from "../utils/utils";
+import HelpSupportButton from "../components/HelpSupportButton";
 
 async function attachPreviewStream(videoElement, stream) {
   if (!videoElement) return;
@@ -113,6 +114,7 @@ function InlineLogin({ onSuccess }) {
           </button>
         </form>
       </div>
+      <HelpSupportButton supportEmail="support@quadranttech.com" />
     </div>
   );
 }
@@ -194,8 +196,12 @@ export default function PreCheck() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       } catch {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        micGranted = false;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          micGranted = false;
+        } catch {
+          throw new Error("Access denied");
+        }
       }
       streamRef.current = stream;
       await attachPreviewStream(videoRef.current, stream);
@@ -210,12 +216,13 @@ export default function PreCheck() {
         },
       });
       if (!micGranted) {
-        setError("Camera preview is active, but microphone permission is blocked. Please click the lock icon next to your URL bar, allow microphone permissions, and refresh the page.");
+        setError("Camera preview is active, but microphone permission is blocked. Please click the lock icon in your browser address bar and enable permissions, then refresh the page.");
       }
     } catch {
+      setError("Camera or Microphone access denied. Please click the lock icon in your browser address bar and enable permissions, then refresh the page to continue.");
       setChecks({
-        camera: { status: "denied", label: "Camera access" },
-        mic: { status: "denied", label: "Microphone access" },
+        camera: { status: "denied", label: "Camera access", detail: "Click the lock icon in your browser address bar, allow camera access, then refresh." },
+        mic: { status: "denied", label: "Microphone access", detail: "Click the lock icon in your browser address bar, allow microphone access, then refresh." },
         internet: { status: "granted", label: "Internet connection" },
         voiceRecorder: {
           status: recorderCheck.supported ? "granted" : "denied",
@@ -334,10 +341,15 @@ export default function PreCheck() {
                     {key === "internet" && <Wifi size={20} />}
                     {key === "voiceRecorder" && <Mic size={20} />}
                   </div>
-                  <span className="font-bold">{check.label}</span>
+                  <div>
+                    <span className="font-bold block">{check.label}</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest opacity-70">
+                      {check.status === "granted" ? "Ready" : check.status === "denied" ? "Access Denied" : "Pending"}
+                    </span>
+                  </div>
                 </div>
-                {check.status === "granted" && <CheckCircle2 size={24} className="animate-[pulse_2s_ease-in-out_infinite]" />}
-                {check.status === "denied" && <AlertCircle size={24} className="animate-bounce" />}
+                {check.status === "granted" && <CheckCircle2 size={24} className="text-emerald-600 dark:text-emerald-400 animate-[pulse_2s_ease-in-out_infinite]" />}
+                {check.status === "denied" && <AlertCircle size={24} className="text-red-600 dark:text-red-400 animate-bounce" />}
               </div>
             ))}
           </div>
@@ -480,6 +492,7 @@ export default function PreCheck() {
           </div>
         </div>
       </div>
+      <HelpSupportButton supportEmail="support@quadranttech.com" />
     </div>
   );
 }

@@ -1,15 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
-import { Upload, CheckCircle2, AlertCircle, ArrowRight, FileSearch, Clock, Calendar, RefreshCw, Sparkles } from "lucide-react";
+import { Upload, CheckCircle2, AlertCircle, ArrowRight, FileSearch, Clock, Calendar, RefreshCw, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 import { Link } from "react-router-dom";
 import StatusBadge from "../components/StatusBadge";
 import StepChecklist from "../components/StepChecklist";
 import { candidateApi } from "../services/api";
+import HelpSupportButton from "../components/HelpSupportButton";
 import {
   formatInterviewDateTimeLocal,
   getGoogleCalendarDateRange,
   resolveInterviewDateTime,
   toDateTimeLocalInputValue,
 } from "../utils/formatters";
+
+function CollapseSection({ title, defaultOpen = false, children }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  return (
+    <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-800 text-left hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+      >
+        <span className="font-bold text-slate-900 dark:text-white">{title}</span>
+        {isOpen ? <ChevronUp size={18} className="text-slate-500" /> : <ChevronDown size={18} className="text-slate-500" />}
+      </button>
+      {isOpen && <div className="p-4">{children}</div>}
+    </div>
+  );
+}
 
 function routeFromInterviewLink(interviewLink) {
   if (!interviewLink) return "";
@@ -51,6 +68,7 @@ export default function CandidateDashboardPage() {
   const [scheduling, setScheduling] = useState(false);
   const [scheduleDate, setScheduleDate] = useState("");
   const [message, setMessage] = useState("");
+  const [showAllDetails, setShowAllDetails] = useState(false);
 
   const selectedJd = useMemo(() => (dashboard?.available_jds || []).find((jd) => jd.id === dashboard?.selected_jd_id) || null, [dashboard]);
   const result = dashboard?.result || null;
@@ -186,18 +204,74 @@ export default function CandidateDashboardPage() {
             <div className="p-8"><label className={`relative flex flex-col items-center justify-center border-2 border-dashed rounded-3xl p-10 transition-all cursor-pointer group ${uploading ? "border-blue-400 bg-blue-50/30" : dashboard?.selected_jd_id ? "border-slate-200 dark:border-slate-800 hover:border-blue-400 hover:bg-blue-50/30" : "border-slate-200 dark:border-slate-800 opacity-60"}`}><input type="file" className="hidden" onChange={handleFileUpload} disabled={uploading || !dashboard?.selected_jd_id} />{uploading ? <div className="text-center"><Clock size={32} className="text-blue-600 animate-spin mx-auto mb-3" /><h4 className="text-lg font-bold text-slate-900 dark:text-white">Uploading and scoring...</h4></div> : <div className="text-center"><Upload size={32} className="text-slate-400 group-hover:text-blue-600 mx-auto mb-3 transition-colors" /><h4 className="text-lg font-bold text-slate-900 dark:text-white">{dashboard?.selected_jd_id ? "Click to upload resume" : "Select a Job first"}</h4><p className="text-sm text-slate-500 dark:text-slate-400 mt-1">PDF, DOCX, or TXT</p></div>}</label></div>
           </div>
 
-          {result && <div className="space-y-8">
-            <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm"><div className="flex items-center justify-between mb-6 flex-wrap gap-3"><h3 className="text-xl font-bold text-slate-900 dark:text-white flex items-center"><FileSearch className="text-blue-600 mr-3" size={24} />Resume vs Job Description — Skill Match</h3><div className="flex items-center gap-2 flex-wrap"><StatusBadge status={result.stage} /><StatusBadge status={result.shortlisted ? "Shortlisted" : "Rejected"} className="text-sm px-4 py-1.5" /></div></div><SkillMatchTable explanation={explanation} selectedJd={selectedJd} />{Array.isArray(explanation?.reasons) && explanation.reasons.length > 0 && <div className="mt-6 p-5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700"><h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-3">Why this score</h4><ul className="space-y-2 text-sm text-slate-600 dark:text-slate-300">{explanation.reasons.map((r) => <li key={r} className="flex items-start"><div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-2 mr-3 flex-shrink-0" />{r}</li>)}</ul></div>}</div>
+          {result && (
+            <div className="space-y-6">
+              <CollapseSection title="Resume vs Job Description — Skill Match" defaultOpen={true}>
+                <div className="flex items-center gap-2 mb-4">
+                  <StatusBadge status={result.stage} />
+                  <StatusBadge status={result.shortlisted ? "Shortlisted" : "Rejected"} />
+                </div>
+                <SkillMatchTable explanation={explanation} selectedJd={selectedJd} />
+                {Array.isArray(explanation?.reasons) && explanation.reasons.length > 0 && (
+                  <div className="mt-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <h5 className="font-bold text-slate-900 dark:text-white mb-2">Why this score</h5>
+                    <ul className="space-y-1 text-sm text-slate-600 dark:text-slate-300">
+                      {explanation.reasons.map((r) => <li key={r} className="flex items-start"><div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-2 mr-2 flex-shrink-0" />{r}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </CollapseSection>
 
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm"><h4 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center"><Sparkles className="text-blue-600 mr-2" size={18} />Score Breakdown</h4><div className="space-y-4 text-sm">{[["Resume / JD Match", scoreBreakdown.resume_jd_match_score], ["Skills Match", scoreBreakdown.skills_match_score], ["Interview Score", scoreBreakdown.interview_performance_score], ["Communication", scoreBreakdown.communication_behavior_score]].map(([label, val]) => { const pct = Math.round(Number(val || 0)); return (<div key={label}><div className="flex items-center justify-between mb-1.5"><span className="text-slate-500 dark:text-slate-400">{label}</span><span className="font-bold text-slate-900 dark:text-white">{pct}%</span></div><div className="score-bar"><div className={`score-bar-fill ${pct >= 80 ? "green" : pct >= 65 ? "blue" : pct >= 40 ? "yellow" : "red"}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>); })}</div></div>
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm"><h4 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center"><CheckCircle2 className="text-emerald-500 mr-2" size={18} />Parsed Resume Snapshot</h4><p className="text-sm text-slate-600 dark:text-slate-300"><strong>Summary:</strong> {parsedResume.summary || "No summary extracted."}</p><div className="mt-4 flex flex-wrap gap-2">{(parsedResume.skills || []).length ? parsedResume.skills.map((item) => <span key={item} className="skill-pill">{item}</span>) : <span className="muted">No skills extracted.</span>}</div></div>
+              <div className="grid md:grid-cols-2 gap-6">
+                <CollapseSection title="Score Breakdown">
+                  <div className="space-y-4 text-sm">
+                    {[["Resume / JD Match", scoreBreakdown.resume_jd_match_score], ["Skills Match", scoreBreakdown.skills_match_score], ["Interview Score", scoreBreakdown.interview_performance_score], ["Communication", scoreBreakdown.communication_behavior_score]].map(([label, val]) => {
+                      const pct = Math.round(Number(val || 0));
+                      return (
+                        <div key={label}>
+                          <div className="flex items-center justify-between mb-1.5"><span className="text-slate-500 dark:text-slate-400">{label}</span><span className="font-bold text-slate-900 dark:text-white">{pct}%</span></div>
+                          <div className="score-bar"><div className={`score-bar-fill ${pct >= 80 ? "green" : pct >= 65 ? "blue" : pct >= 40 ? "yellow" : "red"}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CollapseSection>
+                <CollapseSection title="Parsed Resume">
+                  <p className="text-sm text-slate-600 dark:text-slate-300"><strong>Summary:</strong> {parsedResume.summary || "No summary extracted."}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">{(parsedResume.skills || []).length ? parsedResume.skills.map((item) => <span key={item} className="skill-pill">{item}</span>) : <span className="muted">No skills extracted.</span>}</div>
+                </CollapseSection>
+              </div>
+
+              {resumeAdvice && (
+                <CollapseSection title="Resume Advice">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div><h5 className="font-bold text-emerald-600 dark:text-emerald-400 mb-3">Strengths</h5><ul className="space-y-2">{(resumeAdvice.strengths || []).map((item) => <li key={item} className="flex items-start text-sm text-slate-600 dark:text-slate-300"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 mr-2 flex-shrink-0" />{item}</li>)}</ul></div>
+                    <div><h5 className="font-bold text-amber-600 dark:text-amber-400 mb-3">Rewrite Tips</h5><ul className="space-y-2">{(resumeAdvice.rewrite_tips || []).map((item) => <li key={item} className="flex items-start text-sm text-slate-600 dark:text-slate-300"><div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 mr-2 flex-shrink-0" />{item}</li>)}</ul></div>
+                  </div>
+                </CollapseSection>
+              )}
+
+              {result.shortlisted && !interviewCompleted && !finalDecision && (
+                <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-8 rounded-3xl text-white">
+                  <h3 className="text-xl font-bold font-display mb-2">Schedule Your Interview</h3>
+                  <p className="text-blue-100 mb-6">Pick a date and time to unlock your interview link.</p>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-700 w-4 h-4" />
+                      <input id="interview_date" name="interview_date" type="datetime-local" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} disabled={scheduling} className="pl-10 pr-4 py-3 rounded-2xl text-slate-900 bg-white outline-none min-w-[250px]" />
+                    </div>
+                    <button onClick={handleScheduleInterview} disabled={scheduling} className="px-8 py-3 rounded-2xl bg-white text-blue-600 font-black hover:scale-[1.01] transition-all shadow-xl disabled:opacity-60">{scheduling ? "Scheduling..." : scheduledInterviewDate ? "Reschedule" : "Schedule Interview"}</button>
+                  </div>
+                  {scheduledInterviewDate && (
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <p className="text-sm text-blue-100">Scheduled for: <span className="font-bold">{interviewScheduledLabel}</span></p>
+                      {googleCalendarHref && <a href={googleCalendarHref} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-medium transition-colors"><span>Add to Google Calendar</span></a>}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-
-            {resumeAdvice && <div className="grid md:grid-cols-2 gap-6"><div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm"><h4 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center"><CheckCircle2 className="text-emerald-500 mr-2" size={18} />Strengths</h4><ul className="space-y-3">{(resumeAdvice.strengths || []).map((item) => <li key={item} className="flex items-start text-sm text-slate-600 dark:text-slate-300"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2 mr-3 flex-shrink-0" />{item}</li>)}{!resumeAdvice.strengths?.length && <li className="text-sm text-slate-500">Upload resume to see advice.</li>}</ul></div><div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm"><h4 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center"><AlertCircle className="text-amber-500 mr-2" size={18} />Rewrite Tips</h4><ul className="space-y-3">{(resumeAdvice.rewrite_tips || []).map((item) => <li key={item} className="flex items-start text-sm text-slate-600 dark:text-slate-300"><div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-2 mr-3 flex-shrink-0" />{item}</li>)}</ul></div></div>}
-
-            {result.shortlisted && !interviewCompleted && !finalDecision && <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-8 rounded-3xl text-white"><h3 className="text-xl font-bold font-display mb-2">Schedule Your Interview</h3><p className="text-blue-100 mb-6">Pick a date and time to unlock your interview link.</p><div className="flex flex-col sm:flex-row gap-3"><div className="relative"><Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-700 w-4 h-4" /><input id="interview_date" name="interview_date" type="datetime-local" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} disabled={scheduling} className="pl-10 pr-4 py-3 rounded-2xl text-slate-900 bg-white outline-none min-w-[250px]" /></div><button onClick={handleScheduleInterview} disabled={scheduling} className="px-8 py-3 rounded-2xl bg-white text-blue-600 font-black hover:scale-[1.01] transition-all shadow-xl disabled:opacity-60">{scheduling ? "Scheduling..." : scheduledInterviewDate ? "Reschedule" : "Schedule Interview"}</button></div>{scheduledInterviewDate && <div className="mt-4 flex flex-wrap gap-3"><p className="text-sm text-blue-100">Scheduled for: <span className="font-bold">{interviewScheduledLabel}</span></p>{googleCalendarHref && <a href={googleCalendarHref} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-medium transition-colors"><span>Add to Google Calendar</span></a>}</div>}</div>}
-          </div>}
+          )}
         </div>
 
         <div className="space-y-6 page-enter-delay-3">
@@ -206,6 +280,7 @@ export default function CandidateDashboardPage() {
           {result && <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm card-hover-lift"><h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-4">Next Step Guidance</h4><div className="space-y-3 text-sm text-slate-600 dark:text-slate-300"><div className="question-preview-card">Current stage: {result.stage?.label || "Applied"}</div><div className="question-preview-card">Recommendation: {result.recommendation || "Pending"}</div><div className="question-preview-card">{showStartInterview ? "Your interview is ready to start." : canScheduleInterview ? "Schedule your interview to continue." : interviewCompleted ? "Interview completed — wait for HR review." : "Upload and improve your resume to move ahead."}</div></div></div>}
         </div>
       </div>
+      <HelpSupportButton supportEmail="support@quadranttech.com" />
     </div>
   );
 }

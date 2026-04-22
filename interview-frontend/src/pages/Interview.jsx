@@ -9,42 +9,39 @@ import { interviewApi, proctorApi } from "../services/api";
 import { cn } from "../utils/utils";
 import AnswerFeedback from "../components/AnswerFeedback";
 import { useProctoring } from "../hooks/useProctoring";
+import HelpSupportButton from "../components/HelpSupportButton";
 
 const SILENCE_THRESHOLD_RMS = 0.05;
 const SILENCE_RATIO_THRESHOLD = 0.5;
 
+let sharedAudioContext = null;
+function getAudioContext() {
+  if (!sharedAudioContext) sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+  return sharedAudioContext;
+}
+
 async function calculateAudioRMS(audioBlob) {
-  const arrayBuffer = await audioBlob.arrayBuffer();
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
   try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioContext = getAudioContext();
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
     const channelData = audioBuffer.getChannelData(0);
     let sumSquares = 0;
-    for (let i = 0; i < channelData.length; i++) {
-      sumSquares += channelData[i] * channelData[i];
-    }
+    for (let i = 0; i < channelData.length; i++) sumSquares += channelData[i] * channelData[i];
     return Math.sqrt(sumSquares / channelData.length);
-  } catch {
-    return 0;
-  } finally {
-    await audioContext.close();
-  }
+  } catch { return 0; }
 }
 
 async function filterSilentChunks(chunks) {
-  const validChunks = [];
-  let totalChunks = 0;
+  if (!chunks.length) return { validChunks: [], isMostlySilent: true };
+  const rmsValues = await Promise.all(chunks.map(calculateAudioRMS));
   let silentChunks = 0;
-  for (const chunk of chunks) {
-    totalChunks++;
-    const rms = await calculateAudioRMS(chunk);
-    if (rms >= SILENCE_THRESHOLD_RMS) {
-      validChunks.push(chunk);
-    } else {
-      silentChunks++;
-    }
-  }
-  const silenceRatio = totalChunks > 0 ? silentChunks / totalChunks : 1;
+  const validChunks = [];
+  rmsValues.forEach((rms, i) => {
+    if (rms >= SILENCE_THRESHOLD_RMS) validChunks.push(chunks[i]);
+    else silentChunks++;
+  });
+  const silenceRatio = silentChunks / chunks.length;
   return { validChunks, isMostlySilent: silenceRatio >= SILENCE_RATIO_THRESHOLD };
 }
 
@@ -55,17 +52,9 @@ function useTTS() {
   const audioRef = useRef(null);
 
   const speak = useCallback(async (text, voiceType = "kajal") => {
-    if (!text) return;
-    if (typeof window === "undefined") return;
-    if (muted) return;
-
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
+    if (!text || muted) return;
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
 
     try {
       const { interviewApi } = await import("../services/api");
@@ -136,7 +125,7 @@ function appendTranscript(current, next) {
   const t = String(next || "").trim();
   if (!t) return base;
   if (!base) return t;
-  return `${base} ${t}`;
+  return `${base}${base.endsWith(".") ? " " : ". "}${t}`;
 }
 
 function hasActiveAudioTrack(stream) {
@@ -206,6 +195,7 @@ export default function Interview() {
   const [previewWarning, setPreviewWarning] = useState("");
   const [answerFeedback, setAnswerFeedback] = useState(null);
   const [proctorAlert, setProctorAlert] = useState("");
+  const [lastRecordedPreview, setLastRecordedPreview] = useState("");
 
   const selectedVoice = (() => {
     const saved = sessionStorage.getItem(`interview-voice:${resultId}`);
@@ -388,11 +378,8 @@ export default function Interview() {
     return () => {
       disposed = true;
       const rec = recorderRef.current;
-      if (rec) {
-        rec.ondataavailable = null; rec.onerror = null; rec.onstop = null;
-        if (rec.state !== "inactive") rec.stop();
-        recorderRef.current = null;
-      }
+      if (rec) { try { if (rec.state !== "inactive") rec.stop(); } catch {} recorderRef.current = null; }
+      recordedChunksRef.current = [];
       releaseAudioStream();
       if (streamRef.current) { stopStreamTracks(streamRef.current); streamRef.current = null; }
       if (cleanupVideoEl) cleanupVideoEl.srcObject = null;
@@ -422,6 +409,7 @@ export default function Interview() {
     setTimeLeft(response.time_limit_seconds || 0);
     setTotalTimeLeft(response.remaining_total_seconds || 0);
     setAnswer("");
+    setLastRecordedPreview("");
     setTranscriptionWarning("");
     setIsRecording(false);
     setIsTranscribing(false);
@@ -500,7 +488,7 @@ export default function Interview() {
               return;
             }
             const blob = new Blob(validChunks, { type: mimeType });
-            if (!blob.size) { resolve({ text: "", lowConfidence: true, confidence: null }); return; }
+            if (!blob || blob.size < 1000) { resolve({ text: "", lowConfidence: true, confidence: null }); return; }
             const fd = new FormData();
             const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
             fd.append("audio", blob, `answer.${ext}`);
@@ -522,7 +510,7 @@ export default function Interview() {
   }, [currentQuestion, releaseAudioStream]);
 
   const startRecording = useCallback(async () => {
-    if (!window.MediaRecorder) { setError("Voice recording not supported. Use Chrome or Edge."); return; }
+    if (!window.MediaRecorder) { setError("Voice recording not supported. Please use Chrome, Edge, or Firefox browser."); return; }
     setError(""); setTranscriptionWarning("");
     stopSpeaking();
     try {
@@ -533,6 +521,9 @@ export default function Interview() {
         recStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         audioStreamRef.current = recStream;
       }
+      if (!recStream || recStream.getAudioTracks().length === 0) {
+        throw new Error("No audio track available");
+      }
       recordedChunksRef.current = [];
       const mimeType = getPreferredAudioMimeType();
       const rec = mimeType
@@ -541,7 +532,7 @@ export default function Interview() {
       rec.ondataavailable = (ev) => { if (ev.data?.size > 0) recordedChunksRef.current.push(ev.data); };
       rec.onerror = () => {
         recorderRef.current = null; recordedChunksRef.current = []; releaseAudioStream();
-        setIsRecording(false); setError("Recording failed. Check microphone access.");
+        setIsRecording(false); setError(" Recording interrupted. Check your microphone permissions in browser settings and try again.");
       };
       rec.start();
       recorderRef.current = rec;
@@ -549,23 +540,9 @@ export default function Interview() {
       setIsRecording(true);
     } catch {
       releaseAudioStream();
-      setError("Microphone access is unavailable. Please click the lock icon next to your URL bar, allow microphone permissions, and refresh the page.");
+      setError("Microphone access blocked. Click the lock icon in your browser address bar, allow microphone access, then refresh the page.");
     }
   }, [releaseAudioStream, stopSpeaking]);
-
-  const handleRecordingToggle = useCallback(async () => {
-    if (isSubmitting || isTranscribing) return;
-    if (!isRecording) { await startRecording(); return; }
-    try {
-      const t = await stopRecordingAndTranscribe();
-      if (!t.text) { setError("No speech detected. Try again or type your answer."); return; }
-      if (t.lowConfidence) {
-        const suf = typeof t.confidence === "number" ? ` (confidence ${(t.confidence * 100).toFixed(0)}%)` : "";
-        setTranscriptionWarning(`We couldn't clearly hear your answer${suf}. Please review or edit before submitting.`);
-      } else { setTranscriptionWarning(""); }
-      setAnswer((prev) => appendTranscript(prev, t.text));
-    } catch (e) { setError(e.message); }
-  }, [isRecording, isSubmitting, isTranscribing, startRecording, stopRecordingAndTranscribe]);
 
   // ── proctoring frame capture ───────────────────────────────────────────────
   const captureAndUploadFrame = useCallback(async (eventType = "scan") => {
@@ -617,47 +594,76 @@ export default function Interview() {
 
   // ── auto-submit on timer expiry ────────────────────────────────────────────
   const handleSubmit = useCallback(async (skipCurrent = false) => {
-    if (isSubmitting || isTranscribing) return;
+    if (isSubmittingRef.current || isTranscribingRef.current) return;
     let nextAnswer = answer;
-    if (isRecording) {
+    if (isRecordingRef.current) {
       try {
         const t = await stopRecordingAndTranscribe();
         nextAnswer = appendTranscript(answer, t.text);
         if (t.lowConfidence) {
-          const suf = typeof t.confidence === "number" ? ` (${(t.confidence * 100).toFixed(0)}%)` : "";
+          const suf = typeof t.confidence === "number" ? ` (${(t.confidence * 100).toFixed(0)}% clarity)` : "";
           setTranscriptionWarning(`We couldn't clearly hear your answer${suf}. Please review or edit before submitting.`);
         } else { setTranscriptionWarning(""); }
         if (t.text) setAnswer(nextAnswer);
-      } catch (e) { setError(e.message); autoSubmittedRef.current = false; return; }
+      } catch (e) { setError("Something went wrong. Please check your internet and try again."); autoSubmittedRef.current = false; return; }
     }
     await submitAnswer({ skipCurrent, answerOverride: nextAnswer });
-  }, [answer, isRecording, isSubmitting, isTranscribing, stopRecordingAndTranscribe, submitAnswer]);
+  }, [answer, stopRecordingAndTranscribe, submitAnswer]);
 
   useEffect(() => {
-    if (!currentQuestion || isSubmitting || isTranscribing || answerFeedback) return;
-    if (timeLeft > 0 || autoSubmittedRef.current) return;
+    if (!currentQuestion || answerFeedback) return;
+    if (timeLeft > 0) return;
+    if (autoSubmittedRef.current) return;
+    if (isSubmittingRef.current || isTranscribingRef.current) return;
     autoSubmittedRef.current = true;
-    void handleSubmit(false);
-  }, [currentQuestion, handleSubmit, isSubmitting, isTranscribing, timeLeft, answerFeedback]);
+    (async () => {
+      try { await handleSubmit(false); }
+      catch (e) { console.error("Auto-submit failed:", e); autoSubmittedRef.current = false; }
+    })();
+  }, [timeLeft, currentQuestion, answerFeedback, handleSubmit]);
 
-  // ── Keyboard Shortcuts ─────────────────────────────────────────────────────
+  // ── Keyboard Shortcuts (use refs to avoid stale closures) ─────────────────────
+  const isRecordingRef = useRef(false);
+  const isTranscribingRef = useRef(false);
+  const isSubmittingRef = useRef(false);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { isTranscribingRef.current = isTranscribing; }, [isTranscribing]);
+  useEffect(() => { isSubmittingRef.current = isSubmitting; }, [isSubmitting]);
+
+  const handleRecordingToggle = useCallback(async () => {
+    if (isSubmittingRef.current || isTranscribingRef.current) return;
+    if (!isRecordingRef.current) { await startRecording(); return; }
+    try {
+      const t = await stopRecordingAndTranscribe();
+      if (!t.text) { setError("No speech detected. Try speaking louder or type your answer in the box below."); setLastRecordedPreview(""); return; }
+      if (t.lowConfidence) {
+        const suf = typeof t.confidence === "number" ? ` (${(t.confidence * 100).toFixed(0)}% clarity)` : "";
+        setTranscriptionWarning(`We couldn't clearly hear your answer${suf}. Please review or edit before submitting.`);
+      } else { setTranscriptionWarning(""); }
+      setLastRecordedPreview(t.text || "No speech detected");
+      setAnswer((prev) => appendTranscript(prev, t.text));
+    } catch (e) { setError("Something went wrong. Please check your internet and try again."); setLastRecordedPreview(""); }
+  }, [startRecording, stopRecordingAndTranscribe]);
+
   useEffect(() => {
     function handleKeyDown(e) {
-      if (isSubmitting || isTranscribing) return;
-      const isTyping = document.activeElement &&
-        (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT');
-      if (e.code === "Space" && !isTyping) {
+      const active = document.activeElement;
+      const isTyping = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+      if (isTyping) return;
+      if (isSubmittingRef.current || isTranscribingRef.current) return;
+      if (e.code === "Space" && !e.repeat) {
         e.preventDefault();
+        e.stopPropagation();
         handleRecordingToggle();
       }
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         handleSubmit(false);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleRecordingToggle, handleSubmit, isSubmitting, isTranscribing]);
+  }, [handleRecordingToggle, handleSubmit]);
 
   // ── render ─────────────────────────────────────────────────────────────────
   if (loading) return (
@@ -783,81 +789,22 @@ export default function Interview() {
                 )}
               >
                 {speaking ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : speaking ? (
-                  <span className="flex gap-0.5">
-                    {[...Array(3)].map((_, i) => (
-                      <span key={i} className="w-0.5 bg-white rounded-full animate-bounce" style={{ height: "14px", animationDelay: `${i * 0.15}s` }} />
+                  <span className="flex items-end gap-1 h-4">
+                    {[...Array(4)].map((_, i) => (
+                      <span 
+                        key={i} 
+                        className="w-1 bg-white rounded-full animate-[bounce_1s_infinite]" 
+                        style={{ 
+                          height: i % 2 === 0 ? "100%" : "60%", 
+                          animationDelay: `${i * 0.1}s` 
+                        }} 
+                      />
                     ))}
                   </span>
                 ) : (
                   <Volume2 size={18} />
                 )}
               </button>
-            </div>
-
-            {speaking && (
-              <div className="mt-3 ml-4 inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 rounded-full text-blue-400 text-[10px] font-black uppercase tracking-widest">
-                <Volume2 size={10} className="animate-pulse" />
-                Reading question in Indian English…
-              </div>
-            )}
-          </div>
-
-          {/* Answer / feedback */}
-          {answerFeedback ? (
-            <AnswerFeedback
-              feedback={answerFeedback}
-              isLastQuestion={questionNumber === maxQuestions}
-              onContinue={() => _advanceAfterAnswer(answerFeedback._nextResponse)}
-            />
-          ) : (
-            <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <MessageSquare size={16} className="text-blue-500" />
-                  Your Response
-                </h4>
-                <div className="flex items-center gap-2">
-                  <span className={cn("w-2 h-2 rounded-full",
-                    isRecording ? "bg-red-500 animate-pulse" :
-                      isTranscribing ? "bg-amber-500 animate-pulse" : "bg-emerald-500")} />
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                    {isRecording ? "Listening…" : isTranscribing ? "Transcribing…" : "Ready"}
-                  </span>
-                </div>
-              </div>
-
-              {voiceMetrics && (
-                <div className="bg-slate-800/50 rounded-xl px-4 py-2 border border-slate-700/50">
-                  <VoiceConfidenceBar metrics={voiceMetrics} />
-                  <div className="flex gap-4 mt-1 text-[10px] text-slate-500">
-                    <span>{voiceMetrics.speaking_rate} wpm</span>
-                    <span>Fillers: {voiceMetrics.filler_count}</span>
-                  </div>
-                </div>
-              )}
-
-              <textarea
-                className="w-full h-44 bg-slate-800/80 border-2 border-slate-700 focus:border-blue-500 rounded-xl p-5 text-lg text-white outline-none shadow-inner resize-none font-medium leading-relaxed transition-all"
-                placeholder="Your voice transcript will appear here. You can review and edit before submitting."
-                value={answer}
-                onChange={(e) => setAnswer(e.target.value)}
-                onPaste={(e) => {
-                  const pastedText = e.clipboardData.getData("text");
-                  if (pastedText.length > 10) {
-                    const eventTargetId = interviewToken || resultId || sessionId;
-                    if (eventTargetId) {
-                      interviewApi.logEvent(eventTargetId, {
-                        event_type: "paste_detected",
-                        detail: `Candidate pasted ${pastedText.length} characters`,
-                        timestamp: new Date().toISOString(),
-                        meta: { length: pastedText.length },
-                      }).catch(() => { });
-                    }
-                  }
-                }}
-              />
 
               {transcriptionWarning && (
                 <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-400">
@@ -865,11 +812,18 @@ export default function Interview() {
                 </p>
               )}
 
+              {lastRecordedPreview && (
+                <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3">
+                  <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Latest recording preview</p>
+                  <p className="text-sm text-blue-100 italic leading-relaxed">"{lastRecordedPreview}"</p>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row items-center gap-3">
                 <button
                   type="button"
                   onClick={handleRecordingToggle}
-                  disabled={isSubmitting || isTranscribing}
+                  disabled={isSubmitting || isTranscribing || isRecording}
                   className={cn(
                     "flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-black text-sm transition-all disabled:opacity-50",
                     isRecording ? "bg-red-600 hover:bg-red-700 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"
@@ -882,8 +836,8 @@ export default function Interview() {
                 <div className="flex gap-3 flex-1 w-full sm:w-auto">
                   <button
                     type="button"
-                    onClick={() => setAnswer("")}
-                    disabled={isSubmitting || isTranscribing}
+                    onClick={() => { setAnswer(""); setLastRecordedPreview(""); }}
+                    disabled={isSubmitting || isTranscribing || isRecording}
                     className="flex-1 sm:flex-none px-5 py-3.5 rounded-xl border border-slate-700 text-slate-400 hover:bg-slate-800 font-bold text-sm transition-all"
                   >
                     Clear
@@ -891,164 +845,171 @@ export default function Interview() {
                   <button
                     type="button"
                     onClick={() => handleSubmit(false)}
-                    disabled={isSubmitting || isTranscribing}
+                    disabled={isSubmitting || isTranscribing || isRecording}
                     className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm transition-all disabled:opacity-50"
                   >
                     <span>{isSubmitting ? "Submitting…" : questionNumber === maxQuestions ? "Finish" : "Submit"}</span>
                     <Send size={16} />
                   </button>
                 </div>
-              </div>
-            </div>
-          )}
-        </div>
 
-        {/* ── RIGHT — proctoring panel ───────────────────────────────────── */}
-        <div className="space-y-4">
-
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden p-4 space-y-3">
-            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-              <Activity size={14} className="text-emerald-400" />
-              Proctoring Feed
-            </h4>
-
-            <div className="relative aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-800">
-              <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay muted playsInline />
-              {!previewReady && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
-                  <Activity size={28} className="mb-2" />
-                  <p className="text-xs font-bold uppercase tracking-widest">No Feed</p>
-                </div>
-              )}
-
-              {speaking && (
-                <div className="absolute bottom-10 left-2 flex items-center gap-1 bg-blue-600/80 px-2 py-1 rounded-full border border-blue-400/30">
-                  <Volume2 size={10} className="text-white animate-pulse" />
-                  <span className="text-[9px] font-black text-white">Reading…</span>
-                </div>
-              )}
-
-              <div className="absolute bottom-2 left-2 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm px-2 py-1 rounded-full border border-white/10">
-                <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-                <span className="text-[9px] font-black text-white uppercase tracking-widest">Live</span>
-              </div>
-            </div>
-
-            {/* Status grid */}
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                ["Video", previewReady ? "Active" : "Off", previewReady],
-                ["Session", sessionId ? `#${sessionId}` : "—", !!sessionId],
-                ["Microphone", micStatusLabel, micStatusOk],
-                ["Tabs", tabSwitchCount > 0 ? `${tabSwitchCount} switch${tabSwitchCount > 1 ? "es" : ""}` : "Clean", tabSwitchCount === 0],
-              ].map(([label, value, ok]) => (
-                <div key={label} className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5">
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{label}</p>
-                  <p className={cn("text-xs font-black mt-0.5 truncate", ok ? "text-slate-200" : "text-amber-400")}>
-                    {value}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 flex items-center justify-between">
-              <div>
-                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Question Voice (en-IN)</p>
-                <p className={cn("text-xs font-black mt-0.5",
-                  speaking ? "text-blue-400" : muted ? "text-amber-400" : "text-emerald-400")}>
-                  {speaking ? "Speaking question…" : muted ? "Muted" : "Auto-speak ON"}
+                <p className="text-xs text-slate-500 text-center pt-1">
+                  Press Space to record • Ctrl + Enter to submit
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={toggleMute}
-                className={cn(
-                  "p-1.5 rounded-lg border transition-all",
-                  muted
-                    ? "bg-slate-700 border-slate-600 text-slate-400 hover:text-white"
-                    : "bg-blue-900/30 border-blue-700/50 text-blue-400 hover:bg-blue-900/50"
-                )}
-              >
-                {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-              </button>
             </div>
-
-            {previewWarning && (
-              <p className="text-[10px] text-amber-400 bg-amber-500/10 rounded-lg px-3 py-1.5 border border-amber-500/20">
-                {previewWarning}
-              </p>
-            )}
           </div>
 
-          {/* Event log */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 max-h-72 overflow-hidden flex flex-col">
-            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
-              <Eye size={14} className="text-blue-400" />
-              Event Log
-              {proctoringEvents.length > 0 && (
-                <span className="ml-auto bg-slate-800 text-slate-400 text-[9px] font-black px-2 py-0.5 rounded-full border border-slate-700">
-                  {proctoringEvents.length}
-                </span>
-              )}
-            </h4>
-            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-              {proctoringEvents.length === 0 && (
-                <div className="text-center py-6 opacity-30">
-                  <EyeOff size={28} className="mx-auto mb-2" />
-                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500">No events</p>
-                </div>
-              )}
-              {proctoringEvents.map((ev, i) => {
-                const isAlert = ev.type === "TAB_SWITCH";
-                const isVoice = ev.type === "VOICE_CONFIDENCE";
-                return (
-                  <div key={i} className={cn(
-                    "flex items-start gap-2 px-2.5 py-2 rounded-lg text-[10px] border",
-                    isAlert ? "bg-red-500/10 border-red-500/30 text-red-400" :
-                      isVoice ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" :
-                        "bg-slate-800/50 border-slate-700/50 text-slate-500"
-                  )}>
-                    <span className="font-black flex-shrink-0">
-                      {isAlert ? "⚠" : isVoice ? "🎤" : "·"}
-                    </span>
-                    <span className="font-bold leading-tight">
-                      {isAlert && "Tab switch detected"}
-                      {isVoice && `Voice: ${ev.confidence_score >= 0.7 ? "confident" : "hesitant"} · ${ev.speaking_rate}wpm`}
-                      {!isAlert && !isVoice && ev.type}
-                    </span>
-                    <span className="ml-auto flex-shrink-0 opacity-50">
-                      {new Date(ev.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                    </span>
+          {/* ── RIGHT — proctoring panel ───────────────────────────────────── */}
+          <div className="space-y-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden p-4 space-y-3">
+              <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                <Activity size={14} className="text-emerald-400" />
+                Proctoring Feed
+              </h4>
+
+              <div className="relative aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-800">
+                <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay muted playsInline />
+                {!previewReady && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+                    <Activity size={28} className="mb-2" />
+                    <p className="text-xs font-bold uppercase tracking-widest">No Feed</p>
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                )}
 
-          {/* Session log */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 flex-1 flex flex-col min-h-40">
-            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-              <CheckCircle2 size={14} className="text-blue-400" />
-              Session Log
-            </h4>
-            <div className="flex-1 overflow-y-auto space-y-3">
-              {transcripts.length === 0 && (
-                <div className="text-center py-4 opacity-30">
-                  <MessageSquare size={24} className="mx-auto mb-2" />
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-600">No answers yet</p>
+                {speaking && (
+                  <div className="absolute bottom-10 left-2 flex items-center gap-1 bg-blue-600/80 px-2 py-1 rounded-full border border-blue-400/30">
+                    <Volume2 size={10} className="text-white animate-pulse" />
+                    <span className="text-[9px] font-black text-white">Reading…</span>
+                  </div>
+                )}
+
+                <div className="absolute bottom-2 left-2 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm px-2 py-1 rounded-full border border-white/10">
+                  <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+                  <span className="text-[9px] font-black text-white uppercase tracking-widest">Live</span>
                 </div>
+              </div>
+
+              {/* Status grid */}
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  ["Video", previewReady ? "Active" : "Disabled", previewReady],
+                  ["Session", sessionId ? `ID: ${sessionId}` : "Not started", !!sessionId],
+                  ["Microphone", micStatusOk ? "Receiving" : "No Signal", micStatusOk],
+                  ["Tabs", tabSwitchCount > 0 ? `${tabSwitchCount} Warning${tabSwitchCount > 1 ? "s" : ""}` : "Secure", tabSwitchCount === 0],
+                ].map(([label, value, ok]) => (
+                  <div key={label} className={cn(
+                    "bg-slate-800/60 border rounded-xl p-2.5 transition-colors",
+                    ok ? "border-slate-700/50" : "border-amber-500/30 bg-amber-500/5"
+                  )}>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{label}</p>
+                    <p className={cn("text-xs font-black mt-0.5 truncate", ok ? "text-emerald-400" : "text-amber-400")}>
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 flex items-center justify-between">
+                <div>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Question Voice (en-IN)</p>
+                  <p className={cn("text-xs font-black mt-0.5",
+                    speaking ? "text-blue-400" : muted ? "text-amber-400" : "text-emerald-400")}>
+                    {speaking ? "Speaking question…" : muted ? "Muted" : "Auto-speak ON"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className={cn(
+                    "p-1.5 rounded-lg border transition-all",
+                    muted
+                      ? "bg-slate-700 border-slate-600 text-slate-400 hover:text-white"
+                      : "bg-blue-900/30 border-blue-700/50 text-blue-400 hover:bg-blue-900/50"
+                  )}
+                >
+                  {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                </button>
+              </div>
+
+              {previewWarning && (
+                <p className="text-[10px] text-amber-400 bg-amber-500/10 rounded-lg px-3 py-1.5 border border-amber-500/20">
+                  {previewWarning}
+                </p>
               )}
-              {transcripts.map((item, idx) => (
-                <div key={idx} className="border-l-2 border-slate-700 pl-3 space-y-0.5">
-                  <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Q{idx + 1}</p>
-                  <p className="text-[10px] text-slate-300 font-bold line-clamp-2">{item.q}</p>
-                  <p className="text-[10px] text-slate-500 italic line-clamp-2">"{item.a || "(skipped)"}"</p>
-                </div>
-              ))}
+            </div>
+
+            {/* Event log */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 max-h-72 overflow-hidden flex flex-col">
+              <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
+                <Eye size={14} className="text-blue-400" />
+                Event Log
+                {proctoringEvents.length > 0 && (
+                  <span className="ml-auto bg-slate-800 text-slate-400 text-[9px] font-black px-2 py-0.5 rounded-full border border-slate-700">
+                    {proctoringEvents.length}
+                  </span>
+                )}
+              </h4>
+              <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+                {proctoringEvents.length === 0 && (
+                  <div className="text-center py-6 opacity-30">
+                    <EyeOff size={28} className="mx-auto mb-2" />
+                    <p className="text-xs font-bold uppercase tracking-widest text-slate-500">No events</p>
+                  </div>
+                )}
+                {proctoringEvents.map((ev, i) => {
+                  const isAlert = ev.type === "TAB_SWITCH";
+                  const isVoice = ev.type === "VOICE_CONFIDENCE";
+                  return (
+                    <div key={i} className={cn(
+                      "flex items-start gap-2 px-2.5 py-2 rounded-lg text-[10px] border",
+                      isAlert ? "bg-red-500/10 border-red-500/30 text-red-400" :
+                        isVoice ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" :
+                          "bg-slate-800/50 border-slate-700/50 text-slate-500"
+                    )}>
+                      <span className="font-black flex-shrink-0">
+                        {isAlert ? "⚠" : isVoice ? "🎤" : "·"}
+                      </span>
+                      <span className="font-bold leading-tight">
+                        {isAlert && "Tab switch detected"}
+                        {isVoice && `Voice: ${ev.confidence_score >= 0.7 ? "confident" : "hesitant"} · ${ev.speaking_rate}wpm`}
+                        {!isAlert && !isVoice && ev.type}
+                      </span>
+                      <span className="ml-auto flex-shrink-0 opacity-50">
+                        {new Date(ev.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Session log */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 flex-1 flex flex-col min-h-40">
+              <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                <CheckCircle2 size={14} className="text-blue-400" />
+                Session Log
+              </h4>
+              <div className="flex-1 overflow-y-auto space-y-3">
+                {transcripts.length === 0 && (
+                  <div className="text-center py-4 opacity-30">
+                    <MessageSquare size={24} className="mx-auto mb-2" />
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-600">No answers yet</p>
+                  </div>
+                )}
+                {transcripts.map((item, idx) => (
+                  <div key={idx} className="border-l-2 border-slate-700 pl-3 space-y-0.5">
+                    <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Q{idx + 1}</p>
+                    <p className="text-[10px] text-slate-300 font-bold line-clamp-2">{item.q}</p>
+                    <p className="text-[10px] text-slate-500 italic line-clamp-2">"{item.a || "(skipped)"}"</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
 
+        </div>
+        <HelpSupportButton supportEmail="support@quadranttech.com" />
       </div>
     </div>
   );
