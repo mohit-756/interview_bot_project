@@ -407,7 +407,7 @@ def extract_min_academic_percent(requirement_text: str | None) -> float:
 def evaluate_resume_for_job(
     candidate: Candidate,
     job: JobDescription,
-) -> tuple[float, dict[str, object], list[dict[str, str]]:
+) -> tuple[float, dict[str, object], list[dict[str, str]]]:
     import logging
     logger = logging.getLogger(__name__)
     jd_text_raw = getattr(job, "jd_text", "") or ""
