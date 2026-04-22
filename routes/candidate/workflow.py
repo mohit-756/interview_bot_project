@@ -5,7 +5,6 @@ import secrets
 import shutil
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
 
 import requests
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
@@ -370,15 +369,9 @@ def upload_resume_s3(
     """Upload resume via S3 URL (frontend uploads to S3 directly)."""
     logger.info(f"UPLOAD_RESUME_S3_START candidate_id={current_user.user_id} url_len={len(resume_url)}")
 
-    resume_url = (resume_url or "").strip()
-    if not resume_url or len(resume_url) > 4096:
-        logger.error("UPLOAD_RESUME_S3 invalid url length=%s preview=%s", len(resume_url), resume_url[:200])
+    if not resume_url or len(resume_url) > 500:
+        logger.error(f"UPLOAD_RESUME_S3 invalid url length: {len(resume_url)}, content preview: {resume_url[:200]}")
         raise HTTPException(status_code=400, detail="Invalid resume URL. Please re-upload your resume file.")
-    parsed_resume_url = urlparse(resume_url)
-    if parsed_resume_url.scheme not in {"http", "https"} or not parsed_resume_url.netloc:
-        logger.error("UPLOAD_RESUME_S3 invalid URL format: %s", resume_url[:200])
-        raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
-
     candidate = get_candidate_or_404(db, current_user.user_id)
     profile_changed = ensure_candidate_profile(candidate, db)
 
@@ -398,6 +391,10 @@ def upload_resume_s3(
     db.refresh(candidate)
 
     try:
+        if not resume_url.startswith(("http://", "https://")):
+            logger.error(f"UPLOAD_RESUME_S3 invalid URL format: {resume_url[:100]}")
+            raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
+
         response = requests.get(resume_url, timeout=30)
         response.raise_for_status()
 
@@ -407,9 +404,7 @@ def upload_resume_s3(
         elif "word" in content_type or "document" in content_type:
             file_ext = ".docx"
         else:
-            file_ext = Path(parsed_resume_url.path).suffix.lower() or ".pdf"
-        if file_ext not in {".pdf", ".doc", ".docx", ".txt"}:
-            file_ext = ".pdf"
+            file_ext = Path(resume_url).suffix.lower() or ".pdf"
 
         temp_path = UPLOAD_DIR / f"resume_{candidate.id}_{uuid.uuid4().hex}{file_ext}"
         with temp_path.open("wb") as f:

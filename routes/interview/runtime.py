@@ -684,57 +684,6 @@ def _resolve_result_by_token(db: Session, candidate_id: int, token: str) -> Resu
 
 
 
-def _resolve_result_for_event(db: Session, candidate_id: int, target: str) -> tuple[Result, InterviewSession | None]:
-
-    target_value = (target or "").strip()
-
-    if not target_value:
-
-        raise HTTPException(status_code=404, detail="Interview event target is missing")
-
-    if target_value.isdigit():
-
-        result = db.query(Result).filter(
-
-            Result.id == int(target_value),
-
-            Result.candidate_id == candidate_id,
-
-        ).first()
-
-        if result:
-
-            return result, _latest_interview_session(db, result)
-
-        session = db.query(InterviewSession).filter(
-
-            InterviewSession.id == int(target_value),
-
-            InterviewSession.candidate_id == candidate_id,
-
-        ).first()
-
-        if session:
-
-            result = db.query(Result).filter(
-
-                Result.id == session.result_id,
-
-                Result.candidate_id == candidate_id,
-
-            ).first()
-
-            if result:
-
-                return result, session
-
-    result = _resolve_result_by_token(db, candidate_id, target_value)
-
-    return result, _latest_interview_session(db, result)
-
-
-
-
 def _latest_interview_session(db: Session, result: Result) -> InterviewSession | None:
 
     return (
@@ -2463,7 +2412,25 @@ def interview_event(
 
 ) -> dict[str, Any]:
 
-    result, latest_session = _resolve_result_for_event(db, current_user.user_id, token)
+    result = _resolve_result_by_token(db, current_user.user_id, token)
+
+    latest_session = (
+
+        db.query(InterviewSession)
+
+        .filter(
+
+            InterviewSession.candidate_id == current_user.user_id,
+
+            InterviewSession.result_id == result.id,
+
+        )
+
+        .order_by(InterviewSession.id.desc())
+
+        .first()
+
+    )
 
 
 
