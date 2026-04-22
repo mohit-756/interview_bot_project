@@ -377,8 +377,16 @@ def safe_delete_upload(stored_path: str | None) -> bool:
 
 
 def _load_jd_text(jd_text_value: str) -> str:
+    import logging
+    logger = logging.getLogger(__name__)
     raw = (jd_text_value or "").strip()
     if not raw:
+        return ""
+    if raw.startswith("{") or raw.startswith("["):
+        logger.warning(f"_load_jd_text received JSON instead of text, returning empty: {raw[:100]}")
+        return ""
+    if len(raw) > 1000 and "job_title" in raw and "skills" in raw:
+        logger.warning(f"_load_jd_text received JD JSON string, returning empty")
         return ""
     possible_path = Path(raw)
     if possible_path.is_file():
@@ -399,15 +407,16 @@ def extract_min_academic_percent(requirement_text: str | None) -> float:
 def evaluate_resume_for_job(
     candidate: Candidate,
     job: JobDescription,
-) -> tuple[float, dict[str, object], list[dict[str, str]]]:
-    # Use stored resume_text if available (set by S3 upload), otherwise fallback to file extraction
-    # This handles both local file paths and S3 URLs
+) -> tuple[float, dict[str, object], list[dict[str, str]]:
+    import logging
+    logger = logging.getLogger(__name__)
+    jd_text_raw = getattr(job, "jd_text", "") or ""
+    logger.info(f"evaluate_resume_for_job: jd_text type={type(jd_text_raw)}, len={len(jd_text_raw)}, preview={jd_text_raw[:200]}")
     resume_text = candidate.resume_text or ""
     if not resume_text and candidate.resume_path:
-        # Fallback for older records or non-S3 uploads
         resume_text = extract_text_from_file(str(candidate.resume_path) if candidate.resume_path else "")
     candidate.parsed_resume_json = parse_resume_text(resume_text)
-    jd_text = _load_jd_text(getattr(job, "jd_text", "") or "")
+    jd_text = _load_jd_text(jd_text_raw)
     jd_skill_scores = (
         getattr(job, "skill_scores", None)
         or getattr(job, "weights_json", None)
