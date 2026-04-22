@@ -448,13 +448,7 @@ def upload_resume_s3(
             locals().get("file_ext"),
             locals().get("content_type"),
         )
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Resume text could not be extracted. If this is a scanned/image PDF, "
-                "install OCR dependencies on the server or upload a text-based PDF, DOCX, or TXT file."
-            ),
-        )
+        raise HTTPException(status_code=400, detail="Resume text could not be extracted. Please upload a valid PDF, DOCX, or TXT file.")
 
     try:
         score, explanation, _ = evaluate_resume_for_job(candidate, selected_jd)
