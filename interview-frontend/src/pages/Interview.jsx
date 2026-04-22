@@ -281,6 +281,16 @@ export default function Interview() {
     return () => clearInterval(id);
   }, [currentQuestion, isSubmitting, loading, answerFeedback]);
 
+  useEffect(() => {
+    if (timeLeft <= 30 && timeLeft > 0 && !timeWarningShown && !autoSubmittedRef.current) {
+      setTimeWarningShown(true);
+    }
+    if (timeLeft === 0 && !autoSubmittedRef.current && answer.trim()) {
+      autoSubmittedRef.current = true;
+      submitAnswer({ skipCurrent: false });
+    }
+  }, [timeLeft, timeWarningShown, answer]);
+
   const _advanceAfterAnswer = useCallback((response) => {
     stopSpeaking();
     if (response.interview_completed || !response.next_question) {
@@ -365,7 +375,7 @@ export default function Interview() {
   }, [currentQuestion, releaseAudioStream]);
 
   const startRecording = useCallback(async () => {
-    if (!window.MediaRecorder) { setError("Recorder not supported."); return; }
+    if (!window.MediaRecorder) { setError("Recording is not supported in your browser. Please use Chrome or Edge."); return; }
     stopSpeaking();
     try {
       let recStream = hasActiveAudioTrack(streamRef.current) ? new MediaStream(streamRef.current.getAudioTracks()) : await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -376,7 +386,7 @@ export default function Interview() {
       rec.start();
       recorderRef.current = rec;
       setIsRecording(true);
-    } catch { setError("Mic access blocked."); }
+    } catch { setError("We couldn't access your microphone. Please allow permission from browser settings."); }
   }, [stopSpeaking]);
 
   const captureAndUploadFrame = useCallback(async (eventType = "scan") => {
@@ -434,60 +444,121 @@ export default function Interview() {
   }, [handleRecordingToggle, handleSubmit]);
 
   if (loading) return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+    <div className="min-h-screen bg-[#0B1120] flex items-center justify-center">
       <Loader2 size={40} className="text-blue-500 animate-spin" />
     </div>
   );
 
   const timeColor = totalTimeLeft < 60 ? "text-red-500" : totalTimeLeft < 300 ? "text-amber-500" : "text-blue-400";
+  const timerWarning = timeLeft <= 30 && timeLeft > 0;
+  const processingStatus = isSubmitting || isTranscribing ? "processing" : isRecording ? "recording" : "idle";
+
+  function ProcessingOverlay() {
+    if (processingStatus !== "processing") return null;
+    return (
+      <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 flex flex-col items-center gap-4 shadow-xl">
+          <Loader2 size={48} className="text-blue-500 animate-spin" />
+          <p className="text-white font-bold text-lg">Processing your answer...</p>
+          <p className="text-slate-400 text-sm">Please wait while we analyze your response</p>
+        </div>
+      </div>
+    );
+  }
+
+  function EndInterviewModal() {
+    if (!showEndModal) return null;
+    return (
+      <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+              <AlertOctagon size={20} className="text-red-400" />
+            </div>
+            <h3 className="text-white font-bold text-lg">End Interview?</h3>
+          </div>
+          <p className="text-slate-300 mb-6">Are you sure you want to end the interview? Your progress will be saved.</p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowEndModal(false)}
+              className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 text-slate-300 font-bold rounded-xl hover:bg-slate-700 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => navigate(`/interview/${resultId}/completed`)}
+              className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all"
+            >
+              End Interview
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans p-4 lg:p-6 transition-colors duration-300">
+    <div className="min-h-screen bg-[#0B1120] font-sans p-4 lg:p-6 transition-all duration-300">
+      <ProcessingOverlay />
+      <EndInterviewModal />
       <div className="max-w-7xl mx-auto space-y-6">
         
-        {/* ── HEADER ──────────────────────────────────────────────────────── */}
+        {/* HEADER */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 p-2.5 rounded-2xl text-white shadow-lg shadow-blue-200 dark:shadow-none animate-pulse">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-2.5 rounded-xl text-white shadow-lg shadow-blue-500/20 animate-pulse">
               <Play size={20} fill="white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white font-display">Live AI Interview</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
+              <h1 className="text-2xl font-bold text-white font-display">Live AI Interview</h1>
+              <p className="text-sm text-slate-400 uppercase tracking-widest text-xs font-bold">
                 Question {questionNumber} / {maxQuestions} · Secure Mode
               </p>
             </div>
           </div>
-          <div className={cn(
-            "flex items-center gap-3 bg-white dark:bg-slate-900 px-6 py-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm font-mono font-black text-2xl transition-all",
-            timeColor
-          )}>
-            <Clock size={20} className={timeColor} />
-            {formatTime(totalTimeLeft)}
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-6 py-3 rounded-xl border border-slate-800 shadow-lg font-mono font-black text-2xl transition-all duration-300",
+              timeColor
+            )}>
+              <Clock size={20} className={cn(timerWarning && "animate-pulse")} />
+              {formatTime(totalTimeLeft)}
+            </div>
+            <button
+              onClick={() => setShowEndModal(true)}
+              className="px-4 py-3 bg-red-600/20 border border-red-500/30 text-red-400 font-bold rounded-xl hover:bg-red-600/30 transition-all duration-300"
+            >
+              <X size={20} />
+            </button>
           </div>
         </div>
 
-        {/* ── PROGRESS DOTS ────────────────────────────────────────────────── */}
+        {/* PROGRESS DOTS */}
         <div className="flex items-center gap-1.5">
           {[...Array(maxQuestions)].map((_, i) => (
             <div key={i} className={cn("h-1.5 rounded-full transition-all duration-500",
-              i === questionNumber - 1 ? "bg-blue-600 w-8" : i < questionNumber - 1 ? "bg-emerald-500 w-4" : "bg-slate-200 dark:bg-slate-800 w-4"
+              i === questionNumber - 1 ? "bg-blue-600 w-8" : i < questionNumber - 1 ? "bg-emerald-500 w-4" : "bg-slate-800 w-4"
             )} />
           ))}
           <span className="ml-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
             {questionNumber} / {maxQuestions}
           </span>
+          {timerWarning && (
+            <span className="ml-auto px-3 py-1 bg-red-500/10 border border-red-500/30 text-red-400 rounded-full text-xs font-bold animate-pulse">
+              30s left!
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* ── LEFT COLUMN ───────────────────────────────────────────────── */}
+          {/* LEFT COLUMN */}
           <div className="lg:col-span-2 space-y-6">
             <TabSwitchAlert count={tabSwitchCount} />
             {proctorAlert && (
-              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 rounded-2xl flex items-center gap-3 animate-bounce">
-                <div className="bg-amber-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-black">!</div>
-                <p className="text-slate-900 dark:text-slate-200 font-bold text-sm">{proctorAlert}</p>
+              <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl flex items-center gap-3 animate-pulse">
+                <div className="bg-amber-500/20 text-amber-400 w-8 h-8 rounded-full flex items-center justify-center font-bold">!</div>
+                <p className="text-amber-400 font-bold text-sm">{proctorAlert}</p>
               </div>
             )}
 
@@ -495,10 +566,11 @@ export default function Interview() {
               <AnswerFeedback feedback={answerFeedback} onContinue={() => _advanceAfterAnswer(answerFeedback._nextResponse)} />
             ) : (
               <>
-                <div className="bg-white dark:bg-slate-900 rounded-[32px] border border-slate-200 dark:border-slate-800 shadow-sm p-8 relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-600 rounded-r" />
+                {/* Question Card */}
+                <div className="bg-slate-900/80 backdrop-blur-md border border-slate-800 shadow-lg rounded-2xl p-8 relative overflow-hidden hover:border-slate-700 transition-all duration-300">
+                  <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-blue-600 to-indigo-600 rounded-r" />
                   <div className="flex items-start gap-6 pl-4">
-                    <h2 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white leading-tight flex-1">
+                    <h2 className="text-xl md:text-2xl font-bold text-white leading-tight flex-1">
                       {currentQuestion?.text}
                     </h2>
                     <button
@@ -506,8 +578,8 @@ export default function Interview() {
                       onClick={() => speaking ? stopSpeaking() : speak(currentQuestion?.text || "", selectedVoice)}
                       disabled={speaking}
                       className={cn(
-                        "flex-shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center border transition-all",
-                        speaking ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400"
+                        "flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center border transition-all duration-300 hover:scale-[1.02]",
+                        speaking ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400 hover:text-blue-400"
                       )}
                     >
                       {speaking ? (
@@ -519,54 +591,63 @@ export default function Interview() {
                   </div>
                 </div>
 
-                <div className="bg-white dark:bg-slate-900 rounded-[32px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
-                  <div className="px-8 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
-                    <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                      <MessageSquare size={14} className="text-blue-500" /> Your Response
+                {/* Answer Card */}
+                <div className="bg-slate-900/80 backdrop-blur-md border border-slate-800 shadow-lg rounded-2xl overflow-hidden flex flex-col hover:border-slate-700 transition-all duration-300">
+                  <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <MessageSquare size={14} className="text-blue-400" /> Your Response
                     </h3>
-                    <div className="flex items-center gap-2 bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700">
-                      <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", isRecording ? "bg-red-500" : "bg-emerald-500")} />
-                      <span className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
-                        {isRecording ? "Recording" : isTranscribing ? "Transcribing" : "Ready"}
-                      </span>
+                    <div className={cn(
+                      "flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border",
+                      isRecording 
+                        ? "bg-red-500/10 text-red-400 border-red-500/30" 
+                        : processingStatus === "processing"
+                          ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                          : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                    )}>
+                      <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", isRecording ? "bg-red-500" : processingStatus === "processing" ? "bg-amber-500" : "bg-emerald-500")} />
+                      {isRecording ? "Recording" : processingStatus === "processing" ? "Processing" : "Ready"}
                     </div>
                   </div>
-                  <div className="relative p-8">
+                  <div className="relative p-6">
                     <textarea
                       value={answer}
                       onChange={(e) => setAnswer(e.target.value)}
                       placeholder="Start speaking or type your answer here..."
-                      className="w-full h-56 bg-transparent text-slate-800 dark:text-slate-200 text-lg leading-relaxed outline-none resize-none"
+                      className="w-full h-48 bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 text-lg leading-relaxed outline-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300"
                       disabled={isSubmitting || isTranscribing}
                     />
                     {lastRecordedPreview && !isRecording && !isTranscribing && (
-                      <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-5 py-4 rounded-2xl">
-                        <p className="text-[9px] font-black text-blue-600 uppercase mb-1">Latest recording preview</p>
-                        <p className="text-sm text-slate-700 dark:text-blue-100 italic">"{lastRecordedPreview}"</p>
+                      <div className="mt-4 bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+                        <p className="text-xs font-bold text-blue-400 uppercase mb-1">Latest recording preview</p>
+                        <p className="text-sm text-slate-300 italic">"{lastRecordedPreview}"</p>
                       </div>
                     )}
                   </div>
                 </div>
 
+                {/* Action Buttons */}
                 <div className="flex flex-col sm:flex-row items-center gap-4">
                   <button
                     type="button"
                     onClick={handleRecordingToggle}
                     disabled={isSubmitting || isTranscribing}
                     className={cn(
-                      "flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-4 rounded-2xl font-black text-sm transition-all shadow-xl",
-                      isRecording ? "bg-red-600 text-white" : "bg-blue-600 text-white"
+                      "flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-4 rounded-xl font-bold text-sm transition-all duration-300 hover:scale-[1.02] shadow-lg",
+                      isRecording 
+                        ? "bg-gradient-to-r from-red-600 to-red-700 text-white shadow-red-500/20" 
+                        : "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-blue-500/20"
                     )}
                   >
                     {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
-                    {isRecording ? "Stop Speaking" : isTranscribing ? "Transcribing..." : "Start Speaking"}
+                    {isRecording ? "Stop Speaking" : isTranscribing ? "Processing..." : "Start Speaking"}
                   </button>
-                  <div className="flex gap-4 flex-1 w-full sm:w-auto">
+                  <div className="flex gap-3 flex-1 w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={() => setAnswer("")}
                       disabled={isSubmitting || isTranscribing || isRecording}
-                      className="flex-1 sm:flex-none px-7 py-4 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 font-bold text-sm"
+                      className="flex-1 sm:flex-none px-6 py-4 bg-slate-800 border border-slate-700 text-slate-300 font-bold text-sm rounded-xl hover:bg-slate-700 transition-all duration-300"
                     >
                       Clear
                     </button>
@@ -574,7 +655,7 @@ export default function Interview() {
                       type="button"
                       onClick={handleSubmit}
                       disabled={isSubmitting || isTranscribing || isRecording || !answer.trim()}
-                      className="flex-1 sm:flex-none flex items-center justify-center gap-3 px-10 py-4 rounded-2xl font-black text-sm bg-indigo-600 text-white shadow-xl disabled:opacity-50"
+                      className="flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-4 rounded-xl font-bold text-sm bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-50 transition-all duration-300 hover:scale-[1.02]"
                     >
                       <span>{isSubmitting ? "Submitting..." : questionNumber === maxQuestions ? "Finish Interview" : "Submit Answer"}</span>
                       <Send size={18} />
@@ -585,25 +666,25 @@ export default function Interview() {
             )}
           </div>
 
-          {/* ── RIGHT COLUMN — SIDEBAR ────────────────────────────────────── */}
+          {/* RIGHT COLUMN - SIDEBAR */}
           <div className="space-y-4">
             
             {/* Proctoring Card */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[32px] overflow-hidden p-6 shadow-sm">
-              <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <Activity size={16} className="text-emerald-500" /> Security Feed
+            <div className="bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-2xl overflow-hidden p-5 shadow-lg hover:border-slate-700 transition-all duration-300">
+              <h4 className="text-xs font-bold text-white uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Activity size={16} className="text-emerald-400" /> Security Feed
               </h4>
-              <div className="relative aspect-video bg-slate-900 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
+              <div className="relative aspect-video bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
                 <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay muted playsInline />
                 {!previewReady && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
                     <Loader2 size={24} className="animate-spin mb-2" />
-                    <p className="text-[10px] font-black uppercase">Waking sensors...</p>
+                    <p className="text-[10px] font-bold uppercase">Waking sensors...</p>
                   </div>
                 )}
                 <div className="absolute bottom-3 left-3 flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
-                  <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-                  <span className="text-[9px] font-black text-white uppercase tracking-widest">Protected Live</span>
+                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                  <span className="text-white text-xs font-bold uppercase tracking-widest">LIVE</span>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 mt-4">
@@ -613,27 +694,27 @@ export default function Interview() {
                   ["Stability", tabSwitchCount > 0 ? "Alert" : "Stable", tabSwitchCount === 0],
                   ["Encryption", "TLS 1.3", true],
                 ].map(([l, v, ok]) => (
-                  <div key={l} className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
-                    <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5">{l}</p>
-                    <p className={cn("text-[11px] font-black truncate", ok ? "text-emerald-600" : "text-amber-500")}>{v}</p>
+                  <div key={l} className="bg-slate-800/50 border border-slate-700 p-3 rounded-xl">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase mb-0.5">{l}</p>
+                    <p className={cn("text-[11px] font-bold truncate", ok ? "text-emerald-400" : "text-amber-400")}>{v}</p>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Security Log Card */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[32px] p-6 shadow-sm max-h-[250px] flex flex-col">
-              <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <Eye size={16} className="text-blue-500" /> Security Logs
+            <div className="bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-lg max-h-[250px] flex flex-col hover:border-slate-700 transition-all duration-300">
+              <h4 className="text-xs font-bold text-white uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Eye size={16} className="text-blue-400" /> Security Logs
               </h4>
               <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                {proctoringEvents.length === 0 && <p className="text-xs text-slate-400 italic text-center py-4">No events detected</p>}
+                {proctoringEvents.length === 0 && <p className="text-xs text-slate-500 italic text-center py-4">No events detected</p>}
                 {proctoringEvents.map((ev, i) => (
-                  <div key={i} className="flex items-start gap-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 text-[10px]">
-                    <span className="font-black mt-0.5">•</span>
+                  <div key={i} className="flex items-start gap-3 p-2.5 rounded-xl bg-slate-800/50 border border-slate-700 text-[10px]">
+                    <span className="font-bold mt-0.5 text-slate-400">•</span>
                     <div className="flex-1">
-                      <p className="font-bold text-slate-700 dark:text-slate-300">{ev.type.replace(/_/g, " ")}</p>
-                      <p className="opacity-60 uppercase">{new Date(ev.timestamp).toLocaleTimeString()}</p>
+                      <p className="font-bold text-slate-300">{ev.type.replace(/_/g, " ")}</p>
+                      <p className="text-slate-500 uppercase">{new Date(ev.timestamp).toLocaleTimeString()}</p>
                     </div>
                   </div>
                 ))}
@@ -641,17 +722,17 @@ export default function Interview() {
             </div>
 
             {/* History Card */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[32px] p-6 shadow-sm flex-1 min-h-[200px] flex flex-col">
-              <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-indigo-500" /> Answer History
+            <div className="bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-lg flex-1 min-h-[200px] flex flex-col hover:border-slate-700 transition-all duration-300">
+              <h4 className="text-xs font-bold text-white uppercase tracking-widest mb-4 flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-indigo-400" /> Answer History
               </h4>
               <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
-                {transcripts.length === 0 && <p className="text-xs text-slate-400 italic text-center py-8">Waiting for answers</p>}
+                {transcripts.length === 0 && <p className="text-xs text-slate-500 italic text-center py-8">Waiting for answers</p>}
                 {transcripts.map((item, idx) => (
-                  <div key={idx} className="border-l-2 border-slate-100 dark:border-slate-800 pl-3 space-y-1">
-                    <p className="text-[9px] font-black text-blue-500 uppercase">Question {idx + 1}</p>
-                    <p className="text-[10px] text-slate-900 dark:text-slate-200 font-bold line-clamp-1">{item.q}</p>
-                    <p className="text-[10px] text-slate-500 italic line-clamp-2">"{item.a || "(skipped)"}"</p>
+                  <div key={idx} className="border-l-2 border-slate-700 pl-3 space-y-1">
+                    <p className="text-[9px] font-bold text-blue-400 uppercase">Question {idx + 1}</p>
+                    <p className="text-[10px] text-slate-200 font-bold line-clamp-1">{item.q}</p>
+                    <p className="text-[10px] text-slate-400 italic line-clamp-2">"{item.a || "(skipped)"}"</p>
                   </div>
                 ))}
               </div>
