@@ -56,7 +56,7 @@ def _format_interview_datetime(interview_datetime):
     tz = _interview_timezone()
     tz_name = str(tz.key) if hasattr(tz, 'key') else str(tz)
     tz_abbrev = {"Asia/Kolkata": "IST", "UTC": "UTC", "America/New_York": "ET"}.get(tz_name, tz_name[-4:] if len(tz_name) > 4 else tz_name)
-    return dt_utc.astimezone(tz).strftime(f"%A, %B %d, %Y at %I:%M %p %Z ({tz_abbrev})")
+    return dt_utc.astimezone(tz).strftime(f"%A, %B %d, %Y at %I:%M %p") + f" ({tz_abbrev})"
 
 
 def _build_google_calendar_link(interview_datetime, role_title, interview_link):
