@@ -82,6 +82,9 @@ export default function HRInterviewDetailPage() {
   useEffect(() => { load(); }, [load]);
 
   async function handleFinalize() {
+    const confirmMsg = `Are you sure you want to ${decision === "selected" ? "SELECT" : "REJECT"} this candidate?\n\nThis action will mark the interview as finalized and update their pipeline status. You can still review and edit later.`;
+    if (!window.confirm(confirmMsg)) return;
+
     setSaving(true);
     setError("");
     try {
@@ -163,9 +166,81 @@ export default function HRInterviewDetailPage() {
 
       {Object.keys(section_summary || {}).length > 0 && <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{Object.entries(section_summary).map(([section, score]) => <MetricCard key={section} label={`${section} section`} value={`${Math.round(Number(score))}%`} hint="Average score" color="purple" />)}</div>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="card stack"><div className="title-row"><div><p className="eyebrow">Overall interview summary</p><h3>Strengths, weaknesses, and recommendation</h3></div><Sparkles className="text-blue-600" size={18} /></div><p><strong>Recommendation:</strong> {summary.hiring_recommendation || "Pending"}</p><p><strong>Strengths:</strong> {(summary.strengths_summary || []).join(" ") || "N/A"}</p><p><strong>Weaknesses:</strong> {(summary.weaknesses_summary || []).join(" ") || "N/A"}</p><p><strong>Improvement suggestions:</strong> {(questions || []).map((q) => q?.evaluation?.improvement_suggestion).filter(Boolean).slice(0, 3).join(" ") || "No improvement suggestions yet."}</p></div>
-        <div className="card stack"><div className="title-row"><div><p className="eyebrow">Suspicious event summary</p><h3>Proctoring overview</h3></div><AlertTriangle className="text-amber-500" size={18} /></div>{suspiciousEvents.length ? suspiciousEvents.slice(0, 5).map((event) => <div key={event.id} className="question-preview-card">{event.event_type} — {formatDateTime(event.created_at)}</div>) : <p className="muted">No suspicious proctoring events were recorded.</p>}</div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-4">
+          <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+            <Sparkles className="text-blue-600" size={20} />
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">AI Analysis</p>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Summary & Recommendation</h3>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-gradient-to-br from-blue-50 to-blue-50/50 dark:from-blue-900/10 dark:to-blue-900/5 p-4 border border-blue-200/50 dark:border-blue-800/50">
+              <p className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider mb-1">Hiring Recommendation</p>
+              <p className="text-lg font-bold text-blue-900 dark:text-blue-200">{summary.hiring_recommendation || "Pending AI analysis"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Key Strengths</p>
+              {(summary.strengths_summary || []).length ? (
+                <ul className="space-y-1">
+                  {(summary.strengths_summary || []).map((s, i) => (
+                    <li key={i} className="text-sm text-emerald-700 dark:text-emerald-400 flex gap-2">
+                      <span className="text-emerald-500 font-bold">✓</span>
+                      <span>{s}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-500 italic">No strengths analyzed yet.</p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Areas for Improvement</p>
+              {(summary.weaknesses_summary || []).length ? (
+                <ul className="space-y-1">
+                  {(summary.weaknesses_summary || []).map((w, i) => (
+                    <li key={i} className="text-sm text-amber-700 dark:text-amber-400 flex gap-2">
+                      <span className="text-amber-500 font-bold">!</span>
+                      <span>{w}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-500 italic">No areas identified yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-4">
+          <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+            <AlertTriangle className="text-amber-500" size={20} />
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Proctoring Monitor</p>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Suspicious Events</h3>
+            </div>
+          </div>
+          {suspiciousEvents.length ? (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">{suspiciousEvents.length} flag{suspiciousEvents.length !== 1 ? 's' : ''} recorded during this interview:</p>
+              {suspiciousEvents.slice(0, 5).map((event) => (
+                <div key={event.id} className="p-3 rounded-xl bg-amber-50/50 dark:bg-amber-900/10 border border-amber-200/50 dark:border-amber-800/50">
+                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">{(event.event_type || "").replace(/_/g, " ")}</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{formatDateTime(event.created_at)}</p>
+                </div>
+              ))}
+              {suspiciousEvents.length > 5 && (
+                <p className="text-xs text-slate-500 text-center pt-2">+ {suspiciousEvents.length - 5} more flag{suspiciousEvents.length - 5 !== 1 ? 's' : ''}</p>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-emerald-50/50 dark:bg-emerald-900/10 p-4 border border-emerald-200/50 dark:border-emerald-800/50 text-center">
+              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">✓ No suspicious proctoring events were recorded.</p>
+              <p className="text-xs text-emerald-600/75 dark:text-emerald-500/75 mt-1">Interview integrity confirmed.</p>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">

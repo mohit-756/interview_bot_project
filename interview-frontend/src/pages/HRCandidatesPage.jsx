@@ -282,7 +282,7 @@ export default function HRCandidatesPage() {
         </div>
       </div>
 
-      {error ? <p className="alert error">{error}</p> : null}
+      {error && <p className="alert error">{error}</p>}
 
       <div className="grid grid-cols-2 xs:grid-cols-4 gap-2 sm:gap-3">
         <div className="card p-4 flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
@@ -335,6 +335,35 @@ export default function HRCandidatesPage() {
           <GitCompareArrows size={14} /><span className="hidden sm:inline">Compare</span> ({selectedForCompare.length})
         </button>
       </div>
+
+      {selectedForBulk.length > 0 && (
+        <div className="bg-gradient-to-r from-blue-50 to-blue-50/50 dark:from-blue-900/15 dark:to-blue-900/5 rounded-3xl border border-blue-200 dark:border-blue-800 shadow-sm p-6 space-y-4">
+          <div className="flex items-center gap-2 mb-3">
+            <CheckSquare size={20} className="text-blue-600 dark:text-blue-400" />
+            <div>
+              <p className="font-bold text-slate-900 dark:text-white">{selectedForBulk.length} candidate{selectedForBulk.length !== 1 ? "s" : ""} selected</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400">Choose an action to apply to selected candidates</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+            <button type="button" onClick={() => handleBulkStageUpdate("shortlisted")} disabled={bulkLoading} className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-sm font-bold transition-all" aria-label={`Move ${selectedForBulk.length} candidates to shortlisted`}>
+              ✓ Shortlist All
+            </button>
+            <button type="button" onClick={() => handleBulkStageUpdate("rejected")} disabled={bulkLoading} className="px-4 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-sm font-bold transition-all" aria-label={`Reject ${selectedForBulk.length} candidates`}>
+              ✕ Reject All
+            </button>
+            <div className="flex items-center gap-2">
+              <select value={bulkStage} onChange={(e) => setBulkStage(e.target.value)} className="flex-1 px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white" aria-label="Select stage for bulk action">
+                <option value="">Move to stage...</option>
+                {ATS_STAGE_OPTIONS.filter((stage) => stage.value !== "applied").map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}
+              </select>
+              <button type="button" onClick={() => handleBulkStageUpdate()} disabled={!bulkStage || bulkLoading} className="px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-bold transition-all" aria-label={`Move ${selectedForBulk.length} candidates to selected stage`}>
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">

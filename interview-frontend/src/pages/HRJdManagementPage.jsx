@@ -107,8 +107,8 @@ function JdForm({ initialData, onSave, onCancel }) {
   }
 
   async function handleSave() {
-    if (!title.trim()) { setError("Title is required."); return; }
-    if (!jdText.trim() && !Object.keys(skills).length) { setError("Add JD text or upload a file first."); return; }
+    if (!title.trim()) { setError("Please enter a job title to identify this JD."); return; }
+    if (!jdText.trim() && !Object.keys(skills).length) { setError("Please upload a JD file or paste job description text AND extract skills from it."); return; }
     setSaving(true); setError("");
     try {
       const payload = {
@@ -152,52 +152,60 @@ function JdForm({ initialData, onSave, onCancel }) {
       <div className="grid md:grid-cols-3 gap-4">
         <div className="md:col-span-1">
           <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Job Title *</label>
-          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Backend Engineer"
+          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Backend Engineer" aria-label="Job title (required)" aria-required="true"
             className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Used to identify this JD</p>
         </div>
         <div>
-          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Qualify Score (%)</label>
-          <input type="number" min={0} max={100} value={qualifyScore} onChange={(e) => setQualifyScore(e.target.value)}
+          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Min Passing Score (%)</label>
+          <input type="number" min={0} max={100} value={qualifyScore} onChange={(e) => setQualifyScore(e.target.value)} aria-label="Minimum qualifying score"
             className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Score needed to pass screening</p>
         </div>
         <div>
-          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">No. of Questions</label>
-          <input type="number" min={1} max={20} value={totalQuestions} onChange={(e) => setTotalQuestions(e.target.value)}
+          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Interview Questions</label>
+          <input type="number" min={1} max={20} value={totalQuestions} onChange={(e) => setTotalQuestions(e.target.value)} aria-label="Number of interview questions"
             className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Total candidates will answer</p>
         </div>
       </div>
-      {/* PHASE 1 FIX: Candidate requirement fields */}
-      <div className="p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
-        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Candidate Requirements</p>
+      <div className="p-6 bg-gradient-to-br from-slate-50 to-slate-50/50 dark:from-slate-800/50 dark:to-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-700">
+        <p className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-4 flex items-center gap-2">
+          <span className="text-base">👤</span>
+          Candidate Requirements & Interview Setup
+        </p>
         <div className="grid md:grid-cols-4 gap-4">
           <div>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Education Level</label>
-            <select value={educationRequirement} onChange={(e) => setEducationRequirement(e.target.value)}
+            <select value={educationRequirement} onChange={(e) => setEducationRequirement(e.target.value)} aria-label="Minimum education requirement"
               className="w-full px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white">
               <option value="">Any / Not required</option>
-              <option value="bachelor">Bachelor's</option>
-              <option value="master">Master's</option>
+              <option value="bachelor">Bachelor's Degree</option>
+              <option value="master">Master's Degree</option>
               <option value="phd">PhD / Doctorate</option>
             </select>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Filter candidates by education</p>
           </div>
           <div>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Min Experience (yrs)</label>
-            <input type="number" min={0} max={30} value={experienceRequirement}
+            <input type="number" min={0} max={30} value={experienceRequirement} aria-label="Minimum years of experience required"
               onChange={(e) => setExperienceRequirement(e.target.value)} placeholder="0 = any"
               className="w-full px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Years in field (0 = any)</p>
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Min Academic % (0=off)</label>
-            <input type="number" min={0} max={100} step={5} value={minAcademicPercent}
-              onChange={(e) => setMinAcademicPercent(e.target.value)} placeholder="e.g. 60"
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Min GPA / Academic %</label>
+            <input type="number" min={0} max={100} step={5} value={minAcademicPercent} aria-label="Minimum academic percentage or GPA"
+              onChange={(e) => setMinAcademicPercent(e.target.value)} placeholder="0 = disabled"
               className="w-full px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Set to 0 to disable</p>
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Project Q Ratio (%)</label>
-            <input type="number" min={0} max={100} step={10} value={projectQuestionRatioPct}
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Project Questions %</label>
+            <input type="number" min={0} max={100} step={10} value={projectQuestionRatioPct} aria-label="Percentage of project-based questions"
               onChange={(e) => setProjectQuestionRatioPct(e.target.value)} placeholder="80"
               className="w-full px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
-            <p className="text-xs text-slate-400 mt-1">Rest = theory questions</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Rest will be theory</p>
           </div>
           <div>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Interview Duration (min)</label>
