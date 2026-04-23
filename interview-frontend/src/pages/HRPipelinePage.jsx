@@ -78,6 +78,7 @@ export default function HRPipelinePage() {
   const [candidates, setCandidates] = useState([]);
   const [availableJds, setAvailableJds] = useState([]);
   const [selectedJdId, setSelectedJdId] = useState("all");
+  const [selectedStage, setSelectedStage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [updatingResultId, setUpdatingResultId] = useState(null);
@@ -126,6 +127,9 @@ export default function HRPipelinePage() {
     if (selectedJdId !== "all") {
       result = result.filter((candidate) => getCandidateJdId(candidate) === String(selectedJdId));
     }
+    if (selectedStage) {
+      result = result.filter((candidate) => normalizeStageKey(candidate?.status?.key) === selectedStage);
+    }
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter((candidate) =>
@@ -135,7 +139,7 @@ export default function HRPipelinePage() {
       );
     }
     return result;
-  }, [candidates, selectedJdId, searchQuery]);
+  }, [candidates, selectedJdId, selectedStage, searchQuery]);
 
   const groupedCandidates = useMemo(() => {
     const groups = Object.fromEntries(PIPELINE_STAGES.map((stage) => [stage.key, []]));
@@ -219,6 +223,12 @@ export default function HRPipelinePage() {
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 w-40" />
           </div>
+          {/* Stage Filter Clear */}
+          {selectedStage && (
+            <button type="button" onClick={() => setSelectedStage(null)} className="px-3 py-2 text-sm bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-all">
+              Clear Filter
+            </button>
+          )}
           {/* JD Filter */}
           <select value={selectedJdId} onChange={(event) => setSelectedJdId(event.target.value)} className="px-3 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="all">All Jobs</option>
@@ -239,14 +249,24 @@ export default function HRPipelinePage() {
           const IconComponent = STAGE_ICONS[stage.key] || Users;
           const count = stageCounts[stage.key] || 0;
           const colors = STAGE_COLORS[stage.key] || STAGE_COLORS.applied;
+          const isSelected = selectedStage === stage.key;
           return (
-            <div key={stage.key} className={`p-3 rounded-xl border ${colors.bg} ${colors.border} flex items-center gap-2`}>
+            <button
+              key={stage.key}
+              type="button"
+              onClick={() => setSelectedStage(isSelected ? null : stage.key)}
+              className={`p-3 rounded-xl border flex items-center gap-2 text-left transition-all cursor-pointer hover:scale-[1.02] ${
+                isSelected
+                  ? `${colors.bg} ${colors.border} ring-2 ring-offset-2 ring-blue-500`
+                  : `${colors.bg} ${colors.border} opacity-100 hover:opacity-80`
+              }`}
+            >
               <IconComponent size={16} className={colors.text} />
               <div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">{stage.label}</p>
                 <p className={`text-lg font-bold ${colors.text}`}>{count}</p>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
