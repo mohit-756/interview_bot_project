@@ -486,7 +486,8 @@ export default function Interview() {
 
             const fd = new FormData();
             fd.append("audio", blob, "answer.webm");
-            fd.append("context_hint", String(currentQuestion?.text || ""));
+            // Don't pass context_hint - it confuses Whisper with question text
+            // fd.append("context_hint", String(currentQuestion?.text || ""));
             const res = await interviewApi.transcribe(fd);
             resolve({ text: String(res?.text || "").trim(), lowConfidence: !!res?.low_confidence, confidence: res?.confidence });
           } catch (e) { reject(e); }
