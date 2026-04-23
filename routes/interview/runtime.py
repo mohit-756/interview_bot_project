@@ -2320,7 +2320,7 @@ def interview_transcribe(
 
         logger.warning(
 
-            "STT transcription unavailable (Groq error) — returning empty transcript. Error: %s",
+            "STT transcription unavailable — returning empty transcript. Error: %s",
 
             exc,
 
@@ -2339,6 +2339,8 @@ def interview_transcribe(
             "language": language,
 
             "degraded": True,
+
+            "error": str(exc),
 
         }
 

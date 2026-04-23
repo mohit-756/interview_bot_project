@@ -15,8 +15,8 @@ import { useFullScreen } from "../hooks/useFullScreen";
 import HelpSupportButton from "../components/HelpSupportButton";
 import { useAnnounce } from "../hooks/useAccessibility";
 
-const SILENCE_THRESHOLD_RMS = 0.01;
-const SILENCE_RATIO_THRESHOLD = 0.8;
+const SILENCE_THRESHOLD_RMS = 0.005;
+const SILENCE_RATIO_THRESHOLD = 0.85;
 
 let sharedAudioContext = null;
 function getAudioContext() {
@@ -129,7 +129,13 @@ function stopStreamTracks(stream) {
 
 function getPreferredAudioMimeType() {
   if (typeof window === "undefined" || !window.MediaRecorder) return "";
-  const candidates = ["audio/wav", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/wav",
+    "audio/mp4"
+  ];
   return candidates.find((t) => window.MediaRecorder.isTypeSupported(t)) || "";
 }
 
@@ -480,8 +486,8 @@ export default function Interview() {
             // Determine correct extension based on actual mime type
             const ext = mimeType.startsWith("audio/wav") ? ".wav" : ".webm";
 
-            // Minimum size check - reject if too small
-            if (blob.size < 2000) {
+            // Minimum size check - reject if too small (header only)
+            if (blob.size < 1000) {
               console.warn("[AUDIO] Recording too short, ignoring transcription");
               resolve({ text: "", lowConfidence: true });
               return;
