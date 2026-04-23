@@ -17,6 +17,7 @@ import { useAnnounce } from "../hooks/useAccessibility";
 
 const SILENCE_THRESHOLD_RMS = 0.005;
 const SILENCE_RATIO_THRESHOLD = 0.85;
+const TTS_TO_MIC_GUARD_MS = 1200;
 
 let sharedAudioContext = null;
 function getAudioContext() {
@@ -111,10 +112,37 @@ function formatTime(seconds) {
 
 function appendTranscript(current, next) {
   const base = String(current || "").trim();
-  const t = String(next || "").trim();
+  const t = sanitizeTranscriptSegment(String(next || ""));
   if (!t) return base;
   if (!base) return t;
+  const normBase = normalizeTranscriptForCompare(base);
+  const normT = normalizeTranscriptForCompare(t);
+  if (normT && normBase.endsWith(normT)) return base;
+  if (normT && normBase.includes(normT) && normT.length > 12) return base;
   return `${base}${base.endsWith(".") ? " " : ". "}${t}`;
+}
+
+function normalizeTranscriptForCompare(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeTranscriptSegment(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  const lowered = raw.toLowerCase();
+  const blockedFragments = [
+    "please transcribe it accurately",
+    "this is a recording of a professional interview candidate answering a question",
+    "transcribed by",
+    "otter.ai"
+  ];
+  if (blockedFragments.some((item) => lowered.includes(item))) return "";
+  return raw;
 }
 
 function hasActiveAudioTrack(stream) {
@@ -249,6 +277,8 @@ export default function Interview() {
   const recordedChunksRef = useRef([]);
   const answerStartTimeRef = useRef(null);
   const answerTextareaRef = useRef(null);
+  const ttsCooldownUntilRef = useRef(0);
+  const wasSpeakingRef = useRef(false);
 
   const { speak, stop: stopSpeaking, speaking, muted } = useTTS();
   const { proctoringEvents, analyseAnswer } = useProctoring({ sessionId, resultId, interviewToken, enabled: !!sessionId });
@@ -341,6 +371,13 @@ export default function Interview() {
   useEffect(() => {
     if (isRecording || isSubmitting) stopSpeaking();
   }, [isRecording, isSubmitting, stopSpeaking]);
+
+  useEffect(() => {
+    if (wasSpeakingRef.current && !speaking) {
+      ttsCooldownUntilRef.current = Date.now() + TTS_TO_MIC_GUARD_MS;
+    }
+    wasSpeakingRef.current = speaking;
+  }, [speaking]);
 
   useEffect(() => {
     let disposed = false;
@@ -512,6 +549,13 @@ export default function Interview() {
       announce("Recording not supported. Please use Chrome or Edge browser.", "assertive");
       return;
     }
+    if (speaking || Date.now() < ttsCooldownUntilRef.current) {
+      const waitMs = Math.max(0, ttsCooldownUntilRef.current - Date.now());
+      const waitSec = Math.max(1, Math.ceil(waitMs / 1000));
+      setTranscriptionWarning(`Please wait ${waitSec}s after question audio before recording.`);
+      announce("Please wait a second after question audio, then start recording.", "assertive");
+      return;
+    }
     stopSpeaking();
     try {
       let recStream = hasActiveAudioTrack(streamRef.current) ? new MediaStream(streamRef.current.getAudioTracks()) : await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -522,12 +566,13 @@ export default function Interview() {
       rec.start(1000);
       recorderRef.current = rec;
       setIsRecording(true);
+      setTranscriptionWarning("");
       announce("Recording started. Speak your answer now.", "assertive");
     } catch {
       setError("We couldn't access your microphone. Please allow permission from browser settings.");
       announce("Microphone access denied. Please allow permission.", "assertive");
     }
-  }, [stopSpeaking, announce]);
+  }, [speaking, stopSpeaking, announce]);
 
   const captureAndUploadFrame = useCallback(async (eventType = "scan") => {
     if (!sessionId || !videoRef.current || !previewReady) return;
@@ -570,8 +615,9 @@ export default function Interview() {
     if (isSubmitting || isTranscribing) return;
     if (!isRecording) { await startRecording(); return; }
     const t = await stopRecordingAndTranscribe();
-    if (t.text) setAnswer(prev => appendTranscript(prev, t.text));
-    setLastRecordedPreview(t.text || "No speech detected");
+    const cleaned = sanitizeTranscriptSegment(t.text);
+    if (cleaned) setAnswer(prev => appendTranscript(prev, cleaned));
+    setLastRecordedPreview(cleaned || "No speech detected");
     announce("Recording stopped");
   }, [isRecording, isSubmitting, isTranscribing, startRecording, stopRecordingAndTranscribe, announce]);
 

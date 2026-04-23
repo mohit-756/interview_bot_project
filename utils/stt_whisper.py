@@ -11,11 +11,65 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 from pathlib import Path
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_for_match(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", text.lower())).strip()
+
+
+def _clean_transcript_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+
+    lowered = cleaned.lower()
+    blocked_fragments = [
+        "please transcribe it accurately",
+        "this is a recording of a professional interview candidate answering a question",
+        "transcribed by",
+        "otter.ai",
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subtitles by",
+        "translated by",
+        "amara.org",
+    ]
+    if any(fragment in lowered for fragment in blocked_fragments):
+        logger.warning("STT text dropped by blocked fragment rule: '%s'", cleaned)
+        return ""
+
+    if re.search(r"https?://\S+", lowered):
+        logger.warning("STT text dropped due to URL presence: '%s'", cleaned)
+        return ""
+
+    words = re.findall(r"[a-z0-9']+", lowered)
+    if len(words) == 1 and len(words[0]) > 30:
+        logger.warning("STT text dropped: suspicious single long token '%s'", cleaned)
+        return ""
+
+    # Collapse immediate repeated phrases: "hello hello" -> "hello"
+    tokens = re.findall(r"[A-Za-z0-9']+", cleaned)
+    if len(tokens) >= 2:
+        deduped = []
+        for token in tokens:
+            if deduped and _normalize_for_match(deduped[-1]) == _normalize_for_match(token):
+                continue
+            deduped.append(token)
+        cleaned = " ".join(deduped).strip()
+
+    if len(cleaned.split()) < 2:
+        # Keep one-word answers like "yes" or "no" only when short and common.
+        if _normalize_for_match(cleaned) not in {"yes", "no", "maybe"}:
+            return ""
+
+    return cleaned
 
 
 def _resolve_suffix(filename: str | None) -> str:
@@ -65,8 +119,8 @@ def transcribe_audio_bytes(
     mime_type = _mime(suffix)
     file_to_send = filename or f"audio{suffix}"
 
-    # Use a prompt that helps Whisper understand the context and reduces hallucinations
-    prompt = "This is a recording of a professional interview candidate answering a question. Please transcribe it accurately."
+    # Keep prompt minimal to reduce prompt leakage into transcript output.
+    prompt = "Interview answer transcription."
     if context_hint:
         prompt += f" Context: {context_hint}"
 
@@ -85,33 +139,7 @@ def transcribe_audio_bytes(
                 response.raise_for_status()
                 
             result = response.json()
-            text = result.get("text", "").strip() if result else ""
-            
-            # Post-process: check for common Whisper hallucinations
-            if text:
-                lower_text = text.lower().strip()
-                word_count = len(lower_text.split())
-                
-                # Common hallucinations patterns
-                hallucinations = [
-                    "thank you for watching", "thanks for watching", "please subscribe",
-                    "subtitles by", "amara.org", "subtitle by", "watching!", 
-                    "you for watching", "translated by", "by amara.org"
-                ]
-                
-                is_hallucination = any(h in lower_text for h in hallucinations)
-                
-                # Check for URL patterns
-                url_patterns = ["www.", ".com", ".gov", ".org", ".net", "https://", "http://"]
-                url_count = sum(1 for p in url_patterns if p in lower_text)
-                
-                # Block if mostly URL or known hallucination
-                if (word_count < 3 and url_count > 0) or is_hallucination:
-                    logger.warning("Whisper potential hallucination blocked: '%s'", text)
-                    text = ""
-                elif word_count == 1 and len(lower_text) > 30:
-                    logger.warning("Whisper suspicious single long word blocked: '%s'", text)
-                    text = ""
+            text = _clean_transcript_text(result.get("text", "") if result else "")
 
             return {
                 "text": text,
@@ -133,7 +161,7 @@ def transcribe_audio_bytes(
             response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
             response.raise_for_status()
             result = response.json()
-            text = result.get("text", "").strip() if result else ""
+            text = _clean_transcript_text(result.get("text", "") if result else "")
             
             logger.info("Groq transcription successful")
             return {
@@ -170,7 +198,7 @@ def transcribe_audio_bytes(
             if candidates:
                 parts = candidates[0].get("content", {}).get("parts", [])
                 if parts:
-                    text = parts[0].get("text", "").strip()
+                    text = _clean_transcript_text(parts[0].get("text", ""))
             
             logger.info("Gemini transcription successful")
             return {
