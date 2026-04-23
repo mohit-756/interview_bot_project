@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useId } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Camera, Mic, Wifi, CheckCircle2, AlertCircle, Play,
@@ -9,6 +9,7 @@ import { useAuth } from "../context/useAuth";
 import { formatUtcDateTime } from "../utils/formatters";
 import { cn } from "../utils/utils";
 import HelpSupportButton from "../components/HelpSupportButton";
+import { useAnnounce } from "../hooks/useAccessibility";
 
 async function attachPreviewStream(videoElement, stream) {
   if (!videoElement) return;
@@ -22,7 +23,7 @@ async function attachPreviewStream(videoElement, stream) {
       const timeoutId = window.setTimeout(resolve, 500);
       videoElement.onloadedmetadata = () => { window.clearTimeout(timeoutId); resolve(); };
     });
-    try { await videoElement.play(); } catch { /* keep srcObject */ }
+    try { await videoElement.play(); } catch { }
   }
 }
 
@@ -41,13 +42,15 @@ function checkMediaRecorderSupport() {
   return { supported: true, reason: "" };
 }
 
-// ── Inline login form shown when candidate is not logged in ──────────────────
 function InlineLogin({ onSuccess }) {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const emailId = useId();
+  const passwordId = useId();
+  const errorId = useId();
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -68,7 +71,7 @@ function InlineLogin({ onSuccess }) {
       <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 p-8 space-y-6">
         <div className="text-center">
           <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Lock size={28} className="text-blue-600 dark:text-blue-400" />
+            <Lock size={28} className="text-blue-600 dark:text-blue-400" aria-hidden="true" />
           </div>
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Sign in to continue</h2>
           <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm">
@@ -77,31 +80,37 @@ function InlineLogin({ onSuccess }) {
         </div>
 
         {error && (
-          <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-xl text-sm border border-red-100 dark:border-red-900/30">
+          <div id={errorId} role="alert" className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-xl text-sm border border-red-100 dark:border-red-900/30">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" aria-describedby={error ? errorId : undefined}>
           <div className="relative">
-            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" aria-hidden="true" />
+            <label htmlFor={emailId} className="sr-only">Email address</label>
             <input
+              id={emailId}
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email address"
               required
+              autoComplete="email"
               className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
             />
           </div>
           <div className="relative">
-            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" aria-hidden="true" />
+            <label htmlFor={passwordId} className="sr-only">Password</label>
             <input
+              id={passwordId}
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
               required
+              autoComplete="current-password"
               className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
             />
           </div>
@@ -119,7 +128,101 @@ function InlineLogin({ onSuccess }) {
   );
 }
 
-// ── Main PreCheck component ───────────────────────────────────────────────────
+function MicWarningModal({ isOpen, onClose, onContinue }) {
+  if (!isOpen) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mic-warning-title"
+      className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50"
+    >
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+            <AlertOctagon size={20} className="text-amber-500" aria-hidden="true" />
+          </div>
+          <h3 id="mic-warning-title" className="text-slate-900 dark:text-white font-bold text-lg">Microphone Access Required</h3>
+        </div>
+        <p className="text-slate-600 dark:text-slate-300 mb-4">
+          We couldn't access your microphone. Please allow microphone access in your browser settings, then run the system check again.
+        </p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">
+          Don't worry — you can still complete the interview by typing your answers!
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+          >
+            Run System Check Again
+          </button>
+          <button
+            onClick={onContinue}
+            className="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all"
+          >
+            Continue Anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SystemCheckItem({ label, status, detail, icon: Icon }) {
+  const statusLabels = {
+    granted: "Ready",
+    denied: "Blocked",
+    pending: "Pending",
+  };
+
+  const statusAria = {
+    granted: "passed",
+    denied: "failed",
+    pending: "not checked",
+  };
+
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between p-5 rounded-2xl border-2 transition-all",
+        status === "granted"
+          ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-700"
+          : status === "denied"
+            ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700"
+            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+      )}
+      role="listitem"
+      aria-label={`${label}: ${statusAria[status]}`}
+    >
+      <div className="flex items-center space-x-4">
+        <div
+          className={cn("w-12 h-12 rounded-xl flex items-center justify-center transition-colors",
+            status === "granted" ? "bg-emerald-100 dark:bg-emerald-800" : "bg-slate-100 dark:bg-slate-800"
+          )}
+        >
+          <Icon size={20} aria-hidden="true" />
+        </div>
+        <div>
+          <span className="font-bold block text-slate-900 dark:text-white">{label}</span>
+          {detail && <span className="text-xs text-slate-500 block">{detail}</span>}
+        </div>
+      </div>
+      <div
+        className={cn(
+          "px-3 py-1.5 rounded-lg font-bold text-sm",
+          status === "granted" ? "bg-emerald-100 dark:bg-emerald-800 text-emerald-700 dark:text-emerald-300" :
+          status === "denied" ? "bg-red-100 dark:bg-red-800 text-red-700 dark:text-red-300" :
+          "bg-slate-100 dark:bg-slate-800 text-slate-500"
+        )}
+        aria-live="polite"
+      >
+        {statusLabels[status]}
+      </div>
+    </div>
+  );
+}
+
 export default function PreCheck() {
   const { resultId } = useParams();
   const navigate = useNavigate();
@@ -143,43 +246,8 @@ export default function PreCheck() {
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const [showMicWarningModal, setShowMicWarningModal] = useState(false);
 
-  function MicWarningModal() {
-    if (!showMicWarningModal) return null;
-    return (
-      <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50">
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
-              <AlertOctagon size={20} className="text-amber-500" />
-            </div>
-            <h3 className="text-slate-900 dark:text-white font-bold text-lg">Microphone Access Required</h3>
-          </div>
-          <p className="text-slate-600 dark:text-slate-300 mb-4">
-            We couldn't access your microphone. Please allow microphone access in your browser settings, then run the system check again.
-          </p>
-          <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">
-            Don't worry — you can still complete the interview by typing your answers!
-          </p>
-          <div className="flex gap-3">
-            <button
-              onClick={() => setShowMicWarningModal(false)}
-              className="flex-1 px-4 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
-            >
-              Run System Check Again
-            </button>
-            <button
-              onClick={() => { setShowMicWarningModal(false); setError(""); }}
-              className="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all"
-            >
-              Continue Anyway
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const { announce } = useAnnounce();
 
-  // Check MediaRecorder support on mount
   useEffect(() => {
     const { supported, reason } = checkMediaRecorderSupport();
     setChecks((prev) => ({
@@ -192,8 +260,7 @@ export default function PreCheck() {
     }));
   }, []);
 
-  // Cleanup camera stream on unmount
-  React.useEffect(() => {
+  useEffect(() => {
     const videoElement = videoRef.current;
     return () => {
       if (streamRef.current) {
@@ -206,7 +273,7 @@ export default function PreCheck() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950" role="status" aria-label="Loading">
         <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
@@ -219,6 +286,7 @@ export default function PreCheck() {
   const startCheck = async () => {
     setIsChecking(true);
     setError("");
+    announce("Starting system check...", "assertive");
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -252,12 +320,14 @@ export default function PreCheck() {
           detail: recorderCheck.reason,
         },
       });
-if (!micGranted) {
+      announce("System check complete. Camera and microphone access granted.", "assertive");
+      if (!micGranted) {
         setShowMicWarningModal(true);
         setError("Microphone not available. You can still complete the interview by typing answers.");
       }
     } catch {
       setShowMicWarningModal(true);
+      announce("System check failed. Camera access denied.", "assertive");
       setError("");
     } finally {
       setIsChecking(false);
@@ -269,7 +339,6 @@ if (!micGranted) {
     setStarting(true);
     setError("");
     try {
-      // Auto fullscreen for exam mode
       if (document.documentElement.requestFullscreen) {
         try {
           await document.documentElement.requestFullscreen();
@@ -281,31 +350,34 @@ if (!micGranted) {
         const opensAt = access?.interview_window_open_utc
           ? formatUtcDateTime(access.interview_window_open_utc)
           : null;
-        setError(
-          opensAt
-            ? `Interview can start only within the allowed window. Please try again after ${opensAt}.`
-            : "Interview can start only within the allowed window. Please try again closer to your scheduled time."
-        );
+        const errorMsg = opensAt
+          ? `Interview can start only within the allowed window. Please try again after ${opensAt}.`
+          : "Interview can start only within the allowed window. Please try again closer to your scheduled time.";
+        setError(errorMsg);
+        announce(errorMsg, "assertive");
         return;
       }
 
       if (access?.interview_locked_reason === "start_window_expired") {
         setError("Interview start window has expired. Please reschedule your interview.");
+        announce("Interview start window has expired.", "assertive");
         return;
       }
 
       if (access?.interview_locked_reason === "already_completed") {
+        announce("Interview already completed. Redirecting...", "assertive");
         navigate(`/interview/${resultId}/completed`);
         return;
       }
 
       if (access?.interview_ready === false) {
         setError("Interview is not ready to start yet. Please recheck your schedule and try again.");
+        announce("Interview is not ready to start yet.", "assertive");
         return;
       }
 
       sessionStorage.setItem(`interview-consent:${resultId}`, "true");
-      const currentToken = new URLSearchParams(location.search).get("token") || 
+      const currentToken = new URLSearchParams(location.search).get("token") ||
         (() => {
           try {
             const hash = location.hash || "";
@@ -314,15 +386,17 @@ if (!micGranted) {
             if (qIndex >= 0) {
               return new URLSearchParams(hashPath.substring(qIndex)).get("token") || "";
             }
-          } catch (e) {}
+          } catch (e) { }
           return "";
         })();
       if (currentToken) {
         sessionStorage.setItem(`interview-token:${resultId}`, currentToken);
       }
+      announce("Starting interview...", "assertive");
       navigate(`/interview/${resultId}/live`);
     } catch (e) {
       setError(e?.message || "Interview questions are not ready yet. Please try again.");
+      announce(`Error: ${e?.message || "Interview not ready yet."}`, "assertive");
     } finally {
       setStarting(false);
     }
@@ -332,16 +406,26 @@ if (!micGranted) {
   const voiceUnsupported = checks.voiceRecorder.status === "denied" && checks.voiceRecorder.detail;
   const allGranted = Object.values(checks).every((c) => c.status === "granted");
 
+  const handleVoiceChange = (voice) => {
+    setSelectedVoice(voice);
+    sessionStorage.setItem(`interview-voice:${resultId}`, voice);
+    announce(`Voice changed to ${voice === "kajal" ? "Kajal (Indian Female)" : "Matthew (US Male)"}`);
+  };
+
   return (
     <div className="min-h-[calc(100vh-160px)] flex flex-col items-center justify-center py-12 px-4 page-enter">
-      <MicWarningModal />
-      <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-2 gap-12">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
+      <MicWarningModal
+        isOpen={showMicWarningModal}
+        onClose={() => { setShowMicWarningModal(false); }}
+        onContinue={() => { setShowMicWarningModal(false); setError(""); }}
+      />
 
-        {/* Left: checks */}
+      <div id="main-content" className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-2 gap-12">
         <div className="space-y-8">
           <div>
             <div className="flex items-center space-x-2 text-blue-600 mb-4">
-              <ShieldCheck size={24} />
+              <ShieldCheck size={24} aria-hidden="true" />
               <span className="text-sm font-black uppercase tracking-widest">System Check</span>
             </div>
             <h1 className="text-4xl font-black text-slate-900 dark:text-white font-display leading-tight">
@@ -352,25 +436,34 @@ if (!micGranted) {
             </p>
           </div>
 
-          {error && <p className="alert error">{error}</p>}
+          {error && (
+            <div role="alert" className="p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300">
+              <p className="font-bold flex items-center gap-2">
+                <AlertCircle size={16} aria-hidden="true" />
+                Error
+              </p>
+              <p className="mt-1">{error}</p>
+            </div>
+          )}
 
           {error && checks.camera.status === "denied" && (
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
               <h4 className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2 mb-3">
-                <Lock size={16} />How to Enable Camera & Microphone
+                <Lock size={16} aria-hidden="true" />
+                How to Enable Camera & Microphone
               </h4>
               <ol className="text-sm text-amber-700 dark:text-amber-400 space-y-2 list-decimal list-inside">
-                <li>Click the <strong>lock (🔒) or eye (👁) icon</strong> in your browser address bar</li>
+                <li>Click the lock or camera icon in your browser address bar</li>
                 <li>Set <strong>Camera</strong> and <strong>Microphone</strong> to "Allow"</li>
-                <li>Click <strong>"Done"</strong> to save</li>
-                <li>Click <strong>"Run System Check"</strong> again below</li>
+                <li>Click <strong>Done</strong> to save</li>
+                <li>Click <strong>Run System Check</strong> again below</li>
               </ol>
             </div>
           )}
 
           {voiceUnsupported && (
-            <div className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300">
-              <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" />
+            <div role="alert" className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300">
+              <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
               <div>
                 <p className="font-bold">Voice recording not supported</p>
                 <p className="mt-0.5">{checks.voiceRecorder.detail} You can still type your answers. Use Chrome or Edge for full voice support.</p>
@@ -378,57 +471,29 @@ if (!micGranted) {
             </div>
           )}
 
-          <div className="space-y-4">
-            {Object.entries(checks).map(([key, check], idx) => {
-              const statusLabel = check.status === "granted" ? "✓ Ready" : check.status === "denied" ? "✗ Blocked" : "○ Pending";
-              return (
-              <div key={key} className={cn(
-                "flex items-center justify-between p-5 rounded-2xl border-2 transition-all",
-                check.status === "granted"
-                  ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-700"
-                  : check.status === "denied"
-                    ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700"
-                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
-              )}>
-                <div className="flex items-center space-x-4">
-                  <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center transition-colors",
-                    check.status === "granted" ? "bg-emerald-100 dark:bg-emerald-800" : "bg-slate-100 dark:bg-slate-800")}>
-                    {key === "camera" && <Camera size={20} />}
-                    {key === "mic" && <Mic size={20} />}
-                    {key === "internet" && <Wifi size={20} />}
-                    {key === "voiceRecorder" && <Mic size={20} />}
-                  </div>
-                  <div>
-                    <span className="font-bold block text-slate-900 dark:text-white">{check.label}</span>
-                    {check.detail && <span className="text-xs text-slate-500 block">{check.detail}</span>}
-                  </div>
-                </div>
-                <div className={cn(
-                  "px-3 py-1.5 rounded-lg font-bold text-sm",
-                  check.status === "granted" ? "bg-emerald-100 dark:bg-emerald-800 text-emerald-700 dark:text-emerald-300" :
-                  check.status === "denied" ? "bg-red-100 dark:bg-red-800 text-red-700 dark:text-red-300" :
-                  "bg-slate-100 dark:bg-slate-800 text-slate-500"
-                )}>
-                  {statusLabel}
-                </div>
-              </div>
-            )})}
+          <div role="list" aria-label="System requirements" className="space-y-4">
+            <SystemCheckItem label="Camera access" status={checks.camera.status} icon={Camera} />
+            <SystemCheckItem label="Microphone access" status={checks.mic.status} icon={Mic} />
+            <SystemCheckItem label="Internet connection" status={checks.internet.status} icon={Wifi} />
+            <SystemCheckItem label="Voice recording support" status={checks.voiceRecorder.status} detail={checks.voiceRecorder.detail} icon={Mic} />
           </div>
 
-          {/* Voice Selection */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-slate-700 dark:text-slate-300">🎤 Voice Selection</span>
+          <fieldset className="space-y-3">
+            <legend className="flex items-center justify-between w-full mb-2">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Voice Selection</span>
               <button
                 type="button"
                 onClick={async () => {
                   const testText = "Hello! This is a sample voice. Your interview questions will be read in this voice.";
                   try {
                     setIsTestingVoice(true);
+                    announce("Testing voice...", "assertive");
                     const { interviewApi } = await import("../services/api");
                     await interviewApi.tts(testText, selectedVoice);
+                    announce("Voice test complete", "assertive");
                   } catch (e) {
                     console.warn("Voice test failed:", e);
+                    announce("Voice test failed", "assertive");
                   } finally {
                     setIsTestingVoice(false);
                   }
@@ -436,16 +501,14 @@ if (!micGranted) {
                 disabled={isTestingVoice}
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-bold transition-colors flex items-center gap-1"
               >
-                {isTestingVoice ? "Playing..." : "🔊 Test Voice"}
+                {isTestingVoice ? "Testing..." : "Test Voice"}
               </button>
-            </div>
+            </legend>
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedVoice("kajal");
-                  sessionStorage.setItem(`interview-voice:${resultId}`, "kajal");
-                }}
+                onClick={() => handleVoiceChange("kajal")}
+                aria-pressed={selectedVoice === "kajal"}
                 className={cn(
                   "flex-1 py-3 px-3 rounded-xl font-bold text-sm transition-all border-2",
                   selectedVoice === "kajal"
@@ -453,14 +516,12 @@ if (!micGranted) {
                     : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-pink-300"
                 )}
               >
-                👩‍🦱 Female (Kajal)
+                Female (Kajal)
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedVoice("matthew");
-                  sessionStorage.setItem(`interview-voice:${resultId}`, "matthew");
-                }}
+                onClick={() => handleVoiceChange("matthew")}
+                aria-pressed={selectedVoice === "matthew"}
                 className={cn(
                   "flex-1 py-3 px-3 rounded-xl font-bold text-sm transition-all border-2",
                   selectedVoice === "matthew"
@@ -468,26 +529,35 @@ if (!micGranted) {
                     : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-blue-300"
                 )}
               >
-                👨‍🦱 Male (Matthew)
+                Male (Matthew)
               </button>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Selected: <span className="font-bold">{selectedVoice === "kajal" ? "Kajal (Indian Female)" : "Matthew (US Male)"}</span>
             </p>
-          </div>
+          </fieldset>
 
           <div className="flex items-center gap-4">
             <button
+              type="button"
               onClick={startCheck}
               disabled={isChecking}
+              aria-busy={isChecking}
               className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-black py-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center space-x-2 shadow-sm"
             >
-              {isChecking ? "Checking..." : "Run System Check"}
+              {isChecking ? (
+                <>
+                  <span className="animate-spin" aria-hidden="true">⟳</span>
+                  <span>Checking...</span>
+                </>
+              ) : "Run System Check"}
             </button>
 
             <button
+              type="button"
               disabled={!cameraGranted || starting}
               onClick={handleStartInterview}
+              aria-busy={starting}
               className={cn(
                 "flex-[1.5] py-4 rounded-2xl font-black flex items-center justify-center space-x-2 transition-all shadow-xl",
                 cameraGranted
@@ -496,7 +566,7 @@ if (!micGranted) {
               )}
             >
               <span>{starting ? "Starting..." : "Start Interview"}</span>
-              <Play size={18} fill="currentColor" />
+              <Play size={18} fill="currentColor" aria-hidden="true" />
             </button>
           </div>
 
@@ -507,14 +577,20 @@ if (!micGranted) {
           )}
         </div>
 
-        {/* Right: video preview */}
         <div className="space-y-6">
           <div className="relative aspect-video bg-slate-900 rounded-[32px] overflow-hidden shadow-2xl border-4 border-white dark:border-slate-800">
-            <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay muted playsInline />
+            <video
+              ref={videoRef}
+              className="w-full h-full object-cover scale-x-[-1]"
+              autoPlay
+              muted
+              playsInline
+              aria-label="Camera preview"
+            />
             {checks.camera.status !== "granted" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
                 <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-4">
-                  <Video size={32} />
+                  <Video size={32} aria-hidden="true" />
                 </div>
                 <p className="text-sm font-bold uppercase tracking-widest">No Video Feed</p>
               </div>
@@ -524,29 +600,30 @@ if (!micGranted) {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
               </div>
-              <span className="text-[10px] font-black text-white uppercase tracking-widest">Live Preview Active</span>
+              <span className="text-[10px] font-black text-white uppercase tracking-widest">Live Preview</span>
             </div>
           </div>
 
           <div className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-3xl border border-blue-100 dark:border-blue-800/50">
             <h4 className="text-sm font-bold text-blue-800 dark:text-blue-300 flex items-center mb-3">
-              <Settings className="mr-2" size={16} />Interview Requirements
+              <Settings className="mr-2" size={16} aria-hidden="true" />
+              Interview Requirements
             </h4>
             <ul className="space-y-2 text-xs text-blue-700 dark:text-blue-400 font-medium">
               <li className="flex items-center space-x-2">
-                <div className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0" />
+                <div className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0" aria-hidden="true" />
                 <span>Sit in a well-lit and quiet room</span>
               </li>
               <li className="flex items-center space-x-2">
-                <div className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0" />
+                <div className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0" aria-hidden="true" />
                 <span>Ensure your face is clearly visible</span>
               </li>
               <li className="flex items-center space-x-2">
-                <div className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0" />
+                <div className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0" aria-hidden="true" />
                 <span>Use Chrome or Edge for best voice recording support</span>
               </li>
               <li className="flex items-start space-x-2">
-                <Volume2 size={12} className="flex-shrink-0 mt-0.5" />
+                <Volume2 size={12} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
                 <span>Each question will be <strong>read aloud automatically</strong> — you can mute this at any time using the voice button during the interview</span>
               </li>
             </ul>
@@ -554,6 +631,8 @@ if (!micGranted) {
         </div>
       </div>
       <HelpSupportButton supportEmail="support@quadranttech.com" />
+
+      <div aria-live="polite" aria-atomic="true" className="sr-announcer" />
     </div>
   );
 }

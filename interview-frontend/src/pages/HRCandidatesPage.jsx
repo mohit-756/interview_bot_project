@@ -284,7 +284,7 @@ export default function HRCandidatesPage() {
 
       {error ? <p className="alert error">{error}</p> : null}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 xs:grid-cols-4 gap-2 sm:gap-3">
         <div className="card p-4 flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
           <Calendar size={20} className="text-blue-600 dark:text-blue-400" />
           <div>
@@ -315,24 +315,24 @@ export default function HRCandidatesPage() {
         </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
+      <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
+        <div className="relative flex-1 min-w-[140px] w-full sm:w-auto">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
           <input type="text" placeholder="Search..." className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} />
         </div>
         
-        <select className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+        <select className="px-2 sm:px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white min-w-[80px]" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
           <option value="all">Stage: All</option>
           {ATS_STAGE_OPTIONS.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}
         </select>
         
-        <select className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white" value={jdFilter} onChange={(event) => setJdFilter(event.target.value)}>
+        <select className="px-2 sm:px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white min-w-[80px]" value={jdFilter} onChange={(event) => setJdFilter(event.target.value)}>
           <option value="all">JD: All</option>
           {jdOptions.map((jd) => <option key={jd.id} value={jd.id}>{jd.title}</option>)}
         </select>
 
-        <button type="button" onClick={handleCompareNavigate} disabled={selectedForCompare.length < 2} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-40 flex items-center gap-2">
-          <GitCompareArrows size={14} />Compare ({selectedForCompare.length})
+        <button type="button" onClick={handleCompareNavigate} disabled={selectedForCompare.length < 2} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-40 flex items-center gap-2 whitespace-nowrap">
+          <GitCompareArrows size={14} /><span className="hidden sm:inline">Compare</span> ({selectedForCompare.length})
         </button>
       </div>
 
@@ -425,21 +425,21 @@ export default function HRCandidatesPage() {
             </tbody>
           </table>
         </div>
-        <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-500 dark:text-slate-400">Show</span>
+        <div className="p-3 sm:p-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs sm:text-sm">
+            <span className="text-slate-500 dark:text-slate-400">Show</span>
             <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setPage(1); }} className="px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white">
               <option value={5}>5</option>
               <option value={10}>10</option>
               <option value={25}>25</option>
               <option value={50}>50</option>
             </select>
-            <span className="text-sm text-slate-500 dark:text-slate-400">per page</span>
+            <span className="text-slate-500 dark:text-slate-400">per page</span>
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" disabled={safePage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-30 transition-all"><ChevronLeft size={16} /></button>
-            <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Page {safePage} of {totalPages}</span>
-            <button type="button" disabled={safePage === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-30 transition-all"><ChevronRight size={16} /></button>
+            <button type="button" disabled={safePage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="p-1.5 sm:p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-30 transition-all"><ChevronLeft size={14} /></button>
+            <span className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">Page {safePage} / {totalPages}</span>
+            <button type="button" disabled={safePage === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="p-1.5 sm:p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-30 transition-all"><ChevronRight size={14} /></button>
           </div>
         </div>
       </div>

@@ -77,3 +77,129 @@
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+/* Accessibility: Skip Links (Jakob H8 - Help Users Recognize Errors) */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  z-index: 9999;
+  padding: 1rem 1.5rem;
+  background: #2563eb;
+  color: white;
+  font-weight: 700;
+  text-decoration: none;
+  border-radius: 0 0 0.5rem 0;
+  transition: left 0.2s ease;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* Accessibility: Screen Reader Only (sr-only) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Accessibility: Visible on focus (H2 - Visibility of System Status) */
+.focus-visible-ring:focus-visible,
+.focus-visible-ring:focus {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* Accessibility: High Contrast Focus for Interactive Elements */
+@media (prefers-contrast: high) {
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    outline: 3px solid currentColor;
+    outline-offset: 2px;
+  }
+}
+
+/* Accessibility: Reduced Motion Support (H1 - Visibility of System Status) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Accessibility: Live Region for Announcements */
+.sr-announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Accessibility: Error States (Jakob H9 - Error Prevention) */
+[aria-invalid="true"],
+.error-input {
+  border-color: #dc2626 !important;
+  background-color: #fef2f2;
+}
+
+.dark [aria-invalid="true"],
+.dark .error-input {
+  background-color: rgba(127, 29, 29, 0.2);
+}
+
+/* Accessibility: Required Field Indicators */
+.required-indicator {
+  color: #dc2626;
+  margin-left: 0.25rem;
+}
+
+/* Accessibility: Disabled States (Jakob H1 - Visibility of System Status) */
+[aria-disabled="true"],
+[disabled] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Accessibility: Color Independence (Jakob H3 - User Control & Freedom) */
+.color-independent {
+  position: relative;
+}
+
+.color-independent::before {
+  content: attr(data-label);
+  display: block;
+}
+
+/* Accessibility: Focus indicators for mouse users (H4 - Consistency & Standards) */
+:focus:not(:focus-visible) {
+  outline: none;
+}

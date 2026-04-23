@@ -1,6 +1,8 @@
 """HR-facing JD management, candidate management, and interview scoring routes."""
 
 from __future__ import annotations
+from typing import Any
+
 
 import shutil
 import uuid
@@ -1462,7 +1464,8 @@ def confirm_jd(
 
     job = JobDescription(
         company_id=current_user.user_id,
-        jd_title=temp_jd.get("jd_title"),
+        title=temp_jd.get("jd_title") or "Untitled Role",
+        jd_title=temp_jd.get("jd_title") or "Untitled Role",
         jd_text=temp_jd["jd_path"],
         skill_scores=normalized_scores,
         gender_requirement=None,

@@ -415,6 +415,7 @@ def evaluate_resume_for_job(
     resume_text = candidate.resume_text or ""
     if not resume_text and candidate.resume_path:
         resume_text = extract_text_from_file(str(candidate.resume_path) if candidate.resume_path else "")
+        candidate.resume_text = resume_text  # Persist for downstream logic
     candidate.parsed_resume_json = parse_resume_text(resume_text)
     jd_text = _load_jd_text(jd_text_raw)
     jd_skill_scores = (
