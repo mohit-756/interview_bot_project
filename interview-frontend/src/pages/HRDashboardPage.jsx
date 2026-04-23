@@ -6,7 +6,28 @@ import MetricCard from "../components/MetricCard";
 import CandidateTable from "../components/CandidateTable";
 import PageHeader from "../components/PageHeader";
 import { hrApi } from "../services/api";
+import { ATS_STAGE_DEFINITIONS as PIPELINE_STAGES, normalizeStageKey } from "../utils/stages";
 import { useAnnounce } from "../hooks/useAccessibility";
+
+const STAGE_ICONS = {
+  applied: Users,
+  screening: Users,
+  shortlisted: UserCheck,
+  interview_scheduled: Users,
+  interview_completed: CheckCircle2,
+  selected: CheckCircle2,
+  rejected: UserX,
+};
+
+const STAGE_COLORS = {
+  applied: { bg: "bg-slate-100 dark:bg-slate-800", text: "text-slate-600 dark:text-slate-300" },
+  screening: { bg: "bg-blue-50 dark:bg-blue-900/20", text: "text-blue-600 dark:text-blue-400" },
+  shortlisted: { bg: "bg-emerald-50 dark:bg-emerald-900/20", text: "text-emerald-600 dark:text-emerald-400" },
+  interview_scheduled: { bg: "bg-amber-50 dark:bg-amber-900/20", text: "text-amber-600 dark:text-amber-400" },
+  interview_completed: { bg: "bg-blue-50 dark:bg-blue-900/20", text: "text-blue-600 dark:text-blue-400" },
+  selected: { bg: "bg-purple-50 dark:bg-purple-900/20", text: "text-purple-600 dark:text-purple-400" },
+  rejected: { bg: "bg-red-50 dark:bg-red-900/20", text: "text-red-600 dark:text-red-400" },
+};
 
 const EMPTY_LIST = [];
 
@@ -40,6 +61,17 @@ export default function HRDashboardPage() {
   const funnel = dashboard?.analytics?.funnel ?? EMPTY_LIST;
 
   const chartReadyFunnel = useMemo(() => funnel.map((item) => ({ name: item.label, value: item.count, fill: "#2563eb" })), [funnel]);
+
+  const stageCounts = useMemo(() => {
+    const counts = {};
+    PIPELINE_STAGES.forEach((stage) => { counts[stage.key] = 0; });
+    const candidates = candidatesData?.candidates || [];
+    candidates.forEach((candidate) => {
+      const key = normalizeStageKey(candidate?.status?.key);
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [candidatesData]);
 
   const handleDeleteCandidate = useCallback(async (candidateId) => {
     try {
@@ -193,7 +225,27 @@ export default function HRDashboardPage() {
           </div>
         </div>
 
-        <div className="lg:col-span-1" />
+        <div className="lg:col-span-1 space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+            <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-3">Stages</h3>
+            <div className="space-y-2">
+              {PIPELINE_STAGES.map((stage) => {
+                const count = stageCounts[stage.key] || 0;
+                const colors = STAGE_COLORS[stage.key] || STAGE_COLORS.applied;
+                const Icon = STAGE_ICONS[stage.key] || Users;
+                return (
+                  <div key={stage.key} className={`flex items-center justify-between px-3 py-2 rounded-lg ${colors.bg}`}>
+                    <div className="flex items-center gap-2">
+                      <Icon size={14} className={colors.text} />
+                      <span className={`text-sm font-medium ${colors.text}`}>{stage.label}</span>
+                    </div>
+                    <span className={`text-sm font-bold ${colors.text}`}>{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
       <ChartCard title="Recent Candidates" subtitle="List view preview with ranking and recommendations.">

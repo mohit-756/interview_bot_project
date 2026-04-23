@@ -1,10 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Eye, RefreshCw, ThumbsDown, ThumbsUp, Users, Calendar, CheckCircle, XCircle, Filter, Search } from "lucide-react";
 import ScoreBadge from "../components/ScoreBadge";
 import PageHeader from "../components/PageHeader";
 import { hrApi } from "../services/api";
 import { ATS_STAGE_DEFINITIONS as PIPELINE_STAGES, normalizeStageKey } from "../utils/stages";
+
+function CandidateCard({ candidate, onQuickAction, quickActionLoadingId }) {
+  const score = Math.round(Number(candidate.finalAIScore || candidate.score || 0));
+  const isLoading = quickActionLoadingId === candidate.result_id;
+
+  return (
+    <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 hover:border-blue-300 dark:hover:border-blue-600 transition-colors">
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{candidate.name}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{candidate.email}</p>
+        </div>
+        <span className={`px-2 py-0.5 rounded text-xs font-bold ${score >= 80 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : score >= 65 ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+          {score}%
+        </span>
+      </div>
+      <div className="flex items-center gap-1">
+        {isLoading ? (
+          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <button onClick={() => onQuickAction(candidate, 'shortlisted')} className="p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded text-emerald-600" title="Shortlist">
+            <ThumbsUp size={14} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const STAGE_ICONS = {
   applied: Users,
@@ -25,6 +53,13 @@ const STAGE_COLORS = {
   selected: { bg: "bg-purple-50 dark:bg-purple-900/20", border: "border-purple-300 dark:border-purple-700", text: "text-purple-600 dark:text-purple-400", pill: "bg-purple-200 dark:bg-purple-800 text-purple-600 dark:text-purple-300" },
   rejected: { bg: "bg-red-50 dark:bg-red-900/20", border: "border-red-300 dark:border-red-700", text: "text-red-600 dark:text-red-400", pill: "bg-red-200 dark:bg-red-800 text-red-600 dark:text-red-300" },
 };
+
+function StageIcon({ stage, colors }) {
+  if (!stage) return null;
+  const Icon = STAGE_ICONS[stage];
+  if (!Icon) return <Users size={14} className={colors?.text} />;
+  return <Icon size={14} className={colors?.text} />;
+}
 
 function getCandidateJdId(candidate) {
   const jdId = candidate?.assignedJd?.id ?? candidate?.job?.id ?? null;
@@ -85,6 +120,8 @@ export default function HRPipelinePage() {
   const [page, setPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStage, setSelectedStage] = useState(null);
+  const stageSidebarRef = useRef(null);
 
   async function loadCandidates() {
     setLoading(true);
@@ -241,19 +278,17 @@ export default function HRPipelinePage() {
         </div>
       </div>
 
-      {/* Stage Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+      {/* Stage Cards - Compact */}
+      <div className="flex flex-wrap gap-2">
         {PIPELINE_STAGES.map((stage) => {
           const IconComponent = STAGE_ICONS[stage.key] || Users;
           const count = stageCounts[stage.key] || 0;
           const colors = STAGE_COLORS[stage.key] || STAGE_COLORS.applied;
           return (
-            <div key={stage.key} className={`p-3 rounded-xl border ${colors.bg} ${colors.border} flex items-center gap-2`}>
-              <IconComponent size={16} className={colors.text} />
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{stage.label}</p>
-                <p className={`text-lg font-bold ${colors.text}`}>{count}</p>
-              </div>
+            <div key={stage.key} className={`px-3 py-1.5 rounded-lg border ${colors.bg} ${colors.border} flex items-center gap-1.5`}>
+              <IconComponent size={14} className={colors.text} />
+              <span className={`text-sm font-semibold ${colors.text}`}>{stage.label}</span>
+              <span className={`text-sm font-bold ${colors.text}`}>{count}</span>
             </div>
           );
         })}
@@ -263,7 +298,7 @@ export default function HRPipelinePage() {
       {error && <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm">{error}</div>}
       {updatingResultId && <p className="text-sm text-slate-500 dark:text-slate-400">Updating...</p>}
 
-      {/* Pipeline Stages */}
+      {/* Pipeline Stages - Compact Sidebar */}
       {!totalCandidates ? (
         <div className="text-center py-16 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
           <Users size={32} className="mx-auto text-slate-300 dark:text-slate-600 mb-3" />
@@ -271,66 +306,63 @@ export default function HRPipelinePage() {
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Candidates will appear once applications come in.</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {PIPELINE_STAGES.map((stage) => {
-            const stageCandidates = groupedCandidates[stage.key] || [];
-            const IconComponent = STAGE_ICONS[stage.key] || Users;
-            const colors = STAGE_COLORS[stage.key] || STAGE_COLORS.applied;
-            const count = stageCounts[stage.key] || 0;
-            
-            if (count === 0) return null;
-            
-            return (
-              <div key={stage.key} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                <div className="px-4 py-3 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <div className={`p-1.5 rounded-lg ${colors.bg}`}>
-                      <IconComponent size={14} className={colors.text} />
+        <div className="flex gap-4">
+          {/* Stage Sidebar */}
+          <div className="w-64 flex-shrink-0 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-2">
+            <div className="flex items-center justify-between mb-2 px-2">
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Stages</span>
+            </div>
+            <div className="space-y-1 max-h-[300px] overflow-y-auto" ref={stageSidebarRef}>
+              {PIPELINE_STAGES.map((stage) => {
+                const count = stageCounts[stage.key] || 0;
+                const colors = STAGE_COLORS[stage.key] || STAGE_COLORS.applied;
+                const isActive = selectedStage === stage.key;
+                const Icon = STAGE_ICONS[stage.key];
+                return (
+                  <button
+                    key={stage.key}
+                    onClick={() => count > 0 && setSelectedStage(isActive ? null : stage.key)}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left transition-colors ${isActive ? `${colors.bg} ${colors.border}` : 'hover:bg-slate-100 dark:hover:bg-slate-800'} ${count === 0 ? 'opacity-40' : ''}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {Icon && <Icon size={14} className={colors.text} />}
+                      <span className={`text-sm font-medium ${isActive ? colors.text : 'text-slate-700 dark:text-slate-300'}`}>{stage.label}</span>
                     </div>
-                    <span className={`font-medium ${colors.text}`}>{stage.label}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors.pill}`}>{count}</span>
-                  </div>
-                  <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-xs font-bold rounded-lg">{stageCandidates.length}</span>
-                </div>
+                    <span className={`text-xs font-bold ${isActive ? colors.text : 'text-slate-500'}`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-                <div className="flex-1 p-3 space-y-3 min-h-[60vh] overflow-y-auto">
-                  {isEmpty ? (
-                    <div className="flex items-center justify-center h-32 text-center">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">No candidates yet</p>
-                    </div>
-                  ) : (
-                    stageCandidates.map((candidate) => (
-                      <CandidateCard key={candidate.result_id} candidate={candidate} onQuickAction={handleQuickAction} quickActionLoadingId={updatingResultId} />
-                    ))
-                  )}
-                </div>
-                <div className="overflow-x-auto max-h-[400px]">
-                  <table className="w-full min-w-[600px]">
-                    <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0">
-                      <tr>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Candidate</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Score</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Stage</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Job</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Applied</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stageCandidates.slice(0, 5).map((candidate) => (
-                        <CandidateRow key={candidate.result_id} candidate={candidate} onQuickAction={handleQuickAction} quickActionLoadingId={updatingResultId} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {stageCandidates.length > 5 && (
-                  <div className="text-center py-2 text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800">
-                    + {stageCandidates.length - 5} more candidates in this stage
+          {/* Selected Stage Content */}
+          <div className="flex-1 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            {selectedStage ? (
+              <>
+                <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <StageIcon stage={selectedStage} colors={STAGE_COLORS[selectedStage]} />
+                    <span className={`font-medium ${STAGE_COLORS[selectedStage]?.text}`}>{PIPELINE_STAGES.find(s => s.key === selectedStage)?.label}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STAGE_COLORS[selectedStage]?.pill}`}>{groupedCandidates[selectedStage]?.length || 0}</span>
                   </div>
-                )}
+                  <button onClick={() => setSelectedStage(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                    <XCircle size={18} />
+                  </button>
+                </div>
+                <div className="p-4">
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                    {groupedCandidates[selectedStage]?.map((candidate) => (
+                      <CandidateCard key={candidate.result_id} candidate={candidate} onQuickAction={handleQuickAction} quickActionLoadingId={updatingResultId} />
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-64 text-slate-400">
+                <p>Select a stage to view candidates</p>
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
       )}
     </div>
