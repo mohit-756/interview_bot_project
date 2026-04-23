@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Eye, RefreshCw, ThumbsDown, ThumbsUp, Users, Calendar, CheckCircle, XCircle, Filter, Search } from "lucide-react";
 import ScoreBadge from "../components/ScoreBadge";
+import PageHeader from "../components/PageHeader";
 import { hrApi } from "../services/api";
 import { ATS_STAGE_DEFINITIONS as PIPELINE_STAGES, normalizeStageKey } from "../utils/stages";
 
@@ -289,6 +290,19 @@ export default function HRPipelinePage() {
                     <span className={`font-medium ${colors.text}`}>{stage.label}</span>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors.pill}`}>{count}</span>
                   </div>
+                  <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-xs font-bold rounded-lg">{stageCandidates.length}</span>
+                </div>
+
+                <div className="flex-1 p-3 space-y-3 min-h-[60vh] overflow-y-auto">
+                  {isEmpty ? (
+                    <div className="flex items-center justify-center h-32 text-center">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">No candidates yet</p>
+                    </div>
+                  ) : (
+                    stageCandidates.map((candidate) => (
+                      <CandidateCard key={candidate.result_id} candidate={candidate} onQuickAction={handleQuickAction} quickActionLoadingId={updatingResultId} />
+                    ))
+                  )}
                 </div>
                 <div className="overflow-x-auto max-h-[400px]">
                   <table className="w-full min-w-[600px]">
