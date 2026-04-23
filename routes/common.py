@@ -1,14 +1,18 @@
 """Shared constants and helper functions used by route modules."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import os
+import re
 from pathlib import Path
+from urllib.parse import quote_plus
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from core.config import config
 from ai_engine.phase1.scoring import compute_resume_scorecard
 from ai_engine.phase1.matching import extract_text_from_file
 from models import Candidate, HR, JobDescription, Result
@@ -16,18 +20,116 @@ from services.pipeline import normalize_stage, record_stage_change, stage_payloa
 from services.resume_parser import parse_resume_text
 from services.scoring import build_application_score
 
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR = config.UPLOAD_DIR
+UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
+
+
+def utc_isoformat(value: datetime | None) -> str | None:
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def frontend_base_url() -> str:
-    return os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+    return config.FRONTEND_URL.rstrip("/")
 
 
-def interview_entry_url(result_id: int | None) -> str | None:
+def interview_entry_url(result_id: int | None, token: str | None = None) -> str | None:
     if not result_id:
         return None
-    return f"{frontend_base_url()}/interview/{int(result_id)}"
+    base_url = frontend_base_url()
+    encoded_token = quote_plus((token or "").strip()) if token else ""
+    if "cloudfront.net" in base_url or "vercel.app" in base_url:
+        hash_path = f"#/interview/{int(result_id)}"
+        if encoded_token:
+            return f"{base_url}/?token={encoded_token}{hash_path}"
+        return f"{base_url}/{hash_path}"
+    path = f"{base_url}/interview/{int(result_id)}"
+    return f"{path}?token={encoded_token}" if encoded_token else path
+
+
+def parse_interview_datetime_utc(interview_date: str, interview_time: str | None = None) -> datetime:
+    date_raw = str(interview_date or "").strip()
+    time_raw = str(interview_time or "").strip()
+    if not date_raw:
+        raise ValueError("Interview date is required")
+
+    if "T" in date_raw:
+        candidate = date_raw
+    elif time_raw:
+        candidate = f"{date_raw}T{time_raw}"
+    else:
+        candidate = date_raw
+
+    normalized = candidate.replace("Z", "+00:00")
+    parsed: datetime
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        parsed = datetime.strptime(date_raw, "%Y-%m-%d")
+        if time_raw:
+            hh, mm = time_raw.split(":")[:2]
+            parsed = parsed.replace(hour=int(hh), minute=int(mm))
+
+    if parsed.tzinfo is None:
+        tz_name = str(getattr(config, "INTERVIEW_DEFAULT_TIMEZONE", "Asia/Kolkata") or "Asia/Kolkata")
+        try:
+            parsed = parsed.replace(tzinfo=ZoneInfo(tz_name))
+        except Exception:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def resolve_interview_datetime_utc(result: Result | None) -> datetime | None:
+    if not result:
+        return None
+    if result.interview_datetime:
+        return result.interview_datetime
+    date_raw = str(result.interview_date or "").strip()
+    if not date_raw:
+        return None
+    try:
+        return parse_interview_datetime_utc(date_raw, result.interview_time)
+    except Exception:
+        return None
+
+
+def interview_schedule_state(result: Result | None) -> dict[str, object]:
+    scheduled_utc = resolve_interview_datetime_utc(result)
+    now_utc = datetime.utcnow()
+    if not scheduled_utc:
+        return {
+            "scheduled_utc": None,
+            "window_open_utc": None,
+            "window_close_utc": None,
+            "can_start_now": False,
+            "locked_reason": None,
+        }
+
+    early_min = max(0, int(getattr(config, "INTERVIEW_START_EARLY_MINUTES", 10) or 10))
+    late_min = max(0, int(getattr(config, "INTERVIEW_START_LATE_GRACE_MINUTES", 30) or 30))
+    window_open_utc = scheduled_utc - timedelta(minutes=early_min)
+    window_close_utc = scheduled_utc + timedelta(minutes=late_min)
+    can_start = window_open_utc <= now_utc <= window_close_utc
+
+    locked_reason = None
+    if now_utc < window_open_utc:
+        locked_reason = "scheduled_for_future"
+    elif now_utc > window_close_utc:
+        locked_reason = "start_window_expired"
+
+    return {
+        "scheduled_utc": scheduled_utc,
+        "window_open_utc": window_open_utc,
+        "window_close_utc": window_close_utc,
+        "can_start_now": can_start,
+        "locked_reason": locked_reason,
+    }
 
 
 def _latest_interview_session(result: Result | None):
@@ -92,6 +194,14 @@ def interview_access_state(result: Result | None) -> dict[str, object]:
             "interview_scheduled": True,
             "interview_ready": False,
             "interview_locked_reason": "already_completed",
+        }
+
+    schedule = interview_schedule_state(result)
+    if schedule["locked_reason"]:
+        return {
+            "interview_scheduled": True,
+            "interview_ready": False,
+            "interview_locked_reason": str(schedule["locked_reason"]),
         }
 
     return {
@@ -197,6 +307,7 @@ def serialize_result(result: Result | None) -> dict[str, object] | None:
         return None
     access = interview_access_state(result)
     latest_session = _latest_interview_session(result)
+    schedule = interview_schedule_state(result)
     latest_session_status = str(getattr(latest_session, "status", "") or "").strip().lower() or None
     interview_completed = bool(
         latest_session and (latest_session.ended_at or latest_session_status in {"completed", "selected", "rejected"})
@@ -228,10 +339,15 @@ def serialize_result(result: Result | None) -> dict[str, object] | None:
         "recommendation": result.recommendation,
         "stage": stage_payload(_application_stage(result, latest_session)),
         "interview_date": result.interview_date,
+        "interview_time": result.interview_time,
+        "interview_datetime": utc_isoformat(result.interview_datetime),
+        "interview_datetime_utc": utc_isoformat(schedule["scheduled_utc"]),
+        "interview_window_open_utc": utc_isoformat(schedule["window_open_utc"]),
+        "interview_window_close_utc": utc_isoformat(schedule["window_close_utc"]),
         "interview_scheduled": bool(access["interview_scheduled"]),
         "interview_ready": bool(access["interview_ready"]),
         "interview_locked_reason": access["interview_locked_reason"],
-        "interview_link": interview_entry_url(result.id) if access["interview_ready"] else None,
+        "interview_link": interview_entry_url(result.id, result.interview_token) if access["interview_scheduled"] else None,
         "interview_session_status": latest_session_status,
         "interview_completed": interview_completed,
         "final_decision": final_decision,
@@ -261,8 +377,16 @@ def safe_delete_upload(stored_path: str | None) -> bool:
 
 
 def _load_jd_text(jd_text_value: str) -> str:
+    import logging
+    logger = logging.getLogger(__name__)
     raw = (jd_text_value or "").strip()
     if not raw:
+        return ""
+    if raw.startswith("{") or raw.startswith("["):
+        logger.warning(f"_load_jd_text received JSON instead of text, returning empty: {raw[:100]}")
+        return ""
+    if len(raw) > 1000 and "job_title" in raw and "skills" in raw:
+        logger.warning(f"_load_jd_text received JD JSON string, returning empty")
         return ""
     possible_path = Path(raw)
     if possible_path.is_file():
@@ -270,14 +394,30 @@ def _load_jd_text(jd_text_value: str) -> str:
     return raw
 
 
+def extract_min_academic_percent(requirement_text: str | None) -> float:
+    """Extract a minimum academic percentage from a requirement string (e.g. 'Min 60%')."""
+    if not requirement_text:
+        return 0.0
+    match = re.search(r"(\d{2,3}(?:\.\d+)?)\s*%", requirement_text)
+    if match:
+        return float(match.group(1))
+    return 0.0
+
+
 def evaluate_resume_for_job(
     candidate: Candidate,
     job: JobDescription,
 ) -> tuple[float, dict[str, object], list[dict[str, str]]]:
-    resume_text = extract_text_from_file(candidate.resume_path or "")
-    candidate.resume_text = resume_text
+    import logging
+    logger = logging.getLogger(__name__)
+    jd_text_raw = getattr(job, "jd_text", "") or ""
+    logger.info(f"evaluate_resume_for_job: jd_text type={type(jd_text_raw)}, len={len(jd_text_raw)}, preview={jd_text_raw[:200]}")
+    resume_text = candidate.resume_text or ""
+    if not resume_text and candidate.resume_path:
+        resume_text = extract_text_from_file(str(candidate.resume_path) if candidate.resume_path else "")
+        candidate.resume_text = resume_text  # Persist for downstream logic
     candidate.parsed_resume_json = parse_resume_text(resume_text)
-    jd_text = _load_jd_text(getattr(job, "jd_text", "") or "")
+    jd_text = _load_jd_text(jd_text_raw)
     jd_skill_scores = (
         getattr(job, "skill_scores", None)
         or getattr(job, "weights_json", None)
@@ -329,6 +469,7 @@ def upsert_result(
     explanation: dict[str, object],
     interview_questions: list[dict[str, str]] | None = None,
     cutoff_score: float = 65.0,
+    job=None,
 ) -> Result:
     score_cutoff_met = score >= float(cutoff_score)
     academic_cutoff_met = bool(explanation.get("academic_cutoff_met", True))
@@ -336,6 +477,11 @@ def upsert_result(
 
     explanation["score_cutoff_met"] = score_cutoff_met
     explanation["shortlist_eligible"] = shortlisted
+    
+    weights_json = None
+    if job and hasattr(job, 'score_weights_json') and job.score_weights_json:
+        weights_json = job.score_weights_json
+    
     current = (
         db.query(Result)
         .filter(Result.candidate_id == candidate_id, Result.job_id == job_id)
@@ -347,11 +493,13 @@ def upsert_result(
         skills_match_score=float(explanation.get("matched_percentage") or 0.0),
         interview_score=0.0,
         communication_score=0.0,
+        weights_json=weights_json,
     )
     target_stage = "shortlisted" if shortlisted else ("screening" if score is not None else "applied")
 
     if current:
         previous_stage = current.stage
+        was_shortlisted = current.shortlisted
         current.score = score
         current.shortlisted = shortlisted
         current.explanation = explanation
@@ -368,6 +516,7 @@ def upsert_result(
             current.interview_token = None
         if previous_stage != target_stage:
             record_stage_change(db, current, stage=target_stage, changed_by_role="system", changed_by_user_id=None, note="Resume screening updated")
+        
         db.commit()
         db.refresh(current)
         return current

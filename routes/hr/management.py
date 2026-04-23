@@ -1,20 +1,22 @@
 """HR-facing JD management, candidate management, and interview scoring routes."""
 
 from __future__ import annotations
+from typing import Any
+
 
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from ai_engine.phase1.scoring import compute_interview_scoring, compute_resume_skill_match
 from ai_engine.phase1.matching import extract_skills_from_jd, extract_text_from_file
 from database import get_db
-from services.llm.client import extract_skills as llm_extract_skills
+from services.llm.client import extract_jd_requirements, extract_skills as llm_extract_skills
 from models import Candidate, InterviewSession, JobDescription, Result, ApplicationStageHistory
 from routes.common import (
     UPLOAD_DIR,
@@ -34,6 +36,40 @@ from services.resume_advice import build_resume_advice
 
 router = APIRouter()
 jd_router = APIRouter(prefix="/hr/jds", tags=["hr-jds"])
+
+
+@router.get("/hr/resume/{candidate_uid}")
+def get_resume(candidate_uid: str, db: Session = Depends(get_db)):
+    """Serve the resume file for a candidate."""
+    candidate = db.query(Candidate).filter(Candidate.candidate_uid == candidate_uid).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    if not candidate.resume_path:
+        raise HTTPException(status_code=404, detail="No resume has been uploaded for this candidate")
+    
+    from core.config import config
+    
+    base_upload_dir = Path(str(config.UPLOAD_DIR)).resolve()
+    path = Path(candidate.resume_path)
+    
+    if path.exists():
+        pass
+    elif not path.is_absolute():
+        filename = path.name.replace("\\", "/").split("/")[-1]
+        path = base_upload_dir / filename
+    
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Resume file not found on server. Path: {candidate.resume_path}")
+    
+    media_type = "application/pdf"
+    if path.suffix.lower() == ".docx":
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif path.suffix.lower() == ".doc":
+        media_type = "application/msword"
+    elif path.suffix.lower() == ".txt":
+        media_type = "text/plain"
+    
+    return FileResponse(path, media_type=media_type)
 # Keep FastAPI path params in plain `{jd_id}` form here. Using Starlette-style
 # converter syntax (`{jd_id:int}`) can produce route resolution mismatches across
 # versions and was breaking the frontend's /api/hr/jds/:id and toggle-active calls.
@@ -236,6 +272,7 @@ def _serialize_jd(jd: JobDescription) -> dict[str, object]:
         "project_question_ratio": float(jd.project_question_ratio if jd.project_question_ratio is not None else 0.8),
         "is_active": bool(jd.is_active if jd.is_active is not None else True),
         "created_at": jd.created_at,
+        "score_weights_json": jd.score_weights_json,
     }
 
 
@@ -275,6 +312,8 @@ def hr_create_jd(
         question_count=int(payload.total_questions),
         project_question_ratio=float(payload.project_question_ratio),
         is_active=True,
+        score_weights_json=payload.score_weights_json,
+        total_duration_minutes=payload.total_duration_minutes or 30,
     )
     db.add(jd)
     db.commit()
@@ -343,6 +382,10 @@ def hr_update_jd(
         jd.question_count = jd.total_questions
     if payload.project_question_ratio is not None:
         jd.project_question_ratio = float(payload.project_question_ratio)
+    if payload.total_duration_minutes is not None:
+        jd.total_duration_minutes = int(payload.total_duration_minutes)
+    if payload.score_weights_json is not None:
+        jd.score_weights_json = payload.score_weights_json
 
     db.commit()
     db.refresh(jd)
@@ -372,13 +415,32 @@ def hr_delete_jd(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     jd = _get_hr_owned_jd_or_404(db, jd_id, current_user.user_id)
-    applications_count = db.query(Result).filter(Result.job_id == jd_id).count()
+    
+    # Check only for results belonging to this HR (not all results in system)
+    applications_count = (
+        db.query(Result)
+        .join(JobDescription, Result.job_id == JobDescription.id)
+        .filter(Result.job_id == jd_id, JobDescription.company_id == current_user.user_id)
+        .count()
+    )
     if applications_count:
-        raise HTTPException(status_code=400, detail="Cannot delete a JD with applications")
+        raise HTTPException(status_code=400, detail="Cannot delete a JD with active applications")
 
-    selected_candidates_count = db.query(Candidate).filter(Candidate.selected_jd_id == jd_id).count()
-    if selected_candidates_count:
-        raise HTTPException(status_code=400, detail="Cannot delete a JD selected by candidates")
+    # Only check candidates that have results for THIS HR's JDs
+    # (Candidates might have selected this JD but if they never applied to our jobs, it's ok)
+    # Actually - remove this check entirely, or make it less strict
+    # Just unselect candidates if they selected this JD
+    candidates_with_this_jd = db.query(Candidate).filter(Candidate.selected_jd_id == jd_id).all()
+    for candidate in candidates_with_this_jd:
+        # Only unlink if candidate has no results with this HR
+        has_our_results = (
+            db.query(Result)
+            .join(JobDescription, Result.job_id == JobDescription.id)
+            .filter(Result.candidate_id == candidate.id, JobDescription.company_id == current_user.user_id)
+            .first()
+        )
+        if not has_our_results:
+            candidate.selected_jd_id = None
 
     deleted_upload = False
     if jd.jd_text:
@@ -494,7 +556,78 @@ def hr_dashboard(
     }
 
 
-# 1) What this does: returns the paginated HR candidate manager list.
+# ── HR Dashboard Calendar ─────────────────────────────────────────────────────
+@router.get("/hr/dashboard/calendar")
+def hr_dashboard_calendar(
+    month: int | None = None,
+    year: int | None = None,
+    current_user: SessionUser = Depends(require_role("hr")),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    from datetime import datetime, timedelta
+    from sqlalchemy import and_
+    
+    if not month:
+        month = datetime.now().month
+    if not year:
+        year = datetime.now().year
+    
+    start_date = datetime(year, month, 1)
+    if month == 12:
+        end_date = datetime(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        end_date = datetime(year, month + 1, 1) - timedelta(days=1)
+    
+    results = (
+        db.query(Result)
+        .join(JobDescription, Result.job_id == JobDescription.id)
+        .filter(
+            JobDescription.company_id == current_user.user_id,
+            Result.interview_datetime.isnot(None),
+            Result.interview_datetime >= start_date,
+            Result.interview_datetime <= end_date + timedelta(days=1),
+        )
+        .all()
+    )
+    
+    date_map = {}
+    for result in results:
+        candidate = result.candidate
+        job = result.job
+        
+        if not candidate or not job:
+            continue
+        
+        date_key = result.interview_datetime.strftime("%Y-%m-%d")
+        
+        status = "scheduled"
+        if result.shortlisted and result.interview_date:
+            sessions = result.sessions or []
+            completed = any((s.ended_at or s.status == "completed") for s in sessions)
+            if completed:
+                status = "completed"
+            else:
+                status = "scheduled"
+        
+        if date_key not in date_map:
+            date_map[date_key] = {"completed": 0, "scheduled": 0, "new": 0, "candidates": []}
+        
+        if status == "completed":
+            date_map[date_key]["completed"] += 1
+        else:
+            date_map[date_key]["scheduled"] += 1
+        
+        date_map[date_key]["candidates"].append({
+            "result_id": result.id,
+            "candidate_id": candidate.id,
+            "candidate_uid": candidate.candidate_uid,
+            "name": candidate.name,
+            "job_title": job.jd_title or job.title or "JD",
+            "status": status,
+            "score": float(result.final_score or result.score or 0),
+        })
+    
+    return {"ok": True, "dates": date_map}
 # 2) Why needed: supports search, filter, sorting, and paging in one API.
 # 3) How it works: builds summaries, filters them in memory, then slices the requested page.
 @router.get("/hr/candidates")
@@ -660,12 +793,14 @@ def hr_candidate_detail(
         db.commit()
         db.refresh(candidate)
 
+    # Get all results for this candidate that belong to THIS HR's JDs
     results = (
         _candidate_result_scope(db, current_user.user_id)
         .filter(Result.candidate_id == candidate.id)
         .order_by(Result.id.desc())
         .all()
     )
+    
     if not results:
         raise HTTPException(status_code=404, detail="Candidate not found for this HR")
 
@@ -746,7 +881,11 @@ def hr_candidate_detail(
     skill_gap = None
     resume_advice = None
     if latest_job and resume_text.strip():
-        skill_gap = compute_resume_skill_match(resume_text, (latest_job.skill_scores or {}).keys())
+        skill_gap = compute_resume_skill_match(
+            resume_text,
+            (latest_job.skill_scores or {}).keys(),
+            latest_job.skill_scores
+        )
         resume_advice = build_resume_advice(
             resume_text=resume_text,
             jd_skill_scores=latest_job.skill_scores or {},
@@ -826,6 +965,16 @@ def hr_candidates_batch_details(
             .all()
         )
         applications = []
+        latest_result = results[0] if results else None
+        score_breakdown = latest_result.score_breakdown_json or {} if latest_result else {}
+        
+        semantic_score = float(latest_result.score) if latest_result and latest_result.score is not None else None
+        skill_match_score = float(latest_result.explanation.get("matched_percentage", 0)) if latest_result and latest_result.explanation else None
+        interview_score = score_breakdown.get("interview_performance_score") or score_breakdown.get("interview_score")
+        behavioral_score = latest_result.hr_behavioral_score if latest_result and latest_result.hr_behavioral_score is not None else score_breakdown.get("behavioral_score")
+        communication_score = latest_result.hr_communication_score if latest_result and latest_result.hr_communication_score is not None else score_breakdown.get("communication_behavior_score")
+        final_ai_score = latest_result.final_score if latest_result and latest_result.final_score is not None else score_breakdown.get("final_weighted_score")
+        
         for result in results:
             latest_session = _latest_session(result)
             applications.append({
@@ -854,6 +1003,13 @@ def hr_candidates_batch_details(
                 "name": candidate.name,
                 "email": candidate.email,
                 "resume_path": candidate.resume_path,
+                "semanticScore": semantic_score,
+                "skillMatchScore": skill_match_score,
+                "interviewScore": interview_score,
+                "behavioralScore": behavioral_score,
+                "communicationScore": communication_score,
+                "finalAIScore": final_ai_score,
+                "finalDecision": latest_result.hr_decision if latest_result else None,
             },
             "applications": applications,
         }
@@ -942,7 +1098,7 @@ def hr_update_candidate_stage(
     stage_key = normalize_stage(payload.stage)
     result.shortlisted = stage_key in {"shortlisted", "interview_scheduled", "interview_completed", "selected"}
     if stage_key == "interview_scheduled" and not result.interview_date:
-        result.interview_date = datetime.utcnow().isoformat(timespec="minutes")
+        result.interview_date = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(timespec="minutes").replace("+00:00", "Z")
     db.commit()
     db.refresh(result)
     return {"ok": True, "result_id": result.id, "stage": stage_payload(result.stage)}
@@ -1043,7 +1199,11 @@ def hr_candidate_skill_gap(
     # 1) What this does: calculates matched and missing skills.
     # 2) Why needed: this is the same local-only logic already used elsewhere in the app.
     # 3) How it works: reuses the existing compute_resume_skill_match helper with the JD skill keys.
-    skill_gap = compute_resume_skill_match(resume_text, (target_job.skill_scores or {}).keys())
+    skill_gap = compute_resume_skill_match(
+            resume_text,
+            (target_job.skill_scores or {}).keys(),
+            target_job.skill_scores
+        )
 
     return {
         "ok": True,
@@ -1070,11 +1230,54 @@ def hr_delete_candidate(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    # Check if candidate has any results owned by THIS HR
     owned_results = (
         db.query(Result)
         .join(JobDescription, Result.job_id == JobDescription.id)
         .filter(Result.candidate_id == candidate.id, JobDescription.company_id == current_user.user_id)
         .count()
+    )
+    if not owned_results:
+        raise HTTPException(status_code=404, detail="Candidate not found for this HR")
+
+    # Check if candidate has results for OTHER HR companies - if yes, just unlink from this HR
+    foreign_results = (
+        db.query(Result)
+        .join(JobDescription, Result.job_id == JobDescription.id)
+        .filter(Result.candidate_id == candidate.id, JobDescription.company_id != current_user.user_id)
+        .count()
+    )
+    
+    try:
+        # If there are foreign results, just delete OUR results (not the candidate)
+        # If no foreign results, delete the candidate entirely
+        if foreign_results > 0:
+            # Delete only results belonging to this HR
+            results_to_delete = (
+                db.query(Result)
+                .join(JobDescription, Result.job_id == JobDescription.id)
+                .filter(Result.candidate_id == candidate.id, JobDescription.company_id == current_user.user_id)
+                .all()
+            )
+            for result in results_to_delete:
+                db.delete(result)
+            message = "Applications deleted for this HR"
+        else:
+            # Safe to delete candidate - will cascade delete results and sessions
+            safe_delete_upload(candidate.resume_path)
+            db.delete(candidate)
+            message = "Candidate deleted"
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        import logging
+        logging.getLogger("uvicorn").error(f"[DELETE] Failed to delete candidate {candidate_uid}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")
+
+    return JSONResponse(
+        content={"ok": True, "message": message, "candidate_uid": candidate_uid},
+        status_code=200,
     )
     if not owned_results:
         raise HTTPException(status_code=404, detail="Candidate not found for this HR")
@@ -1091,19 +1294,24 @@ def hr_delete_candidate(
             detail="Candidate has applications with another company and cannot be deleted from this HR panel.",
         )
 
-    safe_delete_upload(candidate.resume_path)
+    try:
+        safe_delete_upload(candidate.resume_path)
 
-    sessions = db.query(InterviewSession).filter(InterviewSession.candidate_id == candidate.id).all()
-    for session in sessions:
-        db.delete(session)
+        # 1) What this does: leverages SQLAlchemy cascades defined in models.py.
+        # 2) Why needed: automatically handles nested dependencies like answers and history.
+        # 3) How it works: deleting the candidate now triggers cascade delete on Results and Sessions.
+        db.delete(candidate)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        import logging
+        logging.getLogger("uvicorn").error(f"[DELETE] Failed to delete candidate {candidate_uid}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")
 
-    results = db.query(Result).filter(Result.candidate_id == candidate.id).all()
-    for result in results:
-        db.delete(result)
-
-    db.delete(candidate)
-    db.commit()
-    return {"ok": True, "message": "Candidate deleted", "candidate_uid": candidate_uid}
+    return JSONResponse(
+        content={"ok": True, "message": "Candidate deleted", "candidate_uid": candidate_uid},
+        media_type="application/json"
+    )
 
 
 # 1) What this does: uploads a JD file and extracts its initial skill list.
@@ -1122,12 +1330,21 @@ def upload_jd(
     project_question_ratio: str = Form("0.8"),
     current_user: SessionUser = Depends(require_role("hr")),
 ) -> dict[str, object]:
+    from core.config import config
     _ = gender_requirement
     safe_filename = Path(jd_file.filename or "jd").name
     allowed_extensions = {".pdf", ".docx", ".doc", ".txt", ".rtf"}
     file_ext = Path(safe_filename).suffix.lower()
     if file_ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"Unsupported file type '{file_ext}'. Allowed: {', '.join(sorted(allowed_extensions))}")
+
+    jd_file.file.seek(0, 2)
+    file_size = jd_file.file.tell()
+    jd_file.file.seek(0)
+    max_size_bytes = config.MAX_UPLOAD_SIZE_MB * 1_000_000
+    if file_size > max_size_bytes:
+        raise HTTPException(status_code=400, detail=f"JD file exceeds {config.MAX_UPLOAD_SIZE_MB}MB limit")
+
     try:
         years = int(experience_requirement) if experience_requirement else 0
     except ValueError:
@@ -1156,23 +1373,29 @@ def upload_jd(
     with jd_path.open("wb") as buffer:
         shutil.copyfileobj(jd_file.file, buffer)
 
-    # Extract text and skills after file is closed
+    # Extract text and all requirements after file is closed
     jd_raw_text = extract_text_from_file(str(jd_path))
-    ai_skills = llm_extract_skills(jd_raw_text)
+    requirements = extract_jd_requirements(jd_raw_text)
+    ai_skills = requirements.get("skills") or {}
     if not ai_skills:
         extracted_skills = extract_skills_from_jd(str(jd_path))
         ai_skills = {skill: 5 for skill in extracted_skills}
+
+    extracted_education = requirements.get("education_requirement") or education_requirement
+    extracted_experience = requirements.get("experience_requirement") or years
+    extracted_min_percent = requirements.get("min_academic_percent") or 0
 
     request.session["temp_jd"] = {
         "jd_title": jd_title.strip() if jd_title else None,
         "jd_path": str(jd_path),
         "jd_raw_text": jd_raw_text[:8000],
         "gender_requirement": None,
-        "education_requirement": education_requirement or None,
-        "experience_requirement": years,
+        "education_requirement": extracted_education,
+        "experience_requirement": extracted_experience,
         "cutoff_score": cutoff,
         "question_count": questions,
         "project_question_ratio": ratio,
+        "min_academic_percent": extracted_min_percent,
     }
 
     return {
@@ -1184,6 +1407,35 @@ def upload_jd(
         "cutoff_score": cutoff,
         "question_count": questions,
         "project_question_ratio": ratio,
+        "education_requirement": extracted_education,
+        "experience_requirement": extracted_experience,
+        "min_academic_percent": extracted_min_percent,
+    }
+
+
+@router.post("/hr/parse-jd-text")
+def parse_jd_text(
+    request: Request,
+    jd_text: str = Form(...),
+    jd_title: str = Form(""),
+    current_user: SessionUser = Depends(require_role("hr")),
+) -> dict[str, Any]:
+    if not jd_text or not jd_text.strip():
+        raise HTTPException(status_code=400, detail="JD text is required")
+
+    requirements = extract_jd_requirements(jd_text)
+    ai_skills = requirements.get("skills") or {}
+    if not ai_skills:
+        ai_skills = {"Add skills manually": 5}
+
+    return {
+        "ok": True,
+        "jd_title": jd_title.strip() or None,
+        "jd_text": jd_text[:500],
+        "ai_skills": ai_skills,
+        "education_requirement": requirements.get("education_requirement"),
+        "experience_requirement": requirements.get("experience_requirement", 0),
+        "min_academic_percent": requirements.get("min_academic_percent", 0),
     }
 
 
@@ -1212,7 +1464,8 @@ def confirm_jd(
 
     job = JobDescription(
         company_id=current_user.user_id,
-        jd_title=temp_jd.get("jd_title"),
+        title=temp_jd.get("jd_title") or "Untitled Role",
+        jd_title=temp_jd.get("jd_title") or "Untitled Role",
         jd_text=temp_jd["jd_path"],
         skill_scores=normalized_scores,
         gender_requirement=None,
@@ -1357,6 +1610,7 @@ def hr_interview_score(
 @router.get("/hr/interviews/{session_id}/export-pdf")
 def hr_export_interview_pdf(
     session_id: int,
+    upload_s3: bool = False,
     current_user: SessionUser = Depends(require_role("hr")),
     db: Session = Depends(get_db),
 ):
@@ -1380,11 +1634,22 @@ def hr_export_interview_pdf(
          # Optional: you could allow partial reports, but usually best after completion
          pass
 
-    pdf_buffer = generate_interview_pdf(session, db)
+    return_s3 = upload_s3 and db.query(Result).filter(Result.id == session.result_id).first()
+    pdf_result = generate_interview_pdf(session, db, return_s3_url=return_s3)
+    
     candidate = db.query(Candidate).filter(Candidate.id == session.candidate_id).first()
     safe_name = (candidate.name or "Candidate").replace(" ", "_")
     filename = f"Interview_Report_{safe_name}_{session.id}.pdf"
 
+    if isinstance(pdf_result, tuple):
+        pdf_buffer, s3_url = pdf_result
+        return {
+            "pdf_url": s3_url,
+            "filename": filename,
+            "message": "PDF uploaded to S3 successfully"
+        }
+    
+    pdf_buffer = pdf_result
     return StreamingResponse(
         pdf_buffer,
         media_type="application/pdf",

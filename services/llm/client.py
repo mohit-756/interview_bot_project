@@ -14,10 +14,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pathlib import Path
-from utils.token_utils import log_token_usage, get_snapshot
-from dotenv import load_dotenv
-
-load_dotenv()
+from utils.token_utils import log_token_usage
+from core.config import config
 
 CACHE_DIR = Path(".cache")
 CACHE_DIR.mkdir(exist_ok=True)
@@ -53,16 +51,16 @@ def _clean_json(raw: str) -> str:
 
 @lru_cache(maxsize=1)
 def _resolve_llm_config() -> dict[str, Any]:
-    """Single source of truth for LLM configuration from .env only."""
-    provider = os.getenv("LLM_PROVIDER", "cerebras").strip().lower()
+    """Single source of truth for LLM configuration from global config."""
+    provider = config.LLM_PROVIDER
     
-    # Standardized environment variables
-    api_key = os.getenv("LLM_API_KEY", "").strip()
-    base_url = os.getenv("LLM_BASE_URL", "").strip()
-    primary_model = os.getenv("LLM_MODEL_PRIMARY", "").strip()
-    fallback_model = os.getenv("LLM_MODEL_FALLBACK", "").strip()
+    # Values from global config
+    api_key = config.LLM_API_KEY
+    base_url = config.LLM_BASE_URL
+    primary_model = config.LLM_MODEL_PRIMARY
+    fallback_model = config.LLM_MODEL_FALLBACK
     
-    # Provider-specific defaults if not provided in .env
+    # Provider-specific defaults if not provided in config
     if not primary_model:
         if provider == "cerebras": primary_model = "qwen-3-235b-a22b-instruct-2507"
         elif provider == "groq": primary_model = "llama-3.1-8b-instant"
@@ -79,7 +77,6 @@ def _resolve_llm_config() -> dict[str, Any]:
         elif provider == "groq": base_url = "https://api.groq.com/openai/v1"
         elif provider == "ollama": base_url = "http://localhost:11434/v1"
         elif provider == "openai": base_url = "https://api.openai.com/v1"
-        # Gemini usually requires its own adapter or a proxy
 
     return {
         "provider": provider,
@@ -118,26 +115,13 @@ class OpenAIAdapter:
 
     def create(self, messages: list[dict[str, Any]], temperature: float, max_tokens: int, **kwargs):
         model = kwargs.get("model") or self.model
+        response_format = kwargs.get("response_format")
         
         # Caching logic
-        cache_key = f"{model}_{temperature}_{json.dumps(messages)}"
+        cache_key = f"{model}_{temperature}_{json.dumps(messages)}_{json.dumps(response_format, sort_keys=True) if response_format else 'none'}"
         if cache_key in _llm_cache:
             logger.info(f"CACHE_HIT: model={model}")
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=_llm_cache[cache_key]))])
-
-        # Budget check before making the request
-        budget = get_snapshot()
-        if budget.get("blocked"):
-            logger.error("LLM request BLOCKED: daily token budget exceeded (%s%%)", budget["budget_pct"])
-            raise RuntimeError(
-                f"Daily LLM token budget exceeded ({budget['budget_pct']}% used). "
-                f"Remaining: {budget['budget_remaining']} tokens."
-            )
-
-        throttle_delay = budget.get("throttle_delay", 0)
-        if throttle_delay > 0:
-            logger.warning("LLM throttling: sleeping %ss due to %s%% budget usage", throttle_delay, budget["budget_pct"])
-            time.sleep(throttle_delay)
 
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -146,8 +130,8 @@ class OpenAIAdapter:
             "temperature": float(temperature),
             "max_tokens": int(max_tokens)
         }
-        if kwargs.get("response_format"):
-            payload["response_format"] = kwargs["response_format"]
+        if response_format:
+            payload["response_format"] = response_format
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -165,10 +149,24 @@ class OpenAIAdapter:
                 resp = _session.post(url, json=payload, headers=headers, timeout=120)
 
             if resp.status_code != 200:
-                logger.error(f"LLM API Error ({resp.status_code}): {resp.text}")
+                logger.error(f"LLM API Error ({resp.status_code}): {resp.text[:500] if resp.text else 'empty response'}")
                 resp.raise_for_status()
 
-            data = resp.json()
+            # Check for empty response
+            if not resp.text or not resp.text.strip():
+                logger.error("LLM API returned empty response")
+                raise ValueError("Empty response from LLM API")
+
+            try:
+                data = resp.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"LLM API returned invalid JSON: {e}, response: {resp.text[:200]}")
+                raise ValueError(f"Invalid JSON from LLM API: {e}")
+
+            if not data or "choices" not in data:
+                logger.error(f"LLM API response missing choices: {data}")
+                raise ValueError(f"Invalid LLM API response: {data}")
+
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
             # Extract actual token counts from API response
@@ -283,6 +281,39 @@ def evaluate_answer_detailed(**kwargs) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"evaluation failed: {e}")
         return {"score": 50, "feedback": "Evaluation failed."}
+
+def extract_jd_requirements(jd_text: str) -> dict[str, Any]:
+    """Extract structured requirements from JD text: skills + education + experience + min academic %."""
+    prompt = (
+        "Analyze the job description below and extract structured requirements. "
+        "Return ONLY a JSON object with these exact keys:\n\n"
+        "1. 'skills': Object with skill names as keys and importance weight (1-10) as values. "
+        "   Include ONLY hard technical skills (languages, frameworks, databases, cloud, DevOps). "
+        "   Ignore soft skills, methodologies, company info.\n\n"
+        "2. 'education_requirement': String - one of: 'bachelor', 'master', 'phd', or null if not specified.\n\n"
+        "3. 'experience_requirement': Integer - minimum years of experience or 0 if not specified.\n\n"
+        "4. 'min_academic_percent': Integer - minimum academic percentage or 0 if not specified.\n\n"
+        "RULES:\n"
+        "- For education: look for 'B.Tech', 'BE', 'Bachelor', 'B.Sc' = 'bachelor'. "
+        "'M.Tech', 'Master', 'M.Sc' = 'master'. 'PhD', 'doctorate' = 'phd'. Otherwise null.\n"
+        "- For experience: look for patterns like '3+ years', '3 years', 'minimum 5 years'. Extract the number.\n"
+        "- For min %: look for patterns like 'minimum 60%', '65% aggregate', '60 percent'. Extract the number.\n"
+        "- If any field is not clearly stated, use null for education or 0 for numbers.\n\n"
+        f"Job Description:\n{jd_text[:4000]}"
+    )
+    try:
+        resp = _get_client().create(messages=[{"role": "user", "content": prompt}], temperature=0.1, max_tokens=500)
+        result = json.loads(_clean_json(resp.choices[0].message.content))
+        return {
+            "skills": result.get("skills", {}),
+            "education_requirement": result.get("education_requirement"),
+            "experience_requirement": result.get("experience_requirement", 0),
+            "min_academic_percent": result.get("min_academic_percent", 0),
+        }
+    except Exception as e:
+        logger.error(f"extract_jd_requirements failed: {e}")
+        return {"skills": {}, "education_requirement": None, "experience_requirement": 0, "min_academic_percent": 0}
+
 
 def score_answer(question: str, answer: str) -> dict[str, Any]:
     eval_res = evaluate_answer_detailed(question=question, answer=answer)

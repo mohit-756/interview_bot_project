@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from ai_engine.phase3.question_flow import compute_dynamic_seconds, normalize_result_questions
 
 from database import get_db
+from core.config import config
 
 from models import (
     Candidate,
@@ -42,8 +43,7 @@ from models import (
     Result,
 )
 
-from routes.common import interview_access_state, interview_entry_url
-
+from routes.common import interview_access_state, interview_entry_url, interview_schedule_state, utc_isoformat
 from routes.dependencies import SessionUser, require_role
 
 from services.pipeline import record_stage_change
@@ -54,7 +54,11 @@ from routes.schemas import InterviewAnswerBody, InterviewEventBody, InterviewSta
 
 from routes.interview.evaluation import run_evaluation_task
 
+
+
 from utils.proctoring_cv import analyze_frame, compare_signatures, should_store_periodic
+
+from utils.s3_utils import upload_proctor_image
 
 
 
@@ -74,11 +78,11 @@ PROCTOR_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 
-HIGH_MOTION_THRESHOLD = 0.20
+HIGH_MOTION_THRESHOLD = 0.25
 
-FACE_MISMATCH_THRESHOLD = 0.78
+FACE_MISMATCH_THRESHOLD = 0.70
 
-SHOULDER_MIN_THRESHOLD = 0.55
+SHOULDER_MIN_THRESHOLD = 0.50
 
 PERIODIC_SAVE_SECONDS = 10
 
@@ -113,19 +117,8 @@ SUSPICIOUS_TYPES = {
 
 
 
-@router.get("/interview/{result_id}")
-
-def legacy_interview_entry(result_id: int, token: str | None = None) -> RedirectResponse:
-
-    """Redirect legacy backend interview URLs to the SPA pre-check route."""
-
-    target = interview_entry_url(result_id) or "/"
-
-    if token:
-
-        target = f"{target}?token={token}"
-
-    return RedirectResponse(url=target, status_code=307)
+# NOTE: Routes WITH specific paths MUST be registered BEFORE the wildcard /interview/{result_id}
+# because FastAPI matches in registration order, not by specificity.
 
 
 
@@ -531,6 +524,32 @@ def _resolve_candidate_result(db: Session, candidate_id: int, result_id: int | N
 
         if not result:
 
+            # Backward-compatible fallback: some clients may send an interview
+
+            # session id in place of result_id. Resolve it only for the same
+
+            # candidate to preserve access isolation.
+
+            session = db.query(InterviewSession).filter(
+
+                InterviewSession.id == result_id,
+
+                InterviewSession.candidate_id == candidate_id,
+
+            ).first()
+
+            if session:
+
+                result = db.query(Result).filter(
+
+                    Result.id == session.result_id,
+
+                    Result.candidate_id == candidate_id,
+
+                ).first()
+
+        if not result:
+
             raise HTTPException(status_code=404, detail="Interview result not found")
 
         return result
@@ -623,6 +642,12 @@ def _ensure_interview_ready(result: Result) -> None:
 
         raise HTTPException(status_code=400, detail="Interview session has already been submitted")
 
+    if access["interview_locked_reason"] == "scheduled_for_future":
+        raise HTTPException(status_code=403, detail="Interview can be started only within the allowed start window")
+
+    if access["interview_locked_reason"] == "start_window_expired":
+        raise HTTPException(status_code=403, detail="Interview start window has expired. Please reschedule.")
+
     raise HTTPException(status_code=400, detail="Schedule your interview before starting")
 
 
@@ -649,7 +674,7 @@ def _resolve_result_by_token(db: Session, candidate_id: int, token: str) -> Resu
 
         by_id = query.filter(Result.id == int(token_value)).first()
 
-        if by_id:
+        if by_id and not (by_id.interview_token or "").strip():
 
             return by_id
 
@@ -824,6 +849,18 @@ def _question_bank_category_coverage(questions: list[dict[str, Any]]) -> dict[st
 
     categories: set[str] = set()
 
+    type_to_category = {
+        "opener": "intro",
+        "behavioral": "behavioral",
+        "project": "project",
+        "deep_dive": "project",
+        "architecture": "project",
+        "leadership": "project",
+        "debugging": "project",
+        "decision": "project",
+        "role_specific": "project",
+    }
+
     for item in questions:
 
         if not isinstance(item, dict):
@@ -834,7 +871,10 @@ def _question_bank_category_coverage(questions: list[dict[str, Any]]) -> dict[st
 
         if explicit:
 
-            categories.add(explicit)
+            if explicit in type_to_category:
+                categories.add(type_to_category[explicit])
+            else:
+                categories.add(explicit)
 
             continue
 
@@ -1239,6 +1279,7 @@ def _compose_start_response(
         "time_limit_seconds": int((question.allotted_seconds if question else 0) or 0),
 
         "remaining_total_seconds": int(session.remaining_time_seconds or session.total_time_seconds or 1200),
+        "total_time_seconds": int(session.total_time_seconds or 1200),
 
         "consent_given": bool(session.consent_given),
 
@@ -1248,8 +1289,43 @@ def _compose_start_response(
 
         "pause_seconds_left": pause_seconds_left,
 
+
     }
 
+
+@router.post("/interview/tts")
+
+def synthesize_question_speech(
+    text: str,
+    voice: str = "kajal",
+):
+    """Synthesize speech for interview question using Amazon Polly via Lambda."""
+    import requests
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    if not config.LAMBDA_S3_URL:
+        raise HTTPException(status_code=500, detail="TTS Lambda not configured")
+
+    try:
+        resp = requests.get(
+            config.LAMBDA_S3_URL,
+            params={"text": text, "voice": voice},
+            timeout=30
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if "error" in data:
+            raise Exception(data["error"])
+
+        logger.info("TTS synthesis success voice=%s text_len=%d", voice, len(text))
+        return {"ok": True, **data}
+
+    except Exception as exc:
+        logger.error("TTS synthesis failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(exc)}")
 
 
 
@@ -1277,6 +1353,8 @@ def interview_access(
     result = _resolve_candidate_result(db, candidate.id, result_id)
 
     access = interview_access_state(result)
+
+    schedule = interview_schedule_state(result)
 
     latest_session = _latest_interview_session(db, result)
 
@@ -1416,12 +1494,56 @@ def interview_access(
 
         "interview_locked_reason": access["interview_locked_reason"],
 
+        "interview_datetime_utc": utc_isoformat(schedule["scheduled_utc"]),
+
+        "interview_window_open_utc": utc_isoformat(schedule["window_open_utc"]),
+
+        "interview_window_close_utc": utc_isoformat(schedule["window_close_utc"]),
+
+        "can_start_now": bool(schedule["can_start_now"]),
+
         "latest_session_status": str(getattr(latest_session, "status", "") or "").strip().lower() or None,
 
         "question_count": len(questions),
 
         "resume_jd_evaluation": resume_jd_eval,
 
+    }
+
+
+
+
+@router.get("/interview/{result_id}/recheck")
+def interview_recheck(
+    result_id: int,
+    current_user: SessionUser = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    candidate = db.query(Candidate).filter(Candidate.id == current_user.user_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    result = _resolve_candidate_result(db, candidate.id, result_id)
+    access = interview_access_state(result)
+    schedule = interview_schedule_state(result)
+
+    return {
+        "ok": True,
+        "result_id": result.id,
+        "interview_ready": bool(access["interview_ready"]),
+        "interview_locked_reason": access["interview_locked_reason"],
+        "scheduled_utc": utc_isoformat(schedule["scheduled_utc"]),
+        "window_open_utc": utc_isoformat(schedule["window_open_utc"]),
+        "window_close_utc": utc_isoformat(schedule["window_close_utc"]),
+        "can_start_now": bool(schedule["can_start_now"]),
+        "has_interview_link": bool((result.interview_link or "").strip()),
+        "has_secure_token": bool((result.interview_token or "").strip()),
+        "recommended_checks": [
+            "camera_permission",
+            "microphone_permission",
+            "network_stability",
+            "browser_tab_focus",
+        ],
     }
 
 
@@ -1439,6 +1561,10 @@ def interview_start(
     db: Session = Depends(get_db),
 
 ) -> dict[str, Any]:
+    logger.info("interview_start payload_result_id=%s consent=%s", payload.result_id, payload.consent_given)
+
+    if payload.result_id is None:
+        raise HTTPException(status_code=400, detail="result_id is required")
 
     if payload.candidate_id is not None and payload.candidate_id != current_user.user_id:
 
@@ -1456,11 +1582,23 @@ def interview_start(
 
     result = _resolve_candidate_result(db, candidate.id, payload.result_id)
 
+    if payload.interview_token:
+        provided = (payload.interview_token or "").strip()
+        expected = (result.interview_token or "").strip()
+        if expected and provided != expected:
+            raise HTTPException(status_code=403, detail="Interview link token is invalid")
+
     _ensure_interview_ready(result)
 
 
 
     job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
+
+    configured_total_time = (
+        int(payload.total_time_seconds)
+        if payload.total_time_seconds is not None
+        else int((job.total_duration_minutes if job and job.total_duration_minutes else 30) * 60)
+    )
 
     configured_max_questions = (
 
@@ -1540,9 +1678,9 @@ def interview_start(
 
             per_question_seconds=payload.per_question_seconds,
 
-            total_time_seconds=payload.total_time_seconds,
+            total_time_seconds=configured_total_time,
 
-            remaining_time_seconds=payload.total_time_seconds,
+            remaining_time_seconds=configured_total_time,
 
             max_questions=configured_max_questions,
 
@@ -2032,6 +2170,8 @@ def interview_answer(
 
             communication_score=float(interview_summary.get("communication_score") or 0.0),
 
+            weights_json=job.score_weights_json if job and hasattr(job, 'score_weights_json') and job.score_weights_json else None,
+
         )
 
         result.final_score = float(result.score_breakdown_json["final_weighted_score"])
@@ -2147,10 +2287,12 @@ def interview_transcribe(
     raw = audio.file.read()
 
     if not raw:
-
         raise HTTPException(status_code=400, detail="Audio payload is empty")
 
-
+    audio_size = len(raw)
+    max_size_bytes = config.MAX_UPLOAD_SIZE_MB * 1_000_000
+    if audio_size > max_size_bytes:
+        raise HTTPException(status_code=400, detail=f"Audio file exceeds {config.MAX_UPLOAD_SIZE_MB}MB limit")
 
     try:
 
@@ -2443,9 +2585,14 @@ def upload_proctor_frame(
 
     session = _get_candidate_session_or_403(db, session_id, current_user)
 
-
-
     raw = file.file.read()
+
+    image_size = len(raw)
+    max_size_bytes = config.MAX_UPLOAD_SIZE_MB * 1_000_000
+    if image_size > max_size_bytes:
+        raise HTTPException(status_code=400, detail=f"Image file exceeds {config.MAX_UPLOAD_SIZE_MB}MB limit")
+
+    image_quality_score = None
 
     frame = analyze_frame(session.id, raw)
 
@@ -2480,8 +2627,6 @@ def upload_proctor_frame(
     shoulder_score_raw = _float_or_none(frame.get("shoulder_score"))
 
     upper_bodies_count = int(frame.get("upper_bodies_count") or 0)
-
-
 
     baseline_signature = None
 
@@ -2783,39 +2928,28 @@ def upload_proctor_frame(
 
 
 
-    session_dir = PROCTOR_UPLOAD_ROOT / str(session.id)
-
-    session_dir.mkdir(parents=True, exist_ok=True)
-
-    
-
-    # Enforce a maximum of 50 proctoring frames per session to prevent disk exhaustion
-
-    existing_frames = sorted(session_dir.glob("*.jpg"))
-
-    if len(existing_frames) >= 50:
-
-        for old_frame in existing_frames[:-49]:
-
-            try:
-
-                old_frame.unlink()
-
-            except Exception:
-
-                pass
-
-
-
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
 
-    file_path = session_dir / f"{timestamp}.jpg"
-
-    file_path.write_bytes(raw)
-
-
-
-    relative_path = file_path.relative_to(Path("uploads")).as_posix()
+    try:
+        image_url = upload_proctor_image(session.id, raw, timestamp)
+        relative_path = image_url
+    except Exception as e:
+        logger.warning(f"S3 upload failed, falling back to local: {e}")
+        session_dir = PROCTOR_UPLOAD_ROOT / str(session.id)
+        session_dir.mkdir(parents=True, exist_ok=True)
+        
+        existing_frames = sorted(session_dir.glob("*.jpg"))
+        if len(existing_frames) >= 50:
+            for old_frame in existing_frames[:-49]:
+                try:
+                    old_frame.unlink()
+                except Exception:
+                    pass
+        
+        file_path = session_dir / f"{timestamp}.jpg"
+        file_path.write_bytes(raw)
+        relative_path = file_path.relative_to(Path("uploads")).as_posix()
+        image_url = f"/uploads/{relative_path}"
 
     score = float(motion_score)
 
@@ -2908,10 +3042,8 @@ def upload_proctor_frame(
 
 
     payload_out["stored"] = True
-
     payload_out["event_id"] = event.id
-
-    payload_out["image_url"] = f"/uploads/{relative_path}"
+    payload_out["image_url"] = image_url
 
     return payload_out
 
@@ -3074,3 +3206,16 @@ def submit_interview_feedback(
     db.add(feedback)
     db.commit()
     return {"ok": True, "rating": rating}
+
+
+# ── LEGACY REDIRECT ──────────────────────────────────────────────────────────────────
+# MUST be at the END - catches any remaining /interview/{result_id} requests and redirects to SPA.
+# All specific /interview/{result_id}/... routes must be registered BEFORE this.
+
+@router.get("/interview/{result_id}")
+def legacy_interview_entry(result_id: int, token: str | None = None) -> RedirectResponse:
+    """Redirect legacy backend interview URLs to the SPA pre-check route."""
+    target = interview_entry_url(result_id) or "/"
+    if token:
+        target = f"{target}?token={token}"
+    return RedirectResponse(url=target, status_code=307)

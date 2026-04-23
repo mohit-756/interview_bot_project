@@ -723,14 +723,91 @@ def _normalize_llm_questions_v2(
 # ============================================================================
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
+    """Extract JSON object from LLM response with multiple fallback strategies."""
     cleaned = _clean_json(raw or "")
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL) 
-    if match:
-        cleaned = match.group(0)
-    data = json.loads(cleaned)
-    if not isinstance(data, dict):
-        raise ValueError("LLM response must be a JSON object")
-    return data
+
+    # Strategy 0: Let JSONDecoder find the first decodable JSON value in noisy text
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[{]", cleaned):
+        start = match.start()
+        try:
+            data, _ = decoder.raw_decode(cleaned[start:])
+            if isinstance(data, dict):
+                return data
+            if isinstance(data, list) and data:
+                return {"questions": data}
+        except Exception:
+            continue
+    
+    # Strategy 1: Find JSON object with proper brace matching
+    start = cleaned.find("{")
+    if start == -1:
+        start = cleaned.find("[")
+        if start == -1:
+            raise ValueError("No JSON found in response")
+    
+    # Find matching closing brace
+    brace_count = 0
+    in_string = False
+    escape = False
+    end = start
+    for i, char in enumerate(cleaned[start:], start):
+        if escape:
+            escape = False
+            continue
+        if char == "\\":
+            escape = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{" or char == "[":
+            brace_count += 1
+        elif char == "}" or char == "]":
+            brace_count -= 1
+            if brace_count == 0:
+                end = i + 1
+                break
+    
+    cleaned = cleaned[start:end]
+    
+    # Strategy 2: Try direct parse
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list) and len(data) > 0:
+            return {"questions": data}
+    except:
+        pass
+    
+    # Strategy 3: Fix common JSON issues
+    try:
+        cleaned = cleaned.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
+        # Remove trailing commas
+        cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
+        # Remove comments
+        cleaned = re.sub(r'//.*', '', cleaned)
+        cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+    except:
+        pass
+    
+    # Strategy 4: Extract questions array manually
+    try:
+        match = re.search(r'"questions"\s*:\s*\[([\s\S]*)\]', cleaned)
+        if match:
+            questions_str = "[" + match.group(1) + "]"
+            questions = json.loads(questions_str)
+            return {"questions": questions}
+    except:
+        pass
+    
+    raise ValueError("Could not parse JSON from LLM response")
 
 
 # ============================================================================
@@ -751,6 +828,9 @@ def _call_llm(structured_input: StructuredQuestionInput, question_count: int, re
         structured_input.role_family,
     )
     
+    max_tokens = max(2000, min(6000, int(question_count) * 220))
+    use_strict_json = provider == "openai"
+
     try:
         response = _get_client().create(
             model=model,
@@ -759,14 +839,38 @@ def _call_llm(structured_input: StructuredQuestionInput, question_count: int, re
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.25 if retry_note else 0.35,
-            max_tokens=2000,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"} if use_strict_json else None,
         )
         logger.info("llm_question_request_success provider=%s model=%s retry=%s", provider, model, bool(retry_note))
     except Exception as exc:
         logger.warning("llm_question_request_failure provider=%s model=%s retry=%s error=%s", provider, model, bool(retry_note), exc)
         raise
-    
-    payload = _extract_json_object(response.choices[0].message.content or "")
+
+    raw_content = response.choices[0].message.content or ""
+    try:
+        payload = _extract_json_object(raw_content)
+    except Exception:
+        logger.warning(
+            "llm_json_parse_retry provider=%s model=%s question_count=%s retry=%s",
+            provider,
+            model,
+            question_count,
+            bool(retry_note),
+        )
+        repair_prompt = user_prompt + "\n\nIMPORTANT: Return ONLY valid JSON object. No markdown, no explanations."
+        repair_response = _get_client().create(
+            model=model,
+            messages=[
+                {"role": "system", "content": LLM_QUESTION_SYSTEM_PROMPT},
+                {"role": "user", "content": repair_prompt},
+            ],
+            temperature=0.15,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"} if use_strict_json else None,
+        )
+        payload = _extract_json_object(repair_response.choices[0].message.content or "")
+
     questions = _normalize_llm_questions_v2(
         raw_questions=list(payload.get("questions") or []),
         structured_input=structured_input,
@@ -984,14 +1088,64 @@ def _build_fallback_bundle(
     jd_title: str | None,
     jd_skill_scores: Mapping[str, int] | None,
     question_count: int,
+    project_ratio: float | None = None,
 ) -> dict[str, Any]:
     fallback_bundle = build_question_plan(
         resume_text=resume_text,
         jd_title=jd_title,
         jd_skill_scores=jd_skill_scores or {},
         question_count=question_count,
+        project_ratio=project_ratio,
     ) or {}
     return fallback_bundle if isinstance(fallback_bundle, dict) else {}
+
+
+def _question_text_key(question: Mapping[str, Any]) -> str:
+    return _similarity_key(question.get("text"))
+
+
+def _synthetic_top_up_questions(*, desired_count: int, jd_title: str | None, jd_skill_scores: Mapping[str, int] | None, existing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(existing) >= desired_count:
+        return []
+
+    seen = {_question_text_key(q) for q in existing if q.get("text")}
+    role = _clean(jd_title) or "this role"
+    primary_skills = [str(skill) for skill in (jd_skill_scores or {}).keys() if _clean(skill)]
+    if not primary_skills:
+        primary_skills = ["your core stack"]
+
+    templates = [
+        ("project", "In this role, where have you applied {skill} to deliver a measurable outcome?"),
+        ("decision", "Tell me about a trade-off you made while using {skill}, and why you chose that path."),
+        ("debugging", "Describe a production issue related to {skill} that you diagnosed and fixed end-to-end."),
+        ("behavioral", "How do you collaborate with stakeholders when priorities shift during a {skill} initiative?"),
+        ("role_specific", "For {role}, what architecture choices would you make first if scope doubled next quarter?"),
+    ]
+
+    generated: list[dict[str, Any]] = []
+    idx = 0
+    guard = 0
+    while len(existing) + len(generated) < desired_count and guard < 200:
+        qtype, template = templates[idx % len(templates)]
+        skill = primary_skills[idx % len(primary_skills)]
+        text = template.format(skill=skill, role=role)
+        key = _similarity_key(text)
+        if key and key not in seen:
+            seen.add(key)
+            generated.append(
+                {
+                    "text": text,
+                    "type": qtype,
+                    "focus": _clean(skill if qtype != "role_specific" else role) or qtype,
+                    "project": None,
+                    "intent": f"Assess {qtype.replace('_', ' ')} capability relevant to {role}.",
+                    "reference_answer": "Specific ownership, decisions, impact, and lessons learned.",
+                }
+            )
+        idx += 1
+        guard += 1
+
+    return generated
 
 
 def _bundle_counts_v2(questions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1184,6 +1338,7 @@ def generate_question_bundle_with_fallback(
             jd_title=jd_title,
             jd_skill_scores=jd_skill_scores,
             question_count=desired_count,
+            project_ratio=project_ratio,
         )
     except Exception as exc:
         logger.error("Fallback bundle generation failed: %s", exc)
@@ -1240,9 +1395,42 @@ def generate_question_bundle_with_fallback(
         fallback_questions = list(fallback_bundle.get("questions") or [])
         
         if not fallback_questions or len(fallback_questions) < desired_count:
-            fallback_questions = EMERGENCY_FALLBACK_QUESTIONS[:desired_count]
+            pool = fallback_questions + EMERGENCY_FALLBACK_QUESTIONS
+            deduped: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for question in pool:
+                text_key = _question_text_key(question)
+                if not text_key or text_key in seen:
+                    continue
+                seen.add(text_key)
+                deduped.append(question)
+                if len(deduped) >= desired_count:
+                    break
+
+            if len(deduped) < desired_count:
+                deduped.extend(
+                    _synthetic_top_up_questions(
+                        desired_count=desired_count,
+                        jd_title=jd_title,
+                        jd_skill_scores=jd_skill_scores,
+                        existing=deduped,
+                    )
+                )
+
+            fallback_questions = deduped[:desired_count]
         else:
             fallback_questions = _enforce_category_coverage(fallback_questions, fallback_questions)
+
+        if len(fallback_questions) < desired_count:
+            fallback_questions.extend(
+                _synthetic_top_up_questions(
+                    desired_count=desired_count,
+                    jd_title=jd_title,
+                    jd_skill_scores=jd_skill_scores,
+                    existing=fallback_questions,
+                )
+            )
+            fallback_questions = fallback_questions[:desired_count]
             
         fallback_bundle["questions"] = fallback_questions
         

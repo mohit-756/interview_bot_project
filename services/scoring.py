@@ -20,6 +20,13 @@ STAGE_ORDER = {
     "rejected": 0,
 }
 
+DEFAULT_WEIGHTS = {
+    "resume": 0.35,
+    "skills": 0.25,
+    "interview": 0.25,
+    "communication": 0.15,
+}
+
 
 def recommendation_for_score(final_score: float) -> str:
     if final_score >= 80:
@@ -31,9 +38,6 @@ def recommendation_for_score(final_score: float) -> str:
     return "Reject"
 
 
-# 1) What this does: evaluates one answer into HR-readable structured feedback.
-# 2) Why needed: HR interview review needs more than a raw single score.
-# 3) How it works: reuses local answer scoring and reshapes it into ATS-friendly dimensions.
 def evaluate_answer(question: str, answer: str, *, allotted_seconds: int = 0, time_taken_seconds: int = 0, jd_skills=()):
     scorecard = compute_answer_scorecard(
         question,
@@ -90,23 +94,128 @@ def evaluate_answer(question: str, answer: str, *, allotted_seconds: int = 0, ti
     }
 
 
-# 1) What this does: builds a final weighted ATS score for one application.
-# 2) Why needed: ranking should not depend on scattered score fields.
-# 3) How it works: combines resume, skill, interview, and communication signals into one stable score.
-def build_application_score(*, resume_score=0.0, skills_match_score=0.0, interview_score=0.0, communication_score=0.0):
-    final_score = _clamp_score(
-        (float(resume_score or 0.0) * 0.35)
-        + (float(skills_match_score or 0.0) * 0.25)
-        + (float(interview_score or 0.0) * 0.25)
-        + (float(communication_score or 0.0) * 0.15)
+def evaluate_answer_llm(question: str, answer: str, *, allotted_seconds: int = 0, time_taken_seconds: int = 0):
+    """LLM-based answer evaluation - uses AI for better assessment.
+    
+    Falls back to local scoring if LLM is unavailable.
+    """
+    try:
+        from services.llm.client import get_client, llm_model
+        
+        prompt = f"""You are a technical interview evaluator. Evaluate this answer and provide scores.
+
+Question: {question}
+
+Answer: {answer}
+
+Evaluate on a scale of 0-100 for each dimension:
+1. relevance - How well the answer addresses the question
+2. completeness - Depth and substance of the answer
+3. clarity - How clear and well-structured the answer is
+4. technical_accuracy - Correctness of technical content
+
+Also provide:
+- One strength (1 sentence)
+- One weakness (1 sentence)
+- One improvement suggestion (1 sentence)
+
+Return JSON:
+{{"relevance": score, "completeness": score, "clarity": score, "technical_accuracy": score, "strength": "...", "weakness": "...", "suggestion": "..."}}"""
+        
+        client = get_client()
+        if client:
+            response = client.create(
+                model=llm_model(),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=500,
+            )
+            import json
+            content = response.choices[0].message.content
+            result = json.loads(content)
+            
+            overall_score = (result.get("relevance", 50) + result.get("completeness", 50) + 
+                            result.get("clarity", 50) + result.get("technical_accuracy", 50)) / 4
+            
+            return {
+                "relevance": result.get("relevance", 50),
+                "technical_correctness": result.get("technical_accuracy", 50),
+                "clarity": result.get("clarity", 50),
+                "confidence_communication": result.get("clarity", 50),
+                "completeness": result.get("completeness", 50),
+                "overall_answer_score": overall_score,
+                "strengths": [result.get("strength", "Answer provided.")],
+                "weaknesses": [result.get("weakness", "Could be more detailed.")],
+                "improvement_suggestion": result.get("suggestion", "Add more concrete examples."),
+                "score_breakdown": result,
+                "answer_present": bool(answer.strip()),
+                "llm_evaluated": True,
+            }
+    except Exception:
+        pass
+    
+    return evaluate_answer(question, answer, allotted_seconds=allotted_seconds, time_taken_seconds=time_taken_seconds)
+
+
+def build_application_score(*, resume_score=0.0, skills_match_score=0.0, interview_score=0.0, communication_score=0.0, weights_json=None, missing_critical_skills: list[str] | None = None, skill_weights: dict[str, int] | None = None):
+    """Build final weighted ATS score for one application.
+
+    Args:
+        resume_score: Resume screening score (0-100)
+        skills_match_score: Skills match percentage (0-100)
+        interview_score: Interview performance score (0-100)
+        communication_score: Communication/confidence score (0-100)
+        weights_json: Optional custom weights dict e.g., {"resume": 0.40, "skills": 0.20, "interview": 0.30, "communication": 0.10}
+                       If not provided, uses DEFAULT_WEIGHTS
+        missing_critical_skills: List of skills missing from resume that have weight >= 8
+        skill_weights: Dict of skill weights to calculate penalty
+    
+    Missing Critical Skill Penalty:
+        - Each missing skill with weight >= 8 reduces final score by up to 10 points
+        - Penalty = sum of (weight / 20) * 10 for each missing critical skill
+        - Max penalty: 25 points (if multiple critical skills missing)
+    """
+    weights = weights_json or DEFAULT_WEIGHTS
+
+    resume_w = float(weights.get("resume", DEFAULT_WEIGHTS["resume"]))
+    skills_w = float(weights.get("skills", DEFAULT_WEIGHTS["skills"]))
+    interview_w = float(weights.get("interview", DEFAULT_WEIGHTS["interview"]))
+    comm_w = float(weights.get("communication", DEFAULT_WEIGHTS["communication"]))
+
+    total_weight = resume_w + skills_w + interview_w + comm_w
+    if total_weight != 1.0:
+        total_weight = 1.0
+
+    raw_score = (
+        (float(resume_score or 0.0) * resume_w)
+        + (float(skills_match_score or 0.0) * skills_w)
+        + (float(interview_score or 0.0) * interview_w)
+        + (float(communication_score or 0.0) * comm_w)
     )
+
+    missing_penalty = 0.0
+    penalty_breakdown = []
+    if missing_critical_skills and skill_weights:
+        for skill in missing_critical_skills:
+            weight = skill_weights.get(skill, 0)
+            if weight >= 8:
+                skill_penalty = min(10.0, (weight / 20.0) * 10.0)
+                missing_penalty += skill_penalty
+                penalty_breakdown.append({"skill": skill, "weight": weight, "penalty": round(skill_penalty, 2)})
+
+    missing_penalty = min(25.0, missing_penalty)
+    final_score = _clamp_score(raw_score - missing_penalty)
+
     return {
         "resume_jd_match_score": _clamp_score(resume_score),
         "skills_match_score": _clamp_score(skills_match_score),
         "interview_performance_score": _clamp_score(interview_score),
         "communication_behavior_score": _clamp_score(communication_score),
+        "missing_skill_penalty": round(missing_penalty, 2),
+        "penalty_breakdown": penalty_breakdown,
         "final_weighted_score": final_score,
         "recommendation": recommendation_for_score(final_score),
+        "weights_used": weights,
     }
 
 

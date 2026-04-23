@@ -43,7 +43,7 @@ export default function HRScoreMatrixPage() {
   const [sortConfig, setSortConfig] = useState({ key: "finalAIScore", direction: "desc" });
   const [page, setPage] = useState(1);
   const [jdList, setJdList] = useState([]);
-  const itemsPerPage = 8;
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
   async function loadRows() {
     setLoading(true);
@@ -106,8 +106,8 @@ export default function HRScoreMatrixPage() {
           candidate.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
           String(candidate.candidate_uid || "").toLowerCase().includes(searchTerm.toLowerCase());
         const matchesJd = jdFilter === "all" || String(candidate.jobId) === jdFilter || candidate.jobTitle === jdFilter;
-        const matchesStatus = statusFilter === "all" || candidate.interviewStatus?.key === statusFilter;
-        const matchesDecision = decisionFilter === "all" || candidate.finalDecision?.key === decisionFilter;
+        const matchesStatus = statusFilter === "all" || candidate.status?.key === statusFilter;
+        const matchesDecision = decisionFilter === "all" || (candidate.finalDecision?.key || candidate.status?.key) === decisionFilter;
         return matchesSearch && matchesJd && matchesStatus && matchesDecision;
       })
       .sort((left, right) => {
@@ -119,7 +119,7 @@ export default function HRScoreMatrixPage() {
       });
   }, [rows, searchTerm, jdFilter, statusFilter, decisionFilter, sortConfig]);
 
-  useEffect(() => { setPage(1); }, [searchTerm, jdFilter, statusFilter, decisionFilter, sortConfig]);
+  useEffect(() => { setPage(1); }, [searchTerm, jdFilter, statusFilter, decisionFilter, sortConfig, itemsPerPage]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCandidates.length / itemsPerPage));
   const paginatedCandidates = filteredCandidates.slice((page - 1) * itemsPerPage, page * itemsPerPage);
@@ -146,7 +146,7 @@ export default function HRScoreMatrixPage() {
       if (!map[key]) map[key] = { label, count: 0, scores: [], shortlisted: 0 };
       map[key].count++;
       if (r.finalAIScore > 0) map[key].scores.push(r.finalAIScore);
-      if (r.finalDecision?.key === "shortlisted" || r.finalDecision?.key === "selected") map[key].shortlisted++;
+      if ((r.finalDecision?.key === "shortlisted" || r.finalDecision?.key === "selected") || (r.status?.key === "shortlisted" || r.status?.key === "selected")) map[key].shortlisted++;
     });
     return Object.entries(map).map(([key, val]) => ({
       key,
@@ -160,7 +160,7 @@ export default function HRScoreMatrixPage() {
   const resumeScores = filteredCandidates.map((c) => c.resumeScore);
   const interviewScores = filteredCandidates.map((c) => c.interviewScore).filter((v) => v > 0);
   const finalScores = filteredCandidates.map((c) => c.finalAIScore);
-  const shortlistedCount = filteredCandidates.filter((c) => c.finalDecision?.key === "shortlisted" || c.finalDecision?.key === "selected").length;
+  const shortlistedCount = filteredCandidates.filter((c) => (c.finalDecision?.key === "shortlisted" || c.finalDecision?.key === "selected") || (c.status?.key === "shortlisted" || c.status?.key === "selected")).length;
 
   if (loading && !rows.length) return <p className="center muted py-12">Loading candidate score matrix...</p>;
 
@@ -349,7 +349,17 @@ export default function HRScoreMatrixPage() {
           </table>
         </div>
         <div className="p-6 bg-slate-50/30 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <p className="text-sm font-medium text-slate-500">Showing <span className="text-slate-900 dark:text-white">{paginatedCandidates.length}</span> candidates per page</p>
+          <div className="flex items-center space-x-3">
+            <span className="text-sm font-medium text-slate-500">Show</span>
+            <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setPage(1); }} className="px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white">
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+            </select>
+            <span className="text-sm font-medium text-slate-500">per page</span>
+            <span className="text-sm text-slate-400 ml-2">({filteredCandidates.length} total)</span>
+          </div>
           <div className="flex items-center space-x-2">
             <button type="button" disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-white dark:hover:bg-slate-900 disabled:opacity-30 transition-all"><ChevronLeft size={20} /></button>
             <div className="flex items-center space-x-1 px-4"><span className="text-sm font-black text-slate-900 dark:text-white">Page {page}</span><span className="text-sm text-slate-400">of {totalPages}</span></div>

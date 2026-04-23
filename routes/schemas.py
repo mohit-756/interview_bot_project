@@ -34,6 +34,7 @@ class SkillWeightsBody(BaseModel):
 class ScheduleInterviewBody(BaseModel):
     result_id: int
     interview_date: str
+    interview_time: str | None = None
 
 
 class InterviewScoreBody(BaseModel):
@@ -44,6 +45,7 @@ class InterviewScoreBody(BaseModel):
 class InterviewStartBody(BaseModel):
     candidate_id: int | None = None
     result_id: int | None = None
+    interview_token: str | None = None
     consent_given: bool = False
     per_question_seconds: int = Field(default=60, ge=15, le=600)
     total_time_seconds: int = Field(default=1200, ge=300, le=7200)
@@ -78,9 +80,10 @@ class HrJDCreateBody(BaseModel):
     min_academic_percent: float = Field(default=0.0, ge=0, le=100)
     total_questions: int = Field(default=8, ge=2, le=50)
     project_question_ratio: float = Field(default=0.8, ge=0.0, le=1.0)
+    total_duration_minutes: int = Field(default=30, ge=5, le=120, description="Total interview duration in minutes")
+    score_weights_json: dict[str, float] | None = Field(default=None, description="Custom weights for final score calculation: {resume: 0.35, skills: 0.25, interview: 0.25, communication: 0.15}")
 
 
-# NOTE: Partial-update schema aligned to the existing frontend JD form.
 class HrJDUpdateBody(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=200)
     jd_text: str | None = Field(default=None, min_length=10)
@@ -92,6 +95,8 @@ class HrJDUpdateBody(BaseModel):
     min_academic_percent: float | None = Field(default=None, ge=0, le=100)
     total_questions: int | None = Field(default=None, ge=2, le=50)
     project_question_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    total_duration_minutes: int | None = Field(default=None, ge=5, le=120)
+    score_weights_json: dict[str, float] | None = Field(default=None, description="Custom weights for final score calculation")
 
 
 class CandidateSelectJDBody(BaseModel):

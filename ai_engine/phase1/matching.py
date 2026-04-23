@@ -43,6 +43,9 @@ def extract_text_from_file(file_path):
     if not file_path:
         return ""
     try:
+        # Convert to string if it's a Path object
+        file_path = str(file_path)
+        
         if file_path.endswith(".pdf"):
             # Use PyMuPDF (fitz) for robust PDF extraction
             try:
@@ -189,6 +192,26 @@ def extract_education(text):
     return None
 
 
+def extract_education_llm(text, max_chars=3000):
+    """LLM-based education extraction with fallback to regex."""
+    text_sample = text[:max_chars]
+    try:
+        from services.llm.client import get_client, llm_model
+        client = get_client()
+        if client:
+            prompt = f"""Extract the highest education level from this resume. Return JSON:
+{{"education": "phd" | "master" | "bachelor" | "diploma" | "high_school" | null}}
+
+Resume excerpt: {text_sample}"""
+            resp = client.create(model=llm_model(), messages=[{"role": "user", "content": prompt}], temperature=0.1, max_tokens=100)
+            import json
+            result = json.loads(resp.choices[0].message.content)
+            return result.get("education")
+    except Exception:
+        pass
+    return extract_education(text)
+
+
 # --------------------------------------------------
 # EXPERIENCE EXTRACTION
 # --------------------------------------------------
@@ -200,6 +223,28 @@ def extract_experience(text):
         return max([int(m) for m in matches])
 
     return 0
+
+
+def extract_experience_llm(text, max_chars=3000):
+    """LLM-based experience extraction with fallback to regex."""
+    text_sample = text[:max_chars]
+    try:
+        from services.llm.client import get_client, llm_model
+        client = get_client()
+        if client:
+            prompt = f"""Extract total years of work experience from this resume. Return JSON:
+{{"experience_years": number}}
+
+Resume excerpt: {text_sample}"""
+            resp = client.create(model=llm_model(), messages=[{"role": "user", "content": prompt}], temperature=0.1, max_tokens=100)
+            import json
+            result = json.loads(resp.choices[0].message.content)
+            years = result.get("experience_years")
+            if years and isinstance(years, (int, float)) and years > 0:
+                return int(years)
+    except Exception:
+        pass
+    return extract_experience(text)
 
 
 # --------------------------------------------------

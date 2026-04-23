@@ -46,8 +46,8 @@ class Candidate(Base):
     selected_jd_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True, index=True)
 
-    results = relationship("Result", back_populates="candidate")
-    interviews = relationship("InterviewSession", back_populates="candidate")
+    results = relationship("Result", back_populates="candidate", cascade="all, delete-orphan")
+    interviews = relationship("InterviewSession", back_populates="candidate", cascade="all, delete-orphan")
     selected_jd = relationship("JobDescription", foreign_keys=[selected_jd_id])
     avatar_path = Column(String(300), nullable=True)
 
@@ -81,11 +81,17 @@ class JobDescription(Base):
     total_questions = Column(Integer, default=8, nullable=False)
     question_count = Column(Integer, default=8, nullable=False) # Legacy alias
     project_question_ratio = Column(Float, default=0.8, nullable=False)
+    total_duration_minutes = Column(Integer, default=30, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     gender_requirement = Column(String(50), nullable=True)
     education_requirement = Column(String(50), nullable=True)
     experience_requirement = Column(Integer, default=0, nullable=False)
     custom_questions = Column(JSON, nullable=True)
+    
+    # Configurable scoring weights for final application score
+    # Default: resume=0.35, skills=0.25, interview=0.25, communication=0.15
+    score_weights_json = Column(JSON, nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     company = relationship("HR", back_populates="jobs")
@@ -110,10 +116,16 @@ class Result(Base):
     shortlisted = Column(Boolean)
     explanation = Column(JSON)  # resume scorecard only going forward
     interview_date = Column(String, nullable=True)
+    interview_time = Column(String, nullable=True)
+    interview_datetime = Column(DateTime, nullable=True)
     interview_link = Column(String, nullable=True)
     interview_questions = Column(JSON, nullable=True)
     interview_token = Column(String, nullable=True)
     events_json = Column(JSON, nullable=True)
+    reminder_24h_sent = Column(Boolean, default=False, nullable=True)
+    reminder_1h_sent = Column(Boolean, default=False, nullable=True)
+    interview_rescheduled_count = Column(Integer, default=0, nullable=True)
+    eligibility_feedback = Column(Text, nullable=True)
     # NOTE: ATS pipeline state and final ranking values live on the application row.
     stage = Column(String(50), default="applied", nullable=False, index=True)
     stage_updated_at = Column(DateTime, default=datetime.utcnow, nullable=True)
@@ -132,7 +144,7 @@ class Result(Base):
 
     candidate = relationship("Candidate", back_populates="results")
     job = relationship("JobDescription", back_populates="results")
-    sessions = relationship("InterviewSession", back_populates="result")
+    sessions = relationship("InterviewSession", back_populates="result", cascade="all, delete-orphan")
     stage_history = relationship("ApplicationStageHistory", cascade="all, delete-orphan")
 
 
@@ -197,7 +209,7 @@ class InterviewQuestion(Base):
     evaluation_json = Column(JSON, nullable=True)
 
     session = relationship("InterviewSession", back_populates="questions")
-    answers = relationship("InterviewAnswer", back_populates="question")
+    answers = relationship("InterviewAnswer", back_populates="question", cascade="all, delete-orphan")
 
 
 class InterviewAnswer(Base):

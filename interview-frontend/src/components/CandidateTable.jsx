@@ -48,10 +48,10 @@ export default function CandidateTable({ candidates, onDeleteCandidate, onSchedu
                 </div>
               </td>
               <td className="px-6 py-4">
-                <StatusBadge status={candidate.interviewStatus} />
+                <StatusBadge status={candidate.status} />
               </td>
               <td className="px-6 py-4">
-                <StatusBadge status={candidate.finalDecision} />
+                <StatusBadge status={candidate.finalDecision || candidate.status} />
               </td>
               <td className="px-6 py-4">
                 <div className="flex items-center space-x-2">

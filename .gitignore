@@ -1,22 +1,23 @@
-im# Ignore environment files
+# Ignore environment files
 .env
 .env.*
+
 # Ignore Python cache
 __pycache__/
 *.pyc
+
 # Ignore virtual environment
 venv/
 env/
 .venv/
 
 uploads/
-__pycache__/
 *.pdf
-
 app.db
 interview_bot.db
 .cache/
 llm_cache.json
+
 interview-frontend/node_modules/
 interview-frontend/dist/
 interview-frontend/.vite/
@@ -26,3 +27,7 @@ interview_bot_project/
 tmp_pycache/
 .vscode/
 .pytest_cache/
+
+# Ignore markdown files (may contain secrets)
+*.md
+docs/

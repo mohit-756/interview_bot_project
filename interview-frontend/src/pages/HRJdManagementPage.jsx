@@ -70,7 +70,9 @@ function JdForm({ initialData, onSave, onCancel }) {
   const [projectQuestionRatioPct, setProjectQuestionRatioPct] = useState(
     initialData?.project_question_ratio != null ? Math.round(initialData.project_question_ratio * 100) : 80
   );
+  const [totalDurationMinutes, setTotalDurationMinutes] = useState(initialData?.total_duration_minutes ?? 30);
   const [uploading, setUploading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const isEdit = Boolean(initialData?.id);
@@ -83,8 +85,25 @@ function JdForm({ initialData, onSave, onCancel }) {
       const result = await hrApi.uploadJd(file);
       if (result.ai_skills && Object.keys(result.ai_skills).length > 0) setSkills(result.ai_skills);
       if (result.jd_title && !title) setTitle(result.jd_title);
+      if (result.education_requirement) setEducationRequirement(result.education_requirement);
+      if (result.experience_requirement != null) setExperienceRequirement(result.experience_requirement);
+      if (result.min_academic_percent != null) setMinAcademicPercent(result.min_academic_percent);
     } catch (err) { setError(err.message); }
     finally { setUploading(false); e.target.value = ""; }
+  }
+
+  async function handleExtractFromText() {
+    if (!jdText.trim()) { setError("Paste JD text first."); return; }
+    setExtracting(true); setError("");
+    try {
+      const result = await hrApi.parseJdText(jdText, title);
+      if (result.ai_skills && Object.keys(result.ai_skills).length > 0) setSkills(result.ai_skills);
+      if (result.jd_title && !title) setTitle(result.jd_title);
+      if (result.education_requirement) setEducationRequirement(result.education_requirement);
+      if (result.experience_requirement != null) setExperienceRequirement(result.experience_requirement);
+      if (result.min_academic_percent != null) setMinAcademicPercent(result.min_academic_percent);
+    } catch (err) { setError(err.message); }
+    finally { setExtracting(false); }
   }
 
   async function handleSave() {
@@ -98,11 +117,11 @@ function JdForm({ initialData, onSave, onCancel }) {
         weights_json: skills,
         qualify_score: Number(qualifyScore),
         total_questions: Number(totalQuestions),
-        // PHASE 1 FIX: real values instead of hardcoded defaults
         education_requirement: educationRequirement.trim() || null,
         experience_requirement: Number(experienceRequirement) || 0,
         min_academic_percent: Number(minAcademicPercent) || 0,
         project_question_ratio: Math.max(0, Math.min(1, Number(projectQuestionRatioPct) / 100)),
+        total_duration_minutes: Number(totalDurationMinutes) || 30,
       };
       if (isEdit) { await hrApi.updateJd(initialData.id, payload); }
       else { await hrApi.createJd(payload); }
@@ -188,6 +207,13 @@ function JdForm({ initialData, onSave, onCancel }) {
               className="w-full px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Rest will be theory</p>
           </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Interview Duration (min)</label>
+            <input type="number" min={5} max={120} value={totalDurationMinutes}
+              onChange={(e) => setTotalDurationMinutes(e.target.value)} placeholder="30"
+              className="w-full px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white" />
+            <p className="text-xs text-slate-400 mt-1">Total interview time</p>
+          </div>
         </div>
       </div>
       <div>
@@ -195,6 +221,12 @@ function JdForm({ initialData, onSave, onCancel }) {
         <textarea rows={5} value={jdText} onChange={(e) => setJdText(e.target.value)}
           placeholder="Paste job description here, or upload a file above..."
           className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm dark:text-white resize-none" />
+        {!isEdit && jdText.trim() && (
+          <button onClick={handleExtractFromText} disabled={extracting}
+            className="mt-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold disabled:opacity-50 transition-all flex items-center gap-2">
+            {extracting ? <><Loader2 size={16} className="animate-spin" /> Extracting...</> : <><Upload size={16} /> Extract Details from Text</>}
+          </button>
+        )}
       </div>
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -205,7 +237,7 @@ function JdForm({ initialData, onSave, onCancel }) {
           <SkillsEditor skills={skills} onChange={setSkills} />
         ) : (
           <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 p-6 text-center">
-            <p className="text-sm text-slate-500">Upload a JD file to auto-extract skills.</p>
+            <p className="text-sm text-slate-500">Upload a JD file or paste text and click Extract Details.</p>
           </div>
         )}
       </div>
@@ -231,11 +263,11 @@ export default function HRJdManagementPage() {
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
   const [showForm, setShowForm] = useState(false);
   const [editingJd, setEditingJd] = useState(null);
   const [openMenu, setOpenMenu] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
-  const PAGE_SIZE = 10;
 
   const loadJds = useCallback(async () => {
     setLoading(true); setError("");
@@ -251,8 +283,10 @@ export default function HRJdManagementPage() {
     return !q ? jds : jds.filter((j) => [j.title, String(j.id)].some((v) => String(v || "").toLowerCase().includes(q)));
   }, [jds, search]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+  const paged = filtered.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+
+  useEffect(() => { setPage(1); }, [search, itemsPerPage]);
 
   async function handleDelete(jdId) {
     if (!confirm("Delete this JD?")) return;
@@ -295,8 +329,8 @@ export default function HRJdManagementPage() {
           <p className="text-slate-500 dark:text-slate-400 mt-1">Create and manage job descriptions with skill weights, education requirements, and interview config.</p>
         </div>
         <button onClick={() => { setEditingJd(null); setShowForm(true); }}
-          className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-all shadow-lg shadow-blue-200 dark:shadow-none">
-          <Plus size={20} /><span>Add New JD</span>
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-all">
+          <Plus size={16} /><span>Add JD</span>
         </button>
       </div>
       {error && <p className="alert error">{error}</p>}
@@ -380,12 +414,21 @@ export default function HRJdManagementPage() {
             </tbody>
           </table>
         </div>
-        <div className="p-5 bg-slate-50/30 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <p className="text-sm text-slate-500">Showing {paged.length} of {filtered.length}</p>
+        <div className="p-4 sm:p-5 bg-slate-50/30 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm">
+            <span className="text-slate-500">Show</span>
+            <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setPage(1); }} className="px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white">
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+            </select>
+            <span className="text-slate-500">per page</span>
+          </div>
           <div className="flex items-center gap-2">
-            <button disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-900 transition-all"><ChevronLeft size={18} /></button>
-            <span className="text-sm font-bold text-slate-900 dark:text-white px-2">Page {page} of {totalPages}</span>
-            <button disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-900 transition-all"><ChevronRight size={18} /></button>
+            <button disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-900 transition-all"><ChevronLeft size={14} /></button>
+            <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white px-2">Page {page} / {totalPages}</span>
+            <button disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-900 transition-all"><ChevronRight size={14} /></button>
           </div>
         </div>
       </div>

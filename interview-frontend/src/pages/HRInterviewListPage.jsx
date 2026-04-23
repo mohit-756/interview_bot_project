@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, AlertTriangle, Clock, CheckCircle2 } from "lucide-react";
+import { Eye, Search, PlayCircle, CheckCircle, AlertTriangle, Clock, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import MetricCard from "../components/MetricCard";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
@@ -18,6 +18,8 @@ export default function HRInterviewListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
   useEffect(() => {
     async function load() {
@@ -47,6 +49,11 @@ export default function HRInterviewListPage() {
         .some((value) => String(value).toLowerCase().includes(needle));
     });
   }, [data, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / itemsPerPage));
+  const paginatedRows = filteredRows.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+
+  useEffect(() => { setPage(1); }, [search, itemsPerPage]);
 
   const suspiciousTotal = filteredRows.reduce((sum, row) => sum + Number(row.suspicious_events_count || 0), 0);
   const completedCount = filteredRows.filter((row) => row.status === "completed" || row.status === "selected" || row.status === "rejected").length;
@@ -88,27 +95,51 @@ export default function HRInterviewListPage() {
           </div>
         </div>
 
-        {!filteredRows.length && (
-          <div className="p-12 text-center">
-            <Clock size={32} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
-            <p className="text-slate-600 dark:text-slate-400 font-medium">No interviews found matching your search.</p>
-            <p className="text-xs text-slate-400 mt-1">Try adjusting your filters or search terms.</p>
-          </div>
-        )}
-
-        {!!filteredRows.length && (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="bg-slate-50/50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Application</th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Candidate</th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Job Title</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Started</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">Events</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">Flags</th>
-                  <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Action</th>
+        {!paginatedRows.length && <p className="muted">No interviews found.</p>}
+        {!!paginatedRows.length && (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Application</th>
+                <th>Candidate</th>
+                <th>Job</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Events</th>
+                <th>Suspicious</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedRows.map((row) => (
+                <tr key={row.interview_id}>
+                  <td className="text-sm font-mono text-slate-500">{row.application_id || "N/A"}</td>
+                  <td>
+                    <div className="stack-sm">
+                      <strong>{row.candidate?.name}</strong>
+                      <span className="muted text-xs">{row.candidate?.email}</span>
+                    </div>
+                  </td>
+                  <td>{row.job?.title || "Job"}</td>
+                  <td>
+                    <StatusBadge status={{ key: row.status, label: row.status, tone: row.status === "completed" ? "success" : row.status === "in_progress" ? "primary" : "secondary" }} />
+                  </td>
+                  <td className="text-sm text-slate-500">{formatDateTime(row.started_at)}</td>
+                  <td className="text-center">{row.events_count || 0}</td>
+                  <td>
+                    {(row.suspicious_events_count ?? 0) > 0 ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-xs font-bold">
+                        <AlertTriangle size={12} />{row.suspicious_events_count}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-sm">0</span>
+                    )}
+                  </td>
+                  <td>
+                    <Link to={`/hr/interviews/${row.interview_id}`} className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+                      <Eye size={14} />View
+                    </Link>
+                  </td>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
@@ -149,6 +180,26 @@ export default function HRInterviewListPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {filteredRows.length > itemsPerPage && (
+          <div className="p-4 sm:p-5 bg-slate-50/30 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm">
+              <span className="text-slate-500">Show</span>
+              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setPage(1); }} className="px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm dark:text-white">
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={15}>15</option>
+                <option value={25}>25</option>
+              </select>
+              <span className="text-slate-500">per page</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-900 transition-all"><ChevronLeft size={14} /></button>
+              <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white px-2">Page {page} / {totalPages}</span>
+              <button disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-900 transition-all"><ChevronRight size={14} /></button>
+            </div>
           </div>
         )}
       </section>

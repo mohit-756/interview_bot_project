@@ -9,6 +9,30 @@ from models import InterviewSession, Candidate, Result, InterviewQuestion, Proct
 
 logger = logging.getLogger(__name__)
 
+def _upload_to_s3_via_lambda(file_bytes: bytes, key: str, content_type: str = "application/pdf") -> str:
+    """Upload to S3 using Lambda-generated presigned URL."""
+    try:
+        import requests
+        from core.config import config
+        resp = requests.get(
+            config.LAMBDA_S3_URL,
+            params={"fileName": key.split("/")[-1], "fileType": content_type},
+            timeout=30
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        upload_url = data["uploadUrl"]
+        file_url = data["fileUrl"]
+        
+        put_resp = requests.put(upload_url, data=file_bytes, headers={"Content-Type": content_type}, timeout=60)
+        put_resp.raise_for_status()
+        
+        logger.info(f"PDF uploaded to S3 via Lambda: {key}")
+        return file_url
+    except Exception as e:
+        logger.error(f"PDF S3 upload via Lambda failed for {key}: {e}")
+        raise
+
 class InterviewReportPDF(FPDF):
     def header(self):
         self.set_font("helvetica", "B", 15)
@@ -22,7 +46,17 @@ class InterviewReportPDF(FPDF):
         self.set_font("helvetica", "I", 8)
         self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
 
-def generate_interview_pdf(session: InterviewSession, db: Session) -> BytesIO:
+def generate_interview_pdf(session: InterviewSession, db: Session, return_s3_url: bool = False) -> BytesIO | tuple[BytesIO, str]:
+    """Generate a professional PDF report for an interview session.
+    
+    Args:
+        session: The interview session
+        db: Database session
+        return_s3_url: If True, also upload to S3 and return (BytesIO, s3_url)
+    
+    Returns:
+        BytesIO PDF buffer, or tuple (BytesIO, s3_url) if return_s3_url=True
+    """
     """Generate a professional PDF report for an interview session."""
     candidate = db.query(Candidate).filter(Candidate.id == session.candidate_id).first()
     result = db.query(Result).filter(Result.id == session.result_id).first()
@@ -129,4 +163,17 @@ def generate_interview_pdf(session: InterviewSession, db: Session) -> BytesIO:
     pdf_bytes = pdf.output()
     output.write(pdf_bytes)
     output.seek(0)
+    
+    if return_s3_url:
+        try:
+            from core.config import config
+            candidate = db.query(Candidate).filter(Candidate.id == session.candidate_id).first()
+            safe_name = (candidate.name or "candidate").replace(" ", "_")
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            s3_key = f"{config.S3_REPORT_PREFIX}/session_{session.id}/{safe_name}_{timestamp}.pdf"
+            s3_url = _upload_to_s3_via_lambda(pdf_bytes, s3_key, "application/pdf")
+            return output, s3_url
+        except Exception as e:
+            logger.warning(f"Failed to upload PDF to S3: {e}")
+    
     return output

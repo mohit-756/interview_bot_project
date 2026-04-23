@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 try:
@@ -14,6 +15,7 @@ except Exception:  # pragma: no cover - runtime dependency fallback
 
 _FACE_CASCADE = None
 _UPPER_BODY_CASCADE = None
+
 if cv2 is not None:
     _FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     _UPPER_BODY_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_upperbody.xml")
@@ -53,12 +55,14 @@ def analyze_frame(session_id: int, raw_bytes: bytes) -> dict[str, object]:
             }
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
         faces = _FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(50, 50))
         faces_count = int(len(faces))
         face_box = _as_box(faces[0]) if faces_count == 1 else None
+        
         face_signature = _face_signature(gray, face_box) if face_box else None
         motion_score = _motion_score(session_id, gray)
-        shoulder_data = _shoulder_metrics(gray, faces, face_box)
+        shoulder_data = _shoulder_metrics(gray, face_box)
 
         return {
             "ok": True,
@@ -150,7 +154,6 @@ def _face_signature(gray_frame: Any, face_box: tuple[int, int, int, int] | None)
 
 def _shoulder_metrics(
     gray_frame: Any,
-    faces: Any,
     face_box: tuple[int, int, int, int] | None,
 ) -> dict[str, object]:
     if cv2 is None or np is None or not _is_cascade_ready(_UPPER_BODY_CASCADE):
@@ -235,8 +238,6 @@ def _shoulder_metrics(
     right_visibility = _clamp((0.55 * right_margin_score) + (0.45 * quality))
     cascade_score = _clamp(min(left_visibility, right_visibility))
 
-    # Blend with fallback heuristic so valid frames are not punished when
-    # upper-body landmarks are weak due to lighting/background.
     fallback_left, fallback_right, fallback_score = _fallback_shoulder_score(gray_frame, face_box)
     left_visibility = _clamp(max(left_visibility, 0.8 * fallback_left))
     right_visibility = _clamp(max(right_visibility, 0.8 * fallback_right))
@@ -335,3 +336,32 @@ def _fallback_shoulder_score(
 
     shoulder_score = _clamp((0.55 * min(left_score, right_score)) + (0.25 * vertical_score) + (0.20 * distance_score))
     return left_score, right_score, shoulder_score
+
+
+def save_baseline_image(session_id: int, raw_bytes: bytes) -> str | None:
+    """Save baseline frame image to disk.
+    
+    Returns the saved file path relative to uploads/proctoring/.
+    """
+    if cv2 is None or np is None:
+        return None
+    try:
+        frame = _decode_frame(raw_bytes)
+        if frame is None:
+            return None
+        
+        PROCTOR_ROOT = Path("uploads/proctoring")
+        PROCTOR_ROOT.mkdir(parents=True, exist_ok=True)
+        
+        session_dir = PROCTOR_ROOT / str(session_id)
+        session_dir.mkdir(exist_ok=True)
+        
+        filename = f"baseline_{int(time.time())}.jpg"
+        filepath = session_dir / filename
+        
+        success = cv2.imwrite(str(filepath), frame)
+        if success:
+            return f"proctoring/{session_id}/{filename}"
+        return None
+    except Exception:
+        return None

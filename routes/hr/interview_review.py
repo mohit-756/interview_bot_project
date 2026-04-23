@@ -358,7 +358,7 @@ def interview_detail(
                 "score": _safe_float(ev.score),
                 "created_at": ev.created_at,
                 "meta_json": _json_dict(ev.meta_json),
-                "image_url": f"/uploads/{ev.image_path}" if ev.image_path else None,
+                "image_url": ev.image_path if ev.image_path and ev.image_path.startswith("http") else (f"/uploads/{ev.image_path}" if ev.image_path else None),
                 "suspicious": ev.event_type not in {"periodic", "baseline"},
             }
             for ev in events
@@ -414,14 +414,23 @@ def finalize_interview(
     result.hr_notes = payload.notes
     result.hr_red_flags = payload.red_flags
 
-    if payload.final_score is not None:
-        result.score = payload.final_score
-        score_breakdown = build_application_score(
-            resume_score=float((result.explanation or {}).get("final_resume_score") or result.score or 0.0),
-            skills_match_score=float((result.explanation or {}).get("matched_percentage") or 0.0),
-            interview_score=float(payload.final_score),
-            communication_score=float(payload.communication_score or 0.0),
-        )
+    if payload.final_score is not None:
+
+        result.score = payload.final_score
+
+        score_breakdown = build_application_score(
+
+            resume_score=float((result.explanation or {}).get("final_resume_score") or result.score or 0.0),
+
+            skills_match_score=float((result.explanation or {}).get("matched_percentage") or 0.0),
+
+            interview_score=float(payload.final_score),
+
+            communication_score=float(payload.communication_score or 0.0),
+
+            weights_json=job.score_weights_json if job and hasattr(job, 'score_weights_json') and job.score_weights_json else None,
+
+        )
         result.final_score = float(score_breakdown["final_weighted_score"])
         result.score_breakdown_json = score_breakdown
         result.recommendation = score_breakdown["recommendation"]

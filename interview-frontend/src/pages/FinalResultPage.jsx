@@ -12,6 +12,7 @@ import {
 import { Link } from "react-router-dom";
 import StatusBadge from "../components/StatusBadge";
 import { candidateApi } from "../services/api";
+import { formatInterviewDateTimeLocal } from "../utils/formatters";
 
 function stageStatus(result) {
   if (!result) {
@@ -426,9 +427,7 @@ export default function FinalResultPage() {
                   Interview Date
                 </p>
                 <p className="font-semibold text-slate-900 dark:text-white">
-                  {result?.interview_date
-                    ? new Date(result.interview_date).toLocaleString()
-                    : "Not scheduled"}
+                  {formatInterviewDateTimeLocal(result, "Not scheduled")}
                 </p>
               </div>
             </div>

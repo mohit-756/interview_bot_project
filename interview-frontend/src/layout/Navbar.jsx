@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useState, useId } from "react";
 import { Bell, Search, Sun, Moon, Menu } from "lucide-react";
 
 export default function Navbar({ toggleSidebar }) {
-  const [isDark, setIsDark] = React.useState(false);
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"));
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputId = useId();
+  const searchLabelId = useId();
 
   const toggleTheme = () => {
     const root = document.documentElement;
@@ -14,40 +17,72 @@ export default function Navbar({ toggleSidebar }) {
     setIsDark(!isDark);
   };
 
+  const handleSearch = (e) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      console.log("Searching for:", searchQuery);
+    }
+  };
+
   return (
-    <header className="h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 sticky top-0 z-40">
+    <header
+      className="h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 sticky top-0 z-40"
+      role="banner"
+    >
       <div className="flex items-center space-x-4">
-        <button onClick={toggleSidebar} className="p-2 lg:hidden text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+        <button
+          onClick={toggleSidebar}
+          className="p-2 lg:hidden text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+          aria-label="Toggle navigation menu"
+          aria-expanded="false"
+        >
           <Menu size={20} />
         </button>
-        <div className="hidden md:flex items-center bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl w-80">
-          <Search size={18} className="text-slate-400" />
+        <form onSubmit={handleSearch} role="search" className="hidden md:flex items-center bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl w-80">
+          <label htmlFor={searchInputId} className="sr-only">
+            Search for candidates
+          </label>
+          <Search id={searchLabelId} size={18} className="text-slate-400" aria-hidden="true" />
           <input
-            type="text"
+            id={searchInputId}
+            type="search"
             placeholder="Search for candidates..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="bg-transparent border-none focus:ring-0 text-sm ml-2 w-full text-slate-900 dark:text-white"
+            aria-label="Search candidates"
           />
-        </div>
+        </form>
       </div>
 
       <div className="flex items-center space-x-3">
         <button
           onClick={toggleTheme}
           className="p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 rounded-lg transition-all"
+          aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
         >
           {isDark ? <Sun size={20} /> : <Moon size={20} />}
         </button>
-        <button className="p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 rounded-lg relative transition-all">
+        <button
+          className="p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 rounded-lg relative transition-all"
+          aria-label="Notifications"
+        >
           <Bell size={20} />
-          <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white dark:border-slate-900"></span>
+          <span
+            className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white dark:border-slate-900"
+            aria-label="New notifications"
+          />
         </button>
-        <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2 hidden sm:block"></div>
+        <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2 hidden sm:block" aria-hidden="true" />
         <div className="flex items-center space-x-3 ml-2">
           <div className="text-right hidden sm:block">
             <p className="text-sm font-semibold text-slate-900 dark:text-white leading-none">Admin Panel</p>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Free Trial</p>
           </div>
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white dark:ring-slate-800">
+          <div
+            className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white dark:ring-slate-800"
+            aria-hidden="true"
+          >
             A
           </div>
         </div>

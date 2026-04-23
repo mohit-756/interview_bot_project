@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import DashboardLayout from "./layout/DashboardLayout";
+import { ToastProvider } from "./context/ToastContext";
 import { useAuth } from "./context/useAuth";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
@@ -18,7 +19,6 @@ import HRProctoringPage from "./pages/HRProctoringPage";
 import HRPipelinePage from "./pages/HRPipelinePage";
 import CandidateComparisonPage from "./pages/CandidateComparisonPage";
 import CandidateDashboardPage from "./pages/CandidateDashboardPage";
-import PracticeInterviewPage from "./pages/PracticeInterviewPage";
 import PreCheck from "./pages/PreCheck";
 import Interview from "./pages/Interview";
 import Completed from "./pages/Completed";
@@ -49,7 +49,8 @@ function PublicOnlyRoute({ children }) {
 
 export default function App() {
   return (
-    <Routes>
+    <ToastProvider>
+      <Routes>
       {/* Public routes */}
       <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
       <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
@@ -87,7 +88,6 @@ export default function App() {
       <Route element={<ProtectedRoute role="candidate" />}>
         <Route element={<DashboardLayout />}>
           <Route path="/candidate" element={<CandidateDashboardPage />} />
-          <Route path="/candidate/practice" element={<PracticeInterviewPage />} />
           <Route path="/interview/result" element={<FinalResultPage />} />
         </Route>
       </Route>
@@ -102,5 +102,6 @@ export default function App() {
       <Route path="/" element={<HomeRedirect />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </ToastProvider>
   );
 }

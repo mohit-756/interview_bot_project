@@ -343,21 +343,45 @@ def get_resume_module(resume: StructuredResume) -> str:
     return "your recent work"
 
 
-def distribution_for_role(role_family: str, total_questions: int) -> dict[str, int]:
+def distribution_for_role(role_family: str, total_questions: int, project_ratio: float = 0.5) -> dict[str, int]:
+    """
+    Distribute questions based on project_ratio.
+    
+    Args:
+        role_family: The role type (engineer, manager, etc.)
+        total_questions: Total number of questions to generate
+        project_ratio: Ratio of project-based questions (0.0-1.0). 
+                     0.8 = 80% project questions, 20% theory (deep_dive/architecture/etc.)
+    
+    Categories:
+        - PROJECT: Resume-based project questions
+        - THEORY: deep_dive, architecture, leadership, behavioral
+    
+    Example: 5 questions, 0.8 ratio → 4 project, 1 theory
+             5 questions, 0.6 ratio → 3 project, 2 theory
+    """
     _ = role_family
     remaining = max(0, total_questions - 1)
-    base = {"project": 1, "deep_dive": 1, "backend": 1, "debugging": 1, "architecture": 1, "leadership": 1}
-    while sum(base.values()) < remaining:
-        for key in ("project", "deep_dive", "architecture", "leadership", "backend", "debugging"):
-            if sum(base.values()) >= remaining:
+    project_ratio = max(0.0, min(1.0, project_ratio))
+
+    num_project = max(1, round(remaining * project_ratio))
+    num_theory = remaining - num_project
+    num_theory = max(0, num_theory)
+
+    base = {"project": num_project}
+    if num_theory > 0:
+        base["deep_dive"] = 0
+        base["architecture"] = 0
+        base["leadership"] = 0
+        base["behavioral"] = 0
+
+        theory_slots = num_theory
+        for key in ("deep_dive", "architecture", "leadership", "behavioral"):
+            if theory_slots <= 0:
                 break
-            base[key] = base.get(key, 0) + 1
-    while sum(base.values()) > remaining:
-        for key in ("leadership", "backend", "deep_dive", "project"):
-            if sum(base.values()) <= remaining:
-                break
-            if base.get(key, 0) > 0:
-                base[key] -= 1
+            base[key] = 1
+            theory_slots -= 1
+
     return {k: v for k, v in base.items() if v > 0}
 
 

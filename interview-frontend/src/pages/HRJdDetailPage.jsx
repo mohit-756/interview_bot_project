@@ -27,7 +27,7 @@ export default function HRJdDetailPage() {
       try {
         const candidatesResponse = await hrApi.listCandidates();
         const jdCandidates = (candidatesResponse.candidates || []).filter(
-          (candidate) => Number(candidate.job?.id) === Number(jdId)
+          (candidate) => Number(candidate.job?.id) === Number(jdId) || Number(candidate.assignedJd?.id) === Number(jdId)
         );
         setCandidates(jdCandidates);
       } catch {
@@ -341,7 +341,7 @@ export default function HRJdDetailPage() {
                             <StatusBadge status={candidate.finalDecision} />
                           </td>
                           <td className="px-6 py-4">
-                            <StatusBadge status={candidate.interviewStatus} />
+                            <StatusBadge status={candidate.status} />
                           </td>
                         </tr>
                       ))}

@@ -1,8 +1,13 @@
 import axios from "axios";
 import { toStatusObject } from "../utils/stages";
-
+import { uploadFileToS3 } from "../utils/s3Upload";
 const configuredBaseUrl = String(import.meta.env?.VITE_API_BASE_URL || "/api").trim();
 const baseURL = configuredBaseUrl === "/" ? "/api" : configuredBaseUrl.replace(/\/+$/, "");
+const isProduction = configuredBaseUrl.includes("cloudfront.net") || configuredBaseUrl.includes("elasticbeanstalk.com") || configuredBaseUrl.includes("aws.amazon.com");
+
+console.log("[API] VITE_API_BASE_URL:", import.meta.env?.VITE_API_BASE_URL);
+console.log("[API] Resolved baseURL:", baseURL);
+console.log("[API] Production mode:", isProduction);
 
 const apiClient = axios.create({
   // Defaults to /api for Vite proxy. Override via VITE_API_BASE_URL when needed.
@@ -10,13 +15,26 @@ const apiClient = axios.create({
   withCredentials: true,
 });
 
+export { apiClient, baseURL };
+
 function buildAvatar(name) {
   const seed = String(name || "user").trim() || "user";
   return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`;
 }
 
 function extractErrorMessage(error) {
-  const detail = error?.response?.data?.detail;
+  const responseData = error?.response?.data;
+  const contentType = error?.response?.headers?.["content-type"] || "";
+  
+  if (typeof responseData === "string" && !contentType.includes("application/json")) {
+    if (responseData.includes("<!DOCTYPE html>") || responseData.includes("<html")) {
+      console.error("[API] Received HTML response instead of JSON:", responseData.substring(0, 200));
+      return "Server error: Received invalid response. Please try again or contact support.";
+    }
+    return responseData;
+  }
+  
+  const detail = responseData?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
   if (Array.isArray(detail) && detail.length) {
     return detail.map((i) => (typeof i === "string" ? i : i?.msg || JSON.stringify(i))).join(", ");
@@ -26,9 +44,17 @@ function extractErrorMessage(error) {
 
 async function request(config) {
   try {
+    console.log(`[API] Request: ${config.method} ${config.url}`, config.data ? 'with data' : '');
+    console.log(`[API] Request data:`, JSON.stringify(config.data));
     const response = await apiClient(config);
+    console.log(`[API] Response status:`, response.status);
+    console.log(`[API] Response headers content-type:`, response.headers["content-type"]);
+    console.log(`[API] Response data preview:`, typeof response.data === 'string' ? response.data.substring(0, 100) : JSON.stringify(response.data).substring(0, 200));
     return response.data;
   } catch (error) {
+    console.error(`[API] Error status:`, error.response?.status);
+    console.error(`[API] Error content-type:`, error.response?.headers?.["content-type"]);
+    console.error(`[API] Error response data:`, error.response?.data);
     throw new Error(extractErrorMessage(error));
   }
 }
@@ -129,6 +155,7 @@ function normalizeCandidateDetail(data) {
       recommendationTag: candidate?.recommendation || latestApplication?.recommendationTag || latestApplication?.finalDecision?.label,
       assignedJd: candidate?.assigned_jd || null,
       hrNotes: candidate?.hr_notes || latestApplication?.hrNotes || "",
+      resume_path: candidate?.resume_path || null,
     },
     applications,
     resume_advice: resumeAdvice,
@@ -160,11 +187,31 @@ export const candidateApi = {
   dashboard: (jobId) => request({ method: "get", url: "/candidate/dashboard", params: jobId ? { job_id: jobId } : undefined }),
   jds: () => request({ method: "get", url: "/candidate/jds" }),
   selectJd: (jdId) => request({ method: "post", url: "/candidate/select-jd", data: { jd_id: jdId } }),
-  uploadResume: (file, jobId) => {
-    const formData = new FormData();
-    formData.append("resume", file);
-    if (jobId) formData.append("job_id", String(jobId));
-    return request({ method: "post", url: "/candidate/upload-resume", data: formData });
+  uploadResume: async (file, jobId, onProgress) => {
+    try {
+      console.log("[UPLOAD] Starting resume upload, file:", file?.name, "jobId:", jobId);
+      
+      if (isProduction) {
+        const s3Url = await uploadFileToS3(file, onProgress);
+        const response = await apiClient.post("/candidate/upload-resume-s3", 
+          { resume_url: s3Url, job_id: jobId },
+          { headers: { "Content-Type": "application/json" } }
+        );
+        return response.data;
+      }
+      
+      const formData = new FormData();
+      formData.append("resume", file);
+      if (jobId) formData.append("job_id", String(jobId));
+      
+      const response = await apiClient.post("/candidate/upload-resume", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return response.data;
+    } catch (err) {
+      console.error("[UPLOAD] Resume upload failed:", err.message);
+      throw err;
+    }
   },
   scheduleInterview: (resultId, interviewDate) => request({ method: "post", url: "/candidate/select-interview-date", data: { result_id: resultId, interview_date: interviewDate } }),
   practiceKit: (jobId) => request({ method: "get", url: "/candidate/practice-kit", params: jobId ? { job_id: jobId } : undefined }),
@@ -173,6 +220,7 @@ export const candidateApi = {
 // ── HR ───────────────────────────────────────────────────────────────────────
 export const hrApi = {
   dashboard: (jobId) => request({ method: "get", url: "/hr/dashboard", params: jobId ? { job_id: jobId } : undefined }),
+  calendar: (params) => request({ method: "get", url: "/hr/dashboard/calendar", params }),
 
   // JDs
   listJds: () => request({ method: "get", url: "/hr/jds" }),
@@ -182,11 +230,18 @@ export const hrApi = {
   toggleJdActive: (jdId) => request({ method: "post", url: `/hr/jds/${jdId}/toggle-active` }),
   deleteJd: (jdId) => request({ method: "delete", url: `/hr/jds/${jdId}` }),
 
-  // JD file upload + LLM skill extraction
+  // JD file upload + LLM extraction (skills + requirements)
   uploadJd: (file) => {
     const formData = new FormData();
     formData.append("jd_file", file);
     return request({ method: "post", url: "/hr/upload-jd", data: formData });
+  },
+  // Parse JD text (for pasted text - extracts skills + requirements)
+  parseJdText: (jdText, jdTitle = "") => {
+    const formData = new FormData();
+    formData.append("jd_text", jdText);
+    formData.append("jd_title", jdTitle);
+    return request({ method: "post", url: "/hr/parse-jd-text", data: formData });
   },
   confirmJd: (payload) => request({ method: "post", url: "/hr/confirm-jd", data: payload }),
   updateSkillWeights: (payload) => request({ method: "post", url: "/hr/update-skill-weights", data: payload }),
@@ -235,11 +290,16 @@ export const hrApi = {
 export const interviewApi = {
   access: (resultId) => request({ method: "get", url: `/interview/${resultId}/access` }),
   start: (payload) => request({ method: "post", url: "/interview/start", data: payload }),
+  tts: (text, voice = "kajal") => request({ method: "post", url: "/interview/tts", data: { text, voice } }),
   submitAnswer: (payload) => request({ method: "post", url: "/interview/answer", data: payload }),
   transcribe: (formData) => request({ method: "post", url: "/interview/transcribe", data: formData }),
+  logEvent: (targetId, payload) => request({ method: "post", url: `/interview/${targetId}/event`, data: payload }),
   evaluate: (sessionId) => request({ method: "post", url: `/interview/${sessionId}/evaluate` }),
   sessionSummary: (sessionId) => request({ method: "get", url: `/interview/session/${sessionId}/summary` }),
   submitFeedback: (sessionId, payload) => request({ method: "post", url: `/interview/${sessionId}/feedback`, data: payload }),
+  startSession: (resultId) => request({ method: "get", url: "/interview/start", params: resultId ? { result_id: resultId } : undefined }),
+  getSessions: () => request({ method: "get", url: "/interview/sessions" }),
+  getEvents: (sessionId) => request({ method: "get", url: "/interview/events", params: { session_id: sessionId } }),
 };
 
 export const proctorApi = {
@@ -251,3 +311,4 @@ export const proctorApi = {
     return request({ method: "post", url: "/proctor/frame", data: formData });
   },
 };
+

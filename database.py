@@ -8,15 +8,15 @@ from dotenv import load_dotenv
 # ---------------------------
 # SQLAlchemy Base + Config
 # ---------------------------
+from core.config import config
+
+# ---------------------------
+# SQLAlchemy Base + Config
+# ---------------------------
 # Base class used by all ORM models in models.py
 Base = declarative_base()
 
-# Load .env for local dev only — NEVER override real environment variables.
-# On Render/Heroku, DATABASE_URL comes from the platform env and must not be
-# overwritten by a stale .env file that may contain localhost credentials.
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = config.DATABASE_URL
 
 if not DATABASE_URL:
     raise RuntimeError(

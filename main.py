@@ -12,18 +12,17 @@ FIXES applied:
      missing so engineers catch it immediately instead of seeing 500 errors
      during interviews.
 """
-from __future__ import annotations
-from dotenv import load_dotenv
-# Load .env for local dev only — NEVER override real platform env vars on Render.
-load_dotenv()
+from core.config import config
 import logging
-import os
 import threading
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.requests import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -93,9 +92,9 @@ _run_migrations()
 # ── LLM provider startup checks ─────────────────────────────────────────────
 
 # Standardized LLM provider and model checks
-_llm_provider = os.getenv("LLM_PROVIDER", "cerebras").strip().lower()
-_llm_model = os.getenv("LLM_MODEL_PRIMARY", "qwen-3-235b-a22b-instruct-2507").strip()
-_llm_api_key = os.getenv("LLM_API_KEY")
+_llm_provider = config.LLM_PROVIDER
+_llm_model = config.LLM_MODEL_PRIMARY
+_llm_api_key = config.LLM_API_KEY
 
 logger.info(f"LLM provider is {_llm_provider} with model={_llm_model}")
 
@@ -127,44 +126,55 @@ async def _preload_ml_model() -> None:
     threading.Thread(target=_load_model, name="st-model-preload", daemon=True).start()
 
 
+# ── Security Headers Middleware ─────────────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+
 # ── Environment & Production Safety ──────────────────────────────────────────
-IS_PROD = os.getenv("ENV", "development").strip().lower() == "production"
+IS_PROD = config.ENV == "production"
 logger.info(f"STARTUP: mode={'PRODUCTION' if IS_PROD else 'DEVELOPMENT'}")
 
-_secret_key = os.getenv("SECRET_KEY")
-if not _secret_key:
-    if IS_PROD:
-        raise RuntimeError("SECRET_KEY MUST be set in production via environment variables.")
-    else:
-        logger.warning("SECRET_KEY not set. Using insecure default for local development.")
-        _secret_key = "dev-secret-key-12345"
+_secret_key = config.SECRET_KEY
 
+if IS_PROD and not _secret_key:
+    raise RuntimeError("SECRET_KEY MUST be set in production via environment variables.")
+
+if not _secret_key:
+    logger.warning("SECRET_KEY not set. Using fallback for local development.")
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=_secret_key,
-    same_site="none",
-    https_only=True,
+    secret_key=_secret_key or "dev-fallback-key-change-in-production",
+    same_site="none" if IS_PROD else "lax",
+    https_only=IS_PROD,
     session_cookie="interview_bot_sid",
 )
 
 # ── CORS Configuration ───────────────────────────────────────────────────────
-# In production, allow the Vercel domain + localhost for dev.
-# Use allow_origin_regex to also cover Vercel preview deployments.
-DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://interview-bot-project-1.vercel.app"
-raw_origins = os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS)
-allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+# LOCAL DEV: Uses Vite proxy -> http://127.0.0.1:8000 (no CORS needed for proxy)
+# PRODUCTION: Update CORS_ORIGINS env var
+allow_origins = [o.strip() for o in config.CORS_ORIGINS.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_origin_regex=r"https://interview-bot-project-1(-[a-zA-Z0-9_-]+)?\.vercel\.app",
+    allow_origin_regex=r"https://interview-bot-project-1(-[a-zA-Z0-9_-]+)?\.vercel\.app|https://[a-z0-9]+\.cloudfront\.net",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-uploads_dir = Path("uploads")
-uploads_dir.mkdir(exist_ok=True)
+uploads_dir = config.UPLOAD_DIR
+uploads_dir.mkdir(exist_ok=True, parents=True)
 app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 # NOTE: Mount the aggregate API router exactly once. Double-registration creates
 # duplicate/conflicting route entries and can surface as incorrect 404/405 behavior.
@@ -184,11 +194,7 @@ def health() -> dict[str, str]:
 
 @app.get("/usage")
 def usage() -> dict:
-    from utils.token_utils import get_snapshot
-    snap = get_snapshot()
     return {
-        "provider": _llm_provider,
-        "model": _llm_model,
-        **snap,
-        "status": "ok" if snap["rpm_pct"] < 90 and snap["tpm_pct"] < 90 else "near_limit",
+        "status": "ok",
+        "message": "Token tracking disabled"
     }

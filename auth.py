@@ -10,16 +10,9 @@ from passlib.exc import PasswordValueError, UnknownHashError
 # ---------------------------
 # Auth Config
 # ---------------------------
-load_dotenv()
+from core.config import config
 
-DEFAULT_DEV_SECRET_KEY = "dev-secret-key-change-me"
-SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY
-if SECRET_KEY == DEFAULT_DEV_SECRET_KEY:
-    warnings.warn(
-        "SECRET_KEY is not set. Using the development fallback; configure SECRET_KEY in production.",
-        RuntimeWarning,
-        stacklevel=1,
-    )
+SECRET_KEY = config.SECRET_KEY
 
 # Use bcrypt_sha256 to avoid bcrypt's 72-byte password limit while keeping
 # compatibility with older bcrypt hashes if they already exist in DB.
