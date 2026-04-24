@@ -302,6 +302,11 @@ def login(
     _check_account_lockout(payload.email)
 
     candidate = db.query(Candidate).filter(Candidate.email == payload.email).first()
+    logger.info(f"[DEBUG] Candidate lookup for '{payload.email}': found={candidate is not None}")
+    if candidate:
+        logger.info(f"[DEBUG] Stored password hash (first 20 chars): '{candidate.password[:20] if candidate.password else 'None'}'")
+        pw_check = verify_password(payload.password, candidate.password)
+        logger.info(f"[DEBUG] Password verification result: {pw_check}")
     if candidate and verify_password(payload.password, candidate.password):
         if password_needs_upgrade(candidate.password):
             candidate.password = hash_password(payload.password)
