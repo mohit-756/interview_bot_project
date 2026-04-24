@@ -158,6 +158,45 @@ def candidate_jds(
     }
 
 
+@router.get("/candidate/all-results")
+def candidate_all_results(
+    current_user: SessionUser = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Return results for all JDs the candidate has applied to."""
+    candidate = get_candidate_or_404(db, current_user.user_id)
+    if ensure_candidate_profile(candidate, db):
+        db.commit()
+        db.refresh(candidate)
+
+    results = (
+        db.query(Result)
+        .filter(Result.candidate_id == candidate.id)
+        .order_by(Result.id.desc())
+        .all()
+    )
+
+    available_jds = list_active_jds(db)
+    jd_map = {jd["id"]: jd for jd in available_jds}
+
+    results_with_jd_info = []
+    for r in results:
+        serialized = serialize_result(r)
+        jd_info = jd_map.get(r.job_id, {})
+        results_with_jd_info.append({
+            **serialized,
+            "jd_title": jd_info.get("title", "Unknown Role"),
+            "jd_id": r.job_id,
+        })
+
+    return {
+        "ok": True,
+        "results": results_with_jd_info,
+        "available_jds": available_jds,
+        "selected_jd_id": candidate.selected_jd_id,
+    }
+
+
 @router.post("/candidate/select-jd")
 def candidate_select_jd(
     payload: CandidateSelectJDBody,

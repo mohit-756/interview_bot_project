@@ -215,6 +215,7 @@ export const candidateApi = {
   },
   scheduleInterview: (resultId, interviewDate) => request({ method: "post", url: "/candidate/select-interview-date", data: { result_id: resultId, interview_date: interviewDate } }),
   practiceKit: (jobId) => request({ method: "get", url: "/candidate/practice-kit", params: jobId ? { job_id: jobId } : undefined }),
+  allResults: () => request({ method: "get", url: "/candidate/all-results" }),
 };
 
 // ── HR ───────────────────────────────────────────────────────────────────────

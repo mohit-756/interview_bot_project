@@ -8,6 +8,7 @@ import {
   MessageCircle,
   Trophy,
   XCircle,
+  ChevronDown,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import StatusBadge from "../components/StatusBadge";
@@ -40,31 +41,35 @@ function stageStatus(result) {
 }
 
 export default function FinalResultPage() {
-  const [dashboard, setDashboard] = useState(null);
+  const [allResults, setAllResults] = useState([]);
+  const [availableJds, setAvailableJds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
       setError("");
       try {
-        const response = await candidateApi.dashboard();
-        setDashboard(response);
+        const response = await candidateApi.allResults();
+        setAllResults(response.results || []);
+        setAvailableJds(response.available_jds || []);
       } catch (loadError) {
         setError(loadError.message);
       } finally {
         setLoading(false);
       }
     }
-
     load();
   }, []);
 
-  const result = dashboard?.result || null;
+  const result = allResults[selectedIndex] || null;
+  const jdMap = Object.fromEntries(availableJds.map((jd) => [jd.id, jd]));
+  const selectedJd = result ? (jdMap[result.jd_id] || null) : null;
+  const hasMultiple = allResults.length > 1;
+
   const explanation = result?.explanation || {};
-  const selectedJd =
-    dashboard?.available_jds?.find((jd) => jd.id === dashboard?.selected_jd_id) || null;
   const finalReview = result?.final_review || null;
   const finalDecision = result?.final_decision || null;
   const resumeScore = Math.round(
@@ -143,8 +148,48 @@ export default function FinalResultPage() {
     return <p className="center muted">Loading application status...</p>;
   }
 
-  if (error && !dashboard) {
+  if (error && !allResults.length) {
     return <p className="alert error">{error}</p>;
+  }
+
+  if (!allResults.length) {
+    return (
+      <div className="space-y-8 pb-12">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-4">
+            <Link
+              to="/candidate"
+              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-all border border-slate-100 dark:border-slate-800"
+            >
+              <ArrowLeft size={20} />
+            </Link>
+            <div>
+              <h1 className="text-3xl font-bold text-slate-900 dark:text-white font-display">
+                My Results
+              </h1>
+              <p className="text-slate-500 dark:text-slate-400 mt-1">
+                View your application status and interview results.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white dark:bg-slate-900 rounded-[40px] border border-slate-200 dark:border-slate-800 shadow-sm p-16 flex flex-col items-center text-center">
+          <FileSearch size={64} className="text-slate-300 dark:text-slate-600 mb-6" />
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+            No Results Yet
+          </h2>
+          <p className="text-slate-500 dark:text-slate-400 max-w-md">
+            You haven't completed any interviews yet. Complete an interview to see your results here.
+          </p>
+          <Link
+            to="/candidate"
+            className="mt-8 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all"
+          >
+            Go to Dashboard
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -161,15 +206,44 @@ export default function FinalResultPage() {
           </Link>
           <div>
             <h1 className="text-3xl font-bold text-slate-900 dark:text-white font-display">
-              Application Status
+              My Results
             </h1>
             <p className="text-slate-500 dark:text-slate-400 mt-1">
-              Resume screening, interview progress, and final HR review.
+              {hasMultiple
+                ? `${allResults.length} applications — select one to view details`
+                : "Application status and interview results."}
             </p>
           </div>
         </div>
         <StatusBadge status={status} className="text-sm px-5 py-2" />
       </div>
+
+      {hasMultiple && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+          <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">
+            Select Application
+          </label>
+          <div className="relative">
+            <select
+              value={selectedIndex}
+              onChange={(e) => setSelectedIndex(Number(e.target.value))}
+              className="w-full appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 pr-10 text-slate-900 dark:text-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              {allResults.map((r, idx) => (
+                <option key={r.id || idx} value={idx}>
+                  {r.jd_title || `Application #${idx + 1}`}
+                  {r.interview_completed ? " — Interview Completed" : ""}
+                  {r.final_decision ? ` — ${r.final_decision === "selected" ? "Selected" : "Not Selected"}` : ""}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={18}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
@@ -385,7 +459,7 @@ export default function FinalResultPage() {
               </div>
               <div>
                 <p className="text-lg font-bold text-slate-900 dark:text-white leading-none">
-                  {selectedJd?.title || "Selected JD"}
+                  {selectedJd?.title || result?.jd_title || "Selected JD"}
                 </p>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
                   Candidate workflow

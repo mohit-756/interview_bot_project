@@ -24,8 +24,9 @@ export default function Sidebar({ isOpen = true, onClose }) {
   ];
 
   const candidateLinks = [
-    { name: "Dashboard", path: "/candidate", icon: LayoutDashboard },
-    { name: "Settings",  path: "/settings", icon: Settings },
+    { name: "Dashboard",   path: "/candidate",        icon: LayoutDashboard },
+    { name: "My Results",  path: "/interview/result",  icon: BarChart3 },
+    { name: "Settings",    path: "/settings",           icon: Settings },
   ];
 
   const links = isHR ? hrLinks : candidateLinks;
