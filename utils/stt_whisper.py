@@ -1,17 +1,23 @@
 """
-utils/stt_whisper.py
+utils/stt_whisper.py - MINIMAL VERSION
 
 Dynamic transcription - uses whichever API provider is available:
 1. OpenAI Whisper - preferred
 2. Groq (has Whisper API)
 3. Gemini (if GEMINI_API_KEY set)
+
+CHANGES FROM ORIGINAL:
+- Removed aggressive _clean_transcript_text() function
+- Removed hardcoded blocked fragments list
+- Removed URL/whitelist filtering
+- Returns raw Whisper output with minimal processing
+- Keeps only basic validation (empty check, size check)
 """
 from __future__ import annotations
 
 import base64
 import logging
 import os
-import re
 from pathlib import Path
 
 import requests
@@ -19,69 +25,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def _normalize_for_match(text: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", text.lower())).strip()
-
-
-def _clean_transcript_text(text: str) -> str:
-    cleaned = (text or "").strip()
-    if not cleaned:
-        return ""
-
-    lowered = cleaned.lower()
-    blocked_fragments = [
-        "please transcribe it accurately",
-        "this is a recording of a professional interview candidate answering a question",
-        "transcribed by",
-        "transcription by",
-        "otter.ai",
-        "thank you for watching",
-        "thanks for watching",
-        "please subscribe",
-        "subtitles by",
-        "subtitle by",
-        "translated by",
-        "translation by",
-        "caption by",
-        "captions by",
-        "amara.org",
-    ]
-    if any(fragment in lowered for fragment in blocked_fragments):
-        logger.warning("STT text dropped by blocked fragment rule: '%s'", cleaned)
-        return ""
-
-    if re.search(r"https?://\S+", lowered):
-        logger.warning("STT text dropped due to URL presence: '%s'", cleaned)
-        return ""
-
-    words = re.findall(r"[a-z0-9']+", lowered)
-
-    # Drop short meta-only outputs like "Transcription by XYZ Translation by".
-    meta_terms = ["transcription", "translation", "subtitle", "subtitles", "caption", "captions", "subscribe", "watching"]
-    meta_hits = sum(1 for term in meta_terms if term in lowered)
-    if len(words) <= 8 and meta_hits >= 2:
-        logger.warning("STT text dropped: short meta-only phrase '%s'", cleaned)
-        return ""
-
-    if len(words) == 1 and len(words[0]) > 30:
-        logger.warning("STT text dropped: suspicious single long token '%s'", cleaned)
-        return ""
-
-    # Collapse immediate repeated phrases: "hello hello" -> "hello"
-    tokens = re.findall(r"[A-Za-z0-9']+", cleaned)
-    if len(tokens) >= 2:
-        deduped = []
-        for token in tokens:
-            if deduped and _normalize_for_match(deduped[-1]) == _normalize_for_match(token):
-                continue
-            deduped.append(token)
-        cleaned = " ".join(deduped).strip()
-
-    # Accept any transcription that Whisper returns
-    # No filtering on word count
-
-
 def _resolve_suffix(filename: str | None) -> str:
+    """Determine audio file extension from filename."""
     if filename:
         s = Path(filename).suffix.strip().lower()
         if s in {".webm", ".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".oga"}:
@@ -90,6 +35,7 @@ def _resolve_suffix(filename: str | None) -> str:
 
 
 def _mime(suffix: str) -> str:
+    """Get MIME type for audio format."""
     return {
         ".webm": "audio/webm",
         ".wav":  "audio/wav",
@@ -111,6 +57,8 @@ def transcribe_audio_bytes(
     """
     Transcribe audio using available API key dynamically.
     Priority: OpenAI > Groq > Gemini
+    
+    Returns raw transcription with NO text filtering or cleaning.
     """
     if not audio_bytes:
         return {
@@ -128,28 +76,35 @@ def transcribe_audio_bytes(
     mime_type = _mime(suffix)
     file_to_send = filename or f"audio{suffix}"
 
-    # Keep prompt minimal to reduce prompt leakage into transcript output.
-    prompt = "Interview answer transcription."
-    if context_hint:
-        prompt += f" Context: {context_hint}"
+    # ✅ MINIMAL prompt - just tell Whisper this is an interview answer
+    prompt = "This is an interview answer."
+
+    logger.info(f"STT: audio_size={len(audio_bytes)} bytes, language={language or 'en'}, mime={mime_type}")
 
     # Try OpenAI Whisper first
     if openai_key:
         try:
-            logger.info("OpenAI Whisper: audio_size=%d, mime_type=%s, language=%s", len(audio_bytes), mime_type, language or "en")
+            logger.info("Using OpenAI Whisper API")
             url = "https://api.openai.com/v1/audio/transcriptions"
             files = {"file": (file_to_send, audio_bytes, mime_type)}
-            data = {"model": "whisper-1", "language": language or "en", "prompt": prompt}
+            data = {
+                "model": "whisper-1", 
+                "language": language or "en",
+                "prompt": prompt
+            }
             headers = {"Authorization": f"Bearer {openai_key}"}
             
             response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
+            
             if response.status_code != 200:
-                logger.warning("OpenAI Whisper error response: %s", response.text)
+                logger.error(f"OpenAI error {response.status_code}: {response.text}")
                 response.raise_for_status()
-                
+            
             result = response.json()
-            text = _clean_transcript_text(result.get("text", "") if result else "")
-
+            text = (result.get("text") or "").strip()
+            
+            logger.info(f"OpenAI response: '{text}'")
+            
             return {
                 "text": text,
                 "confidence": 0.95 if text else 0.0,
@@ -157,22 +112,28 @@ def transcribe_audio_bytes(
                 "language": language or "en",
             }
         except Exception as exc:
-            logger.warning("OpenAI transcription failed: %s", exc)
+            logger.warning(f"OpenAI Whisper failed: {exc}")
 
     # Try Groq second
     if groq_api_key:
         try:
+            logger.info("Using Groq Whisper API")
             url = "https://api.groq.com/openai/v1/audio/transcriptions"
             files = {"file": (file_to_send, audio_bytes, mime_type)}
-            data = {"model": "whisper-large-v3", "language": language or "en", "prompt": prompt}
+            data = {
+                "model": "whisper-large-v3", 
+                "language": language or "en",
+                "prompt": prompt
+            }
             headers = {"Authorization": f"Bearer {groq_api_key}"}
             
             response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
             response.raise_for_status()
             result = response.json()
-            text = _clean_transcript_text(result.get("text", "") if result else "")
+            text = (result.get("text") or "").strip()
             
-            logger.info("Groq transcription successful")
+            logger.info(f"Groq response: '{text}'")
+            
             return {
                 "text": text,
                 "confidence": 0.95 if text else 0.0,
@@ -180,18 +141,19 @@ def transcribe_audio_bytes(
                 "language": language or "en",
             }
         except Exception as exc:
-            logger.warning("Groq transcription failed: %s", exc)
+            logger.warning(f"Groq Whisper failed: {exc}")
 
     # Try Gemini last
     if gemini_api_key:
         try:
+            logger.info("Using Gemini API for transcription")
             encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={gemini_api_key}"
             
             payload = {
                 "contents": [{
                     "parts": [
-                        {"text": prompt},
+                        {"text": "Transcribe this audio. Return ONLY the transcribed text, nothing else."},
                         {"inlineData": {"mimeType": mime_type, "data": encoded_audio}}
                     ]
                 }],
@@ -207,9 +169,10 @@ def transcribe_audio_bytes(
             if candidates:
                 parts = candidates[0].get("content", {}).get("parts", [])
                 if parts:
-                    text = _clean_transcript_text(parts[0].get("text", ""))
+                    text = (parts[0].get("text", "") or "").strip()
             
-            logger.info("Gemini transcription successful")
+            logger.info(f"Gemini response: '{text}'")
+            
             return {
                 "text": text,
                 "confidence": 0.95 if text else 0.0,
@@ -217,6 +180,10 @@ def transcribe_audio_bytes(
                 "language": language or "en",
             }
         except Exception as exc:
-            logger.warning("Gemini transcription failed: %s", exc)
+            logger.warning(f"Gemini transcription failed: {exc}")
 
-    raise RuntimeError("No transcription service available. Set one of: GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY")
+    # No transcription service available
+    raise RuntimeError(
+        "No transcription service available. Set one of: "
+        "GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in .env"
+    )
