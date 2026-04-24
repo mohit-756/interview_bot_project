@@ -143,13 +143,6 @@ export default function HRDashboardPage() {
         subtitle="Analytics, rankings, funnel health, and recent candidate activity."
         actions={(
           <>
-            <button type="button" onClick={() => navigate("/hr/compare")} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 px-3 py-2 rounded-lg font-medium text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
-              Compare
-            </button>
-            <button type="button" onClick={() => navigate("/hr/candidates")} className="bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white px-3 py-2 rounded-lg font-medium text-sm transition-all">
-              <Plus size={16} aria-hidden="true" />
-              <span>Manage</span>
-            </button>
           </>
         )}
       />

@@ -78,7 +78,6 @@ export default function HRScoreMatrixPage() {
           skillMatchScore: Number(detailCandidate.skillMatchScore || 0),
           resumeScore: Number(detailCandidate.resumeScore || candidate.resumeScore || 0),
           interviewScore: detailCandidate.interviewScore === null || detailCandidate.interviewScore === undefined ? 0 : Number(detailCandidate.interviewScore),
-          behavioralScore: detailCandidate.behavioralScore === null || detailCandidate.behavioralScore === undefined ? 0 : Number(detailCandidate.behavioralScore),
           communicationScore: detailCandidate.communicationScore === null || detailCandidate.communicationScore === undefined ? 0 : Number(detailCandidate.communicationScore),
           finalAIScore: Number(detailCandidate.finalAIScore || candidate.resumeScore || 0),
           finalDecision: detailCandidate.finalDecision || candidate.finalDecision,
@@ -300,9 +299,8 @@ export default function HRScoreMatrixPage() {
                 <th className="px-6 py-5 min-w-[110px]"><SortButton column="semanticScore" label="Semantic" sortKey={sortConfig.key} onSort={requestSort} /></th>
                 <th className="px-6 py-5 min-w-[110px]"><SortButton column="skillMatchScore" label="Skill Match" sortKey={sortConfig.key} onSort={requestSort} /></th>
                 <th className="px-6 py-5 min-w-[110px]"><SortButton column="resumeScore" label="Resume" sortKey={sortConfig.key} onSort={requestSort} /></th>
-                <th className="px-6 py-5 min-w-[110px]"><SortButton column="interviewScore" label="Interview" sortKey={sortConfig.key} onSort={requestSort} /></th>
-                <th className="px-6 py-5 min-w-[110px]"><SortButton column="behavioralScore" label="Behavioral" sortKey={sortConfig.key} onSort={requestSort} /></th>
-                <th className="px-6 py-5 min-w-[110px]"><SortButton column="communicationScore" label="Comm." sortKey={sortConfig.key} onSort={requestSort} /></th>
+<th className="px-6 py-5 min-w-[110px]"><SortButton column="interviewScore" label="Interview" sortKey={sortConfig.key} onSort={requestSort} /></th>
+                  <th className="px-6 py-5 min-w-[110px]"><SortButton column="communicationScore" label="Comm." sortKey={sortConfig.key} onSort={requestSort} /></th>
                 <th className="px-6 py-5 min-w-[110px] bg-blue-50/20 dark:bg-blue-900/10"><SortButton column="finalAIScore" label="Final AI" sortKey={sortConfig.key} onSort={requestSort} /></th>
                 <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Decision</th>
                 <th className="px-6 py-5 text-[10px] text-slate-400 uppercase tracking-widest font-black">Actions</th>
@@ -310,7 +308,7 @@ export default function HRScoreMatrixPage() {
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
               {!paginatedCandidates.length ? (
-                <tr><td colSpan={11} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">No candidates match the current filters.</td></tr>
+                <tr><td colSpan={10} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">No candidates match the current filters.</td></tr>
               ) : paginatedCandidates.map((candidate) => (
                 <tr key={candidate.candidate_uid} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-all group">
                   <td className="px-6 py-4">
@@ -331,7 +329,6 @@ export default function HRScoreMatrixPage() {
                   <td className="px-6 py-4">{view === "matrix" ? <ScoreProgressCell score={candidate.skillMatchScore} /> : <ScoreBadge score={candidate.skillMatchScore} />}</td>
                   <td className="px-6 py-4">{view === "matrix" ? <ScoreProgressCell score={candidate.resumeScore} /> : <ScoreBadge score={candidate.resumeScore} />}</td>
                   <td className="px-6 py-4">{view === "matrix" ? <ScoreProgressCell score={candidate.interviewScore} /> : <ScoreBadge score={candidate.interviewScore} />}</td>
-                  <td className="px-6 py-4">{view === "matrix" ? <ScoreProgressCell score={candidate.behavioralScore} /> : <ScoreBadge score={candidate.behavioralScore} />}</td>
                   <td className="px-6 py-4">{view === "matrix" ? <ScoreProgressCell score={candidate.communicationScore} /> : <ScoreBadge score={candidate.communicationScore} />}</td>
                   <td className="px-6 py-4 bg-blue-50/20 dark:bg-blue-900/5">
                     {view === "matrix" ? <ScoreProgressCell score={candidate.finalAIScore} /> : <ScoreBadge score={candidate.finalAIScore} className="scale-110 shadow-sm" />}
