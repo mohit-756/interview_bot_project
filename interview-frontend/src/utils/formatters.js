@@ -5,7 +5,7 @@ export function screeningBandLabel(band) {
   return "Not evaluated";
 }
 
-export function formatPercent(value, fallback = "N/A") {
+export function formatPercent(value, fallback = "Pending") {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
     return fallback;
   }
@@ -44,7 +44,7 @@ function parseDate(value, { assumeUtc = false } = {}) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatUtcDateTime(value, fallback = "N/A") {
+export function formatUtcDateTime(value, fallback = "Pending") {
   const date = parseDate(value, { assumeUtc: true });
   if (!date) return fallback;
   return date.toLocaleString();
@@ -66,7 +66,7 @@ export function resolveInterviewDateTime(source) {
   return parseDate(rawDate, { assumeUtc: false });
 }
 
-export function formatInterviewDateTimeLocal(source, fallback = "N/A") {
+export function formatInterviewDateTimeLocal(source, fallback = "Pending") {
   const date = resolveInterviewDateTime(source);
   if (!date) return fallback;
   return date.toLocaleString();

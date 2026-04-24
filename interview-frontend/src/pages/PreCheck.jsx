@@ -173,7 +173,7 @@ function SystemCheckItem({ label, status, detail, icon: Icon }) {
   const statusLabels = {
     granted: "Ready",
     denied: "Blocked",
-    pending: "Pending",
+    pending: "Checking...",
   };
 
   const statusAria = {
@@ -181,6 +181,8 @@ function SystemCheckItem({ label, status, detail, icon: Icon }) {
     denied: "failed",
     pending: "not checked",
   };
+
+  const isPending = status === "pending";
 
   return (
     <div
@@ -210,13 +212,14 @@ function SystemCheckItem({ label, status, detail, icon: Icon }) {
       </div>
       <div
         className={cn(
-          "px-3 py-1.5 rounded-lg font-bold text-sm",
+          "px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-2",
           status === "granted" ? "bg-emerald-100 dark:bg-emerald-800 text-emerald-700 dark:text-emerald-300" :
           status === "denied" ? "bg-red-100 dark:bg-red-800 text-red-700 dark:text-red-300" :
-          "bg-slate-100 dark:bg-slate-800 text-slate-500"
+          "bg-amber-100 dark:bg-amber-800 text-amber-600 dark:text-amber-400 animate-pulse"
         )}
         aria-live="polite"
       >
+        {isPending && <span className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" />}
         {statusLabels[status]}
       </div>
     </div>
@@ -564,6 +567,7 @@ export default function PreCheck() {
                   ? "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200 dark:shadow-none"
                   : "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
               )}
+              title={!cameraGranted ? "Camera access required to start interview" : ""}
             >
               <span>{starting ? "Starting..." : "Start Interview"}</span>
               <Play size={18} fill="currentColor" aria-hidden="true" />
@@ -573,6 +577,12 @@ export default function PreCheck() {
           {!allGranted && cameraGranted && (
             <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
               Camera is ready. You can start — type answers if mic is unavailable.
+            </p>
+          )}
+
+          {!cameraGranted && (
+            <p className="text-xs text-red-500 dark:text-red-400 text-center">
+              Camera access required. Please allow camera access to continue.
             </p>
           )}
         </div>

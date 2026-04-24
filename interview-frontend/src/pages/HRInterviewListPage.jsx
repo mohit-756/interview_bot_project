@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Eye, Search, PlayCircle, CheckCircle, AlertTriangle, Clock, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { Eye, Search, PlayCircle, CheckCircle, AlertTriangle, Clock, Calendar, ChevronLeft, ChevronRight, X, Info } from "lucide-react";
 import MetricCard from "../components/MetricCard";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
@@ -14,6 +14,7 @@ export default function HRInterviewListPage() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [suspiciousModal, setSuspiciousModal] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -113,9 +114,13 @@ export default function HRInterviewListPage() {
                     <td className="text-center">{row.events_count || 0}</td>
                     <td>
                       {(row.suspicious_events_count ?? 0) > 0 ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-xs font-bold">
+                        <button 
+                          type="button"
+                          onClick={() => setSuspiciousModal(row)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-xs font-bold hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors cursor-pointer"
+                        >
                           <AlertTriangle size={12} />{row.suspicious_events_count}
-                        </span>
+                        </button>
                       ) : (
                         <span className="text-slate-400 text-sm">0</span>
                       )}
@@ -152,6 +157,54 @@ export default function HRInterviewListPage() {
           )}
         </>
       </section>
+
+      {/* Suspicious Events Modal */}
+      {suspiciousModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSuspiciousModal(null)} />
+          <div className="relative bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="text-red-500" size={20} />
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Suspicious Events</h3>
+              </div>
+              <button type="button" onClick={() => setSuspiciousModal(null)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X size={20} className="text-slate-500" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+                Candidate: <span className="font-bold">{suspiciousModal.candidate?.name}</span><br />
+                <span className="text-slate-500">Job: {suspiciousModal.job?.title}</span>
+              </p>
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 mb-4">
+                <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">
+                  <AlertTriangle size={14} className="inline mr-1" />
+                  {suspiciousModal.suspicious_events_count} suspicious event{suspiciousModal.suspicious_events_count !== 1 ? 's' : ''} detected during interview
+                </p>
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Click "View" to see full details and timeline.</p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Quick Actions</p>
+                <Link 
+                  to={`/hr/interviews/${suspiciousModal.interview_id}`}
+                  className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-colors"
+                  onClick={() => setSuspiciousModal(null)}
+                >
+                  <Eye size={16} />View Full Interview & Timeline
+                </Link>
+                <Link 
+                  to={`/hr/proctoring/${suspiciousModal.interview_id}`}
+                  className="flex items-center justify-center gap-2 w-full py-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-colors"
+                  onClick={() => setSuspiciousModal(null)}
+                >
+                  <Info size={16} />View Proctoring Timeline
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

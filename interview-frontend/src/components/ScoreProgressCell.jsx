@@ -10,7 +10,7 @@ export default function ScoreProgressCell({ score, className }) {
     if (val >= 60) return "bg-blue-500";
     if (val >= 40) return "bg-yellow-500";
     if (val > 0) return "bg-red-500";
-    return "bg-slate-200 dark:bg-slate-700";
+    return "bg-amber-300 dark:bg-amber-600";
   };
 
   const getTextColor = (val) => {
@@ -18,7 +18,7 @@ export default function ScoreProgressCell({ score, className }) {
     if (val >= 60) return "text-blue-600 dark:text-blue-400";
     if (val >= 40) return "text-yellow-600 dark:text-yellow-400";
     if (val > 0) return "text-red-600 dark:text-red-400";
-    return "text-slate-400";
+    return "text-amber-600 dark:text-amber-400";
   };
 
   return (
@@ -29,8 +29,8 @@ export default function ScoreProgressCell({ score, className }) {
           style={{ width: `${numericScore}%` }}
         />
       </div>
-      <span className={cn("text-xs font-bold w-8 text-right", getTextColor(numericScore))}>
-        {numericScore > 0 ? `${numericScore}%` : "N/A"}
+      <span className={cn("text-xs font-bold w-10 text-right", getTextColor(numericScore))}>
+        {numericScore > 0 ? `${numericScore}%` : "Pending"}
       </span>
     </div>
   );

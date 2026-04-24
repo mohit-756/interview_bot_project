@@ -171,8 +171,12 @@ export default function HRDashboardPage() {
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <ChartCard title="Hiring Funnel" subtitle="Applied → shortlisted → interview completed → selected" accent="blue">
               {!chartReadyFunnel.length ? (
-                <div className="text-center py-12 text-slate-500 dark:text-slate-400">
-                  {loading ? "Loading..." : "No candidates yet"}
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                    <TrendingUp size={24} className="text-slate-400" />
+                  </div>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">No candidates yet</p>
+                  <p className="text-xs text-slate-500">Post a job to attract candidates and build your pipeline</p>
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height={250}>

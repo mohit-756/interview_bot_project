@@ -6,7 +6,7 @@ export function cn(...inputs) {
 }
 
 export function formatScore(score) {
-  return typeof score === 'number' ? `${score}%` : 'N/A';
+  return typeof score === 'number' && score > 0 ? `${score}%` : 'Pending';
 }
 
 export function formatDate(dateString) {

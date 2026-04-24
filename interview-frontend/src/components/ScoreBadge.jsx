@@ -9,7 +9,7 @@ export default function ScoreBadge({ score, className }) {
     if (val >= 60) return "bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/50";
     if (val >= 40) return "bg-yellow-50 text-yellow-700 border-yellow-100 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-800/50";
     if (val > 0) return "bg-red-50 text-red-700 border-red-100 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/50";
-    return "bg-slate-50 text-slate-500 border-slate-100 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700";
+    return "bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800";
   };
 
   return (
@@ -18,7 +18,7 @@ export default function ScoreBadge({ score, className }) {
       getStyles(numericScore),
       className
     )}>
-      {numericScore > 0 ? `${numericScore}%` : "N/A"}
+      {numericScore > 0 ? `${numericScore}%` : "Pending"}
     </span>
   );
 }
