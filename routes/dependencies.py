@@ -1,5 +1,6 @@
 """Reusable auth/session dependencies for role-protected API routes."""
 from dataclasses import dataclass
+from typing import Union
 from fastapi import Depends, HTTPException, Request
 
 @dataclass
@@ -26,6 +27,18 @@ def require_role(role: str):
     def _dependency(current_user: SessionUser = Depends(get_current_user)) -> SessionUser:
         if current_user.role != role:
             raise HTTPException(status_code=403, detail=f"{role} access required")
+        return current_user
+
+    return _dependency
+
+
+def require_any_role(*roles: str):
+    """Factory dependency to allow access to users with any of the specified roles."""
+
+    def _dependency(current_user: SessionUser = Depends(get_current_user)) -> SessionUser:
+        if current_user.role not in roles:
+            allowed = ", ".join(roles)
+            raise HTTPException(status_code=403, detail=f"Any of [{allowed}] access required")
         return current_user
 
     return _dependency

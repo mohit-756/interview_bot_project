@@ -24,7 +24,6 @@ import Interview from "./pages/Interview";
 import Completed from "./pages/Completed";
 import FinalResultPage from "./pages/FinalResultPage";
 import SettingsPage from "./pages/SettingsPage";
-import FAQPage from "./pages/FAQPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import "./App.css";
@@ -97,7 +96,6 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<DashboardLayout />}>
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/faq" element={<FAQPage />} />
         </Route>
       </Route>
 

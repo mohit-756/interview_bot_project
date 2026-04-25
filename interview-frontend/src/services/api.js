@@ -239,6 +239,13 @@ export const candidateApi = {
   scheduleInterview: (resultId, interviewDate) => request({ method: "post", url: "/candidate/select-interview-date", data: { result_id: resultId, interview_date: interviewDate } }),
   practiceKit: (jobId) => request({ method: "get", url: "/candidate/practice-kit", params: jobId ? { job_id: jobId } : undefined }),
   allResults: () => request({ method: "get", url: "/candidate/all-results" }),
+  
+  // FAQ
+  getQuestions: (status) => request({ method: "get", url: "/faq/questions", params: status ? { status } : undefined }),
+  submitQuestion: (question, jobId) => request({ method: "post", url: "/faq/questions", data: { question, job_id: jobId } }),
+  getPendingQuestions: () => request({ method: "get", url: "/faq/questions/pending" }),
+  answerQuestion: (questionId, answer) => request({ method: "post", url: `/faq/questions/${questionId}/answer`, data: { answer } }),
+  dismissQuestion: (questionId) => request({ method: "post", url: `/faq/questions/${questionId}/dismiss` }),
 };
 
 // ── HR ───────────────────────────────────────────────────────────────────────
@@ -313,6 +320,15 @@ export const hrApi = {
     const response = await apiClient({ method: "get", url: "/hr/local-backup", responseType: "blob" });
     return response.data;
   },
+  
+  // FAQ Management
+  getPendingQuestions: () => request({ method: "get", url: "/faq/questions/pending" }),
+  answerQuestion: (questionId, answer) => request({ method: "post", url: `/faq/questions/${questionId}/answer`, data: { answer } }),
+  dismissQuestion: (questionId) => request({ method: "post", url: `/faq/questions/${questionId}/dismiss` }),
+  getAllFAQQuestions: () => request({ method: "get", url: "/faq/admin/questions" }),
+  answerFAQQuestion: (questionId, payload) => request({ method: "post", url: `/faq/questions/${questionId}/answer`, data: payload }),
+  updateFAQQuestion: (questionId, payload) => request({ method: "put", url: `/faq/questions/${questionId}`, data: payload }),
+  dismissFAQQuestion: (questionId) => request({ method: "post", url: `/faq/questions/${questionId}/dismiss` }),
 };
 
 // ── Interview ─────────────────────────────────────────────────────────────────

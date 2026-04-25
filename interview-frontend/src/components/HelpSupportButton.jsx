@@ -20,6 +20,7 @@ const helpTips = {
   "/settings": {
     tips: [
       { icon: Settings, text: "Update your name, email, and password" },
+      { icon: HelpCircle, text: "Find answers in Help & FAQ tab" },
     ],
   },
   // HR pages
@@ -74,7 +75,7 @@ const pageNames = {
   "/hr/matrix": "Score Matrix",
 };
 
-export default function HelpSupportButton({ supportEmail = "support@quadranttech.com", faqUrl = "/faq" }) {
+export default function HelpSupportButton({ supportEmail = "support@quadranttech.com", faqUrl = "/settings" }) {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
 

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  Lock, Bell, Moon, Sun, Shield, LogOut, Camera,
+  Lock, Moon, Sun, Shield, LogOut, Camera,
   CheckCircle2, Eye, EyeOff, Save, Monitor, Smartphone,
-  ToggleLeft, AlertCircle, Loader2, User, Mail
+  ToggleLeft, AlertCircle, Loader2, User, HelpCircle,
+  Minus, Plus
 } from "lucide-react";
 import { useAuth } from "../context/useAuth";
 import { authApi } from "../services/api";
@@ -225,10 +226,22 @@ export default function SettingsPage() {
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
     { id: "security", label: "Security", icon: Lock },
-    { id: "notifications", label: "Notifications", icon: Bell },
     { id: "appearance", label: "Appearance", icon: Monitor },
+    { id: "faq", label: "Help & FAQ", icon: HelpCircle },
   ];
   const [activeTab, setActiveTab] = useState("profile");
+  const [openIndex, setOpenIndex] = useState(null);
+
+  const staticFAQs = [
+    { question: "How do I upload my resume?", answer: "Go to your Dashboard, click the upload button, and select your resume file (PDF or DOCX). The AI will analyze it and give you a match score for each job." },
+    { question: "How does resume scoring work?", answer: "We analyze your resume against the job description skills and requirements. Your score shows how well your skills match the position. Higher scores = better match." },
+    { question: "When will I get interview results?", answer: "After completing your interview, HR reviews your answers and scores. The decision appears in your Dashboard under 'My Results'. This usually takes 1-3 business days." },
+    { question: "Can I retake an interview?", answer: "Each job usually allows one interview attempt. Check your Dashboard - if an interview is marked 'Ready' or 'In Progress', you can start or resume it." },
+    { question: "How do I practice for interviews?", answer: "Go to your Dashboard and look for practice session options. You can practice with sample questions to improve your confidence before the real interview." },
+    { question: "What do my scores mean?", answer: "Resume Score: How well your skills match the job. Interview Score: Your response quality during the interview. Final Score: Combined HR review. Scores above 65% are typically strong." },
+    { question: "How do I change my applied job?", answer: "On your Dashboard, use the job selector dropdown to switch between jobs you've applied to. Each job has its own resume and interview process." },
+    { question: "My resume won't upload - what should I do?", answer: "Make sure it's a PDF or DOCX file under 5MB. If it still fails, try a different file format or contact support." },
+  ];
 
   return (
     <div className="space-y-8 pb-12">
@@ -238,7 +251,7 @@ export default function SettingsPage() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-slate-900 dark:text-white font-display">Settings</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">Manage your account, security, notifications, and appearance.</p>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">Manage your account, security, appearance, and get help.</p>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8">
@@ -431,25 +444,7 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* ── NOTIFICATIONS TAB ───────────────────────────────────── */}
-          {activeTab === "notifications" && (
-            <div className="space-y-6">
-              <Section title="Email Notifications" sub="Control which emails are sent to your inbox" icon={Mail}>
-                <div>
-                  <ToggleSwitch checked={notifs.emailOnSchedule} onChange={(v) => handleNotifChange("emailOnSchedule", v)} label="Interview Scheduled" sub="Receive email when an interview is confirmed" />
-                  <ToggleSwitch checked={notifs.emailOnReview} onChange={(v) => handleNotifChange("emailOnReview", v)} label="Interview Reviewed" sub="When HR finalizes your interview decision" />
-                  <ToggleSwitch checked={notifs.emailOnShortlist} onChange={(v) => handleNotifChange("emailOnShortlist", v)} label="Shortlist Updates" sub="Notify when resume is shortlisted or rejected" />
-                  <ToggleSwitch checked={notifs.weeklyDigest} onChange={(v) => handleNotifChange("weeklyDigest", v)} label="Weekly Digest" sub="Summary of your recruitment pipeline every Monday" />
-                </div>
-              </Section>
-
-              <Section title="In-App Alerts" sub="Real-time notifications inside the platform" icon={Bell}>
-                <ToggleSwitch checked={notifs.browserAlerts} onChange={(v) => handleNotifChange("browserAlerts", v)} label="Browser Notifications" sub="Push alerts when tab is in the background" />
-              </Section>
-            </div>
-          )}
-
-          {/* ── APPEARANCE TAB ──────────────────────────────────────── */}
+{/* ── APPEARANCE TAB ──────────────────────────────────────── */}
           {activeTab === "appearance" && (
             <div className="space-y-6">
               <Section title="Theme" sub="Choose how InterviewBot looks" icon={Monitor}>
@@ -510,8 +505,46 @@ export default function SettingsPage() {
               </Section>
             </div>
           )}
+
+          {/* ── HELP & FAQ TAB ──────────────────────────────────────── */}
+          {activeTab === "faq" && (
+            <div className="space-y-6">
+              <Section title="Frequently Asked Questions" sub="Common questions and helpful guides" icon={HelpCircle}>
+                <div className="space-y-3">
+                  {staticFAQs.map((faq, index) => (
+                    <FAQItem
+                      key={index}
+                      question={faq.question}
+                      answer={faq.answer}
+                      isOpen={openIndex === index}
+                      onToggle={() => setOpenIndex(openIndex === index ? null : index)}
+                    />
+                  ))}
+                </div>
+              </Section>
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function FAQItem({ question, answer, onToggle, isOpen }) {
+  return (
+    <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+      >
+        <span className="font-medium text-slate-900 dark:text-white">{question}</span>
+        {isOpen ? <Minus size={18} className="text-slate-500" /> : <Plus size={18} className="text-slate-500" />}
+      </button>
+      {isOpen && answer && (
+        <div className="px-4 pb-4 text-sm text-slate-600 dark:text-slate-400 leading-relaxed border-t border-slate-100 dark:border-slate-800 pt-3 mt-2">
+          {answer}
+        </div>
+      )}
     </div>
   );
 }

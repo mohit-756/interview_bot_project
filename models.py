@@ -282,6 +282,25 @@ class PasswordResetToken(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class FAQQuestion(Base):
+    """User-submitted questions for FAQ system."""
+    __tablename__ = "faq_questions"
+
+    id = Column(Integer, primary_key=True)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    status = Column(String(20), default="pending")
+    user_type = Column(String(20), nullable=False)
+    user_id = Column(Integer, nullable=False)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    answered_by = Column(Integer, ForeignKey("hr.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    answered_at = Column(DateTime, nullable=True)
+
+    job = relationship("JobDescription")
+    answered_by_user = relationship("HR")
+
+
 class UserPreferences(Base):
     """Persisted notification and appearance preferences per user."""
     __tablename__ = "user_preferences"
