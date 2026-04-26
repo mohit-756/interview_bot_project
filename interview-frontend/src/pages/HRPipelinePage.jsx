@@ -37,36 +37,36 @@ function CandidateRow({ candidate, onQuickAction, quickActionLoadingId }) {
 
   return (
     <tr className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-      <td className="px-4 py-3">
+      <td className="px-4 py-4">
         <div>
-          <p className="font-medium text-slate-900 dark:text-white">{candidate?.name || "Unnamed"}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">{candidate?.candidate_uid || "No ID"}</p>
+          <p className="font-semibold text-base text-slate-900 dark:text-white">{candidate?.name || "Unnamed"}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{candidate?.candidate_uid || "No ID"}</p>
         </div>
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-4">
         <ScoreBadge score={candidate?.finalAIScore || 0} />
       </td>
-      <td className="px-4 py-3">
-        <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${stageColors.bg} ${stageColors.border} ${stageColors.text}`}>
+      <td className="px-4 py-4">
+        <span className={`px-3 py-1.5 rounded-full text-sm font-semibold border ${stageColors.bg} ${stageColors.border} ${stageColors.text}`}>
           {candidate?.status?.label || currentStage}
         </span>
       </td>
-      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+      <td className="px-4 py-4 text-base text-slate-600 dark:text-slate-300">
         {candidate?.assignedJd?.title || candidate?.role || "—"}
       </td>
-      <td className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
+      <td className="px-4 py-4 text-base text-slate-500 dark:text-slate-400">
         {candidate?.created_at ? new Date(candidate.created_at).toLocaleDateString() : "—"}
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-4">
         <div className="flex items-center gap-2">
-          <Link to={`/hr/candidates/${candidate?.candidate_uid}`} className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-500 transition-all" title="View Details">
-            <Eye size={14} />
+          <Link to={`/hr/candidates/${candidate?.candidate_uid}`} className="p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-500 transition-all" title="View Details">
+            <Eye size={18} />
           </Link>
-          <button type="button" disabled={isUpdating || currentStage === "shortlisted"} onClick={(event) => { event.stopPropagation(); onQuickAction(candidate, "shortlisted"); }} className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all disabled:opacity-50" title="Shortlist">
-            <ThumbsUp size={14} />
+          <button type="button" disabled={isUpdating || currentStage === "shortlisted"} onClick={(event) => { event.stopPropagation(); onQuickAction(candidate, "shortlisted"); }} className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all disabled:opacity-50" title="Shortlist">
+            <ThumbsUp size={18} />
           </button>
-          <button type="button" disabled={isUpdating || currentStage === "rejected"} onClick={(event) => { event.stopPropagation(); onQuickAction(candidate, "rejected"); }} className="p-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-all disabled:opacity-50" title="Reject">
-            <ThumbsDown size={14} />
+          <button type="button" disabled={isUpdating || currentStage === "rejected"} onClick={(event) => { event.stopPropagation(); onQuickAction(candidate, "rejected"); }} className="p-2.5 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-all disabled:opacity-50" title="Reject">
+            <ThumbsDown size={18} />
           </button>
         </div>
       </td>
@@ -203,48 +203,48 @@ export default function HRPipelinePage() {
   if (loading) return (
     <div className="flex items-center justify-center py-20">
       <div className="text-center">
-        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-        <p className="text-slate-500 dark:text-slate-400">Loading pipeline...</p>
+        <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+        <p className="text-base text-slate-500 dark:text-slate-400">Loading pipeline...</p>
       </div>
     </div>
   );
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="max-w-[1400px] mx-auto space-y-5 pb-12">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">HR Pipeline</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Manage candidates through hiring stages</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
           {/* Search */}
           <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 w-40" />
+            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 pr-4 py-2.5 text-base bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 w-48" />
           </div>
           {/* Stage Filter Clear */}
           {selectedStage && (
-            <button type="button" onClick={() => setSelectedStage(null)} className="px-3 py-2 text-sm bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-all">
+            <button type="button" onClick={() => setSelectedStage(null)} className="px-4 py-2.5 text-base bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-all">
               Clear Filter
             </button>
           )}
           {/* JD Filter */}
-          <select value={selectedJdId} onChange={(event) => setSelectedJdId(event.target.value)} className="px-3 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <select value={selectedJdId} onChange={(event) => setSelectedJdId(event.target.value)} className="px-4 py-2.5 text-base bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="all">All Jobs</option>
             {availableJds.map((jd) => <option key={jd.id} value={jd.id}>{jd.title}</option>)}
           </select>
-          <Link to="/hr/candidates" className="px-3 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
-            <Eye size={14} className="inline mr-1" /> List
+          <Link to="/hr/candidates" className="px-4 py-2.5 text-base bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center gap-2">
+            <Eye size={16} /> List
           </Link>
-          <button type="button" onClick={loadCandidates} className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all" title="Refresh">
-            <RefreshCw size={14} />
+          <button type="button" onClick={loadCandidates} className="px-4 py-2.5 text-base bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all" title="Refresh">
+            <RefreshCw size={16} />
           </button>
         </div>
       </div>
 
       {/* Stage Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         {PIPELINE_STAGES.map((stage) => {
           const IconComponent = STAGE_ICONS[stage.key] || Users;
           const count = stageCounts[stage.key] || 0;
@@ -255,16 +255,16 @@ export default function HRPipelinePage() {
               key={stage.key}
               type="button"
               onClick={() => setSelectedStage(isSelected ? null : stage.key)}
-              className={`p-3 rounded-xl border flex items-center gap-2 text-left transition-all cursor-pointer hover:scale-[1.02] ${
+              className={`p-4 rounded-xl border flex items-center gap-3 text-left transition-all cursor-pointer hover:scale-[1.02] ${
                 isSelected
                   ? `${colors.bg} ${colors.border} ring-2 ring-offset-2 ring-blue-500`
                   : `${colors.bg} ${colors.border} opacity-100 hover:opacity-80`
               }`}
             >
-              <IconComponent size={16} className={colors.text} />
+              <IconComponent size={22} className={colors.text} />
               <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{stage.label}</p>
-                <p className={`text-lg font-bold ${colors.text}`}>{count}</p>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-400">{stage.label}</p>
+                <p className={`text-xl font-bold ${colors.text}`}>{count}</p>
               </div>
             </button>
           );
@@ -272,15 +272,15 @@ export default function HRPipelinePage() {
       </div>
 
       {/* Error */}
-      {error && <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm">{error}</div>}
-      {updatingResultId && <p className="text-sm text-slate-500 dark:text-slate-400">Updating...</p>}
+      {error && <div className="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-base">{error}</div>}
+      {updatingResultId && <p className="text-base text-slate-500 dark:text-slate-400">Updating...</p>}
 
       {/* Pipeline Stages */}
       {!totalCandidates ? (
         <div className="text-center py-16 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-          <Users size={32} className="mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-          <p className="text-slate-900 dark:text-white font-medium">{selectedJdId === "all" ? "No candidates yet" : "No candidates for this job"}</p>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Candidates will appear once applications come in.</p>
+          <Users size={40} className="mx-auto text-slate-300 dark:text-slate-600 mb-4" />
+          <p className="text-lg font-medium text-slate-900 dark:text-white">{selectedJdId === "all" ? "No candidates yet" : "No candidates for this job"}</p>
+          <p className="text-base text-slate-500 dark:text-slate-400 mt-1">Candidates will appear once applications come in.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -294,25 +294,25 @@ export default function HRPipelinePage() {
 
             return (
               <div key={stage.key} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                <div className="px-4 py-3 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <div className={`p-1.5 rounded-lg ${colors.bg}`}>
-                      <IconComponent size={14} className={colors.text} />
+                <div className="px-5 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${colors.bg}`}>
+                      <IconComponent size={18} className={colors.text} />
                     </div>
-                    <span className={`font-medium ${colors.text}`}>{stage.label}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors.pill}`}>{count}</span>
+                    <span className={`text-lg font-semibold ${colors.text}`}>{stage.label}</span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-semibold ${colors.pill}`}>{count}</span>
                   </div>
                 </div>
                 <div className="overflow-x-auto max-h-[400px]">
-                  <table className="w-full min-w-[600px]">
+                  <table className="w-full min-w-[700px]">
                     <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0">
                       <tr>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Candidate</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Score</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Stage</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Job</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Applied</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Actions</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Candidate</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Score</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Stage</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Job</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Applied</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -323,7 +323,7 @@ export default function HRPipelinePage() {
                   </table>
                 </div>
                 {stageCandidates.length > 5 && (
-                  <div className="text-center py-2 text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800">
+                  <div className="text-center py-3 text-sm text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800">
                     + {stageCandidates.length - 5} more candidates in this stage
                   </div>
                 )}

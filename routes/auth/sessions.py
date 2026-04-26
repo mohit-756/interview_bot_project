@@ -184,6 +184,8 @@ from pydantic import BaseModel as _BaseModel
 
 class ProfileUpdateBody(_BaseModel):
     name: str
+    linkedin_url: str | None = None
+    github_url: str | None = None
 
 @router.put("/auth/profile")
 def update_profile(
@@ -194,7 +196,7 @@ def update_profile(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"PUT /auth/profile user={current_user.user_id} role={current_user.role}")
-    
+
     name = (payload.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Name cannot be empty")
@@ -204,6 +206,10 @@ def update_profile(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         user.name = name
+        if payload.linkedin_url is not None:
+            user.linkedin_url = payload.linkedin_url.strip() if payload.linkedin_url else None
+        if payload.github_url is not None:
+            user.github_url = payload.github_url.strip() if payload.github_url else None
     else:
         user = db.query(HR).filter(HR.id == current_user.user_id).first()
         if not user:
@@ -211,7 +217,7 @@ def update_profile(
         user.company_name = name
 
     db.commit()
-    return {"ok": True, "name": name}
+    return {"ok": True, "name": name, "linkedin_url": payload.linkedin_url, "github_url": payload.github_url}
 
 
 # ── POST /api/auth/change-password ──────────────────────────────────────────
@@ -355,7 +361,7 @@ def me(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"GET /auth/me user={current_user.user_id} role={current_user.role}")
-    
+
     if current_user.role == "candidate":
         candidate = get_candidate_or_404(db, current_user.user_id)
         return {
@@ -365,6 +371,8 @@ def me(
             "role": "candidate",
             "name": candidate.name,
             "email": candidate.email,
+            "linkedin_url": candidate.linkedin_url,
+            "github_url": candidate.github_url,
         }
     hr_user = get_hr_or_404(db, current_user.user_id)
     return {

@@ -50,6 +50,8 @@ class Candidate(Base):
     interviews = relationship("InterviewSession", back_populates="candidate", cascade="all, delete-orphan")
     selected_jd = relationship("JobDescription", foreign_keys=[selected_jd_id])
     avatar_path = Column(String(300), nullable=True)
+    linkedin_url = Column(String(500), nullable=True)
+    github_url = Column(String(500), nullable=True)
 
 
 class HR(Base):

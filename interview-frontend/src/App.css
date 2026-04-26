@@ -379,6 +379,25 @@ body.dark {
   text-transform: uppercase;
 }
 
+.page-header-copy h1,
+.title-row h1 {
+  color: #0f172a !important;
+}
+
+.dark .title-row h3,
+.dark .page-header-copy h1,
+.dark .title-row h1 {
+  color: #f8fafc !important;
+}
+
+.dark .candidate-name {
+  color: #f8fafc !important;
+}
+
+.candidate-name {
+  color: #0f172a !important;
+}
+
 .title-row h3 {
   margin: 0;
   color: #0f172a;

@@ -908,6 +908,8 @@ def hr_candidate_detail(
             "current_score": latest_application["score"],
             "final_score": latest_application.get("final_score"),
             "recommendation": latest_application.get("recommendation"),
+            "linkedin_url": candidate.linkedin_url,
+            "github_url": candidate.github_url,
             "assigned_jd": {
                 "id": candidate.selected_jd_id,
                 "title": candidate.selected_jd.title if candidate.selected_jd else (candidate.selected_jd.jd_title if candidate.selected_jd else None),

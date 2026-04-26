@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Download, Mail, Calendar, Sparkles, Save, Briefcase } from "lucide-react";
+import { ArrowLeft, Download, Mail, Calendar, Sparkles, Save, Briefcase, ExternalLink } from "lucide-react";
 import StatusBadge from "../components/StatusBadge";
 import ScoreBadge from "../components/ScoreBadge";
 import { hrApi } from "../services/api";
@@ -124,10 +124,10 @@ export default function HRCandidateDetailPage() {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <Link to="/hr/candidates" className="flex items-center space-x-2 text-slate-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} /><span>Back to Candidates</span></Link>
-        <div className="flex items-center gap-3 flex-wrap">
-          <Link to="/hr/compare" className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">Compare Candidates</Link>
-          {candidate?.resume_path ? <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); console.log("Resume path:", candidate?.resume_path); console.log("URL:", downloadHref(candidate.resume_path)); window.open(downloadHref(candidate.resume_path), "_blank"); }} type="button" className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center space-x-2"><Download size={20} /><span>Open Resume</span></button> : null}
+        <Link to={`/hr/candidates/${candidate?.candidate_uid}`} className="flex items-center space-x-2 px-5 py-3 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"><ArrowLeft size={20} /><span>Back to Candidates</span></Link>
+        <div className="flex flex-wrap gap-2">
+          <Link to="/hr/compare" className="px-5 py-3 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">Compare Candidates</Link>
+          {candidate?.resume_path ? <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); console.log("Resume path:", candidate?.resume_path); console.log("URL:", downloadHref(candidate.resume_path)); window.open(downloadHref(candidate.resume_path), "_blank"); }} type="button" className="px-5 py-3 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center space-x-2"><Download size={20} /><span>Open Resume</span></button> : null}
         </div>
       </div>
 
@@ -142,12 +142,28 @@ export default function HRCandidateDetailPage() {
             </div>
             <div className="flex-1 mt-6 md:mt-0 flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div>
-                <div className="flex items-center space-x-3 flex-wrap"><h1 className="text-3xl font-bold text-slate-900 dark:text-white font-display">{candidate?.name || "Candidate"}</h1><StatusBadge status={candidate?.currentStage} /><StatusBadge status={candidate?.finalDecision} /></div>
-                <p className="text-lg text-slate-500 dark:text-slate-400 mt-1">{candidate?.role || "Role not available"} | {candidate?.candidate_uid || candidateUid}</p>
+                <div className="flex items-center space-x-3 flex-wrap">
+                  <h1 className="text-3xl font-bold text-slate-900 dark:text-white font-display candidate-name">{candidate?.name || "Candidate"}</h1>
+                  {candidate?.currentStage && <StatusBadge status={candidate?.currentStage} />}
+                  {candidate?.finalDecision && <StatusBadge status={candidate?.finalDecision} />}
+                </div>
+                <p className="text-base text-slate-500 dark:text-slate-400 mt-1">{candidate?.role || "Role not available"} | <span className="font-mono">{candidate?.candidate_uid || candidateUid}</span></p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <div className="flex items-center px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-300 text-sm font-medium"><Mail size={16} className="mr-2" />{candidate?.email || "No email"}</div>
-                <div className="flex items-center px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-300 text-sm font-medium"><Calendar size={16} className="mr-2" />{candidate?.created_at ? new Date(candidate.created_at).toLocaleDateString() : "Unknown date"}</div>
+                <div className="flex items-center px-4 py-2.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-300 text-base font-medium"><Mail size={18} className="mr-2" />{candidate?.email || "No email"}</div>
+                <div className="flex items-center px-4 py-2.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-300 text-base font-medium"><Calendar size={18} className="mr-2" />{candidate?.created_at ? new Date(candidate.created_at).toLocaleDateString() : "Unknown date"}</div>
+                {candidate?.linkedin_url && (
+                  <a href={candidate.linkedin_url} target="_blank" rel="noopener noreferrer" className="flex items-center px-4 py-2.5 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-xl text-blue-600 dark:text-blue-400 text-base font-semibold transition-colors">
+                    <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                    LinkedIn
+                  </a>
+                )}
+                {candidate?.github_url && (
+                  <a href={candidate.github_url} target="_blank" rel="noopener noreferrer" className="flex items-center px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-slate-700 dark:text-slate-300 text-base font-semibold transition-colors">
+                    <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+                    GitHub
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -155,28 +171,28 @@ export default function HRCandidateDetailPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        {summaryItems.map((item) => <div key={item.label} className="card"><p className="eyebrow">{item.label}</p><h3>{item.value}</h3></div>)}
+        {summaryItems.map((item) => <div key={item.label} className="card"><p className="text-sm font-medium text-slate-500 dark:text-slate-400">{item.label}</p><h3 className="text-xl font-bold text-slate-900 dark:text-white mt-1">{item.value}</h3></div>)}
       </div>
 
       {hasMultipleApplications && (
         <div className="card stack">
           <div className="title-row">
             <div>
-              <p className="eyebrow">All Applications</p>
-              <h3 className="flex items-center gap-2"><Briefcase size={16} />{candidate.name} has applied to {allApplications.length} positions</h3>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">All Applications</p>
+              <h3 className="flex items-center gap-2 text-base"><Briefcase size={18} />{candidate.name} has applied to {allApplications.length} positions</h3>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">JD</th>
-                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Resume Score</th>
-                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Final Score</th>
-                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Stage</th>
-                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">HR Decision</th>
-                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Interview Date</th>
-                  <th className="px-4 py-3 text-[10px] text-slate-400 uppercase tracking-widest font-black">Actions</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">JD</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Resume Score</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Final Score</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Stage</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">HR Decision</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Interview Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
