@@ -260,7 +260,25 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
   const [openIndex, setOpenIndex] = useState(null);
 
-  const staticFAQs = [
+  const isHR = user?.role === "hr";
+
+  const staticFAQs = isHR ? [
+    { question: "How do I create a new job description?", answer: "Go to JD Management → Click 'Add JD' or 'Create Job'. Fill in the job title, description, required skills (with weights 1-10), and interview settings. Save to publish." },
+    { question: "How do I edit or update an existing job?", answer: "Go to JD Management, find the job you want to edit, and click the edit icon. Modify the details and save changes. Note: Changes won't affect ongoing interviews." },
+    { question: "How do I set skill requirements and weights?", answer: "When creating/editing a JD, add skills and set weights (1-10). Higher weight = more important for the role. The AI uses these weights to calculate resume match scores." },
+    { question: "How do I view and filter candidate applications?", answer: "Go to Candidates page. Use filters to narrow down by job, status, score range, or date. You can also search by name or email." },
+    { question: "How do I review resumes and AI scores?", answer: "Click on any candidate to view their profile. You'll see their resume, AI-generated match score, skill breakdown, and application status." },
+    { question: "How do I accept or reject candidates?", answer: "Go to Pipeline or Candidates. Select a candidate and choose 'Accept' or 'Reject'. You can add notes explaining your decision." },
+    { question: "How do I schedule interviews for candidates?", answer: "Go to Candidates, find the candidate, and click the calendar icon. Select a date/time and send the interview invitation. The candidate receives an email." },
+    { question: "How do I review completed interviews?", answer: "Go to Interview Reviews. Click on a completed interview to see AI scores, answer transcriptions, proctoring logs, and candidate performance." },
+    { question: "How do I view proctoring logs and activity?", answer: "In Interview Reviews, click on a completed session. The proctoring tab shows tab switches, video/mic status, time per question, and any suspicious events." },
+    { question: "How do I make hire/no-hire decisions?", answer: "In Interview Reviews, select a candidate and click 'Hire' or 'No Hire'. Add your notes and finalize the decision. This updates the candidate's status in Pipeline." },
+    { question: "How do I move candidates through stages?", answer: "In Pipeline, drag and drop candidates between stages (Applied → Screening → Interview → Offer → Hired). Or click the candidate and select a new stage." },
+    { question: "How do I use the kanban board?", answer: "Pipeline shows candidates in columns by stage. Drag cards to move candidates. Click a card to view details or change status." },
+    { question: "What analytics are available?", answer: "Reports page shows hiring metrics: application counts, interview completion rates, selection rates, time-to-hire, and source effectiveness." },
+    { question: "How do I generate reports?", answer: "Go to Reports. Select the report type, date range, and filters. Click 'Generate' or 'Export' to download data as CSV." },
+    { question: "What metrics can be tracked?", answer: "Track: total applications, interview rates, offer acceptance rate, candidate sources, average scores, and pipeline conversion funnel." },
+  ] : [
     { question: "How do I upload my resume?", answer: "Go to your Dashboard, click the upload button, and select your resume file (PDF or DOCX). The AI will analyze it and give you a match score for each job." },
     { question: "How does resume scoring work?", answer: "We analyze your resume against the job description skills and requirements. Your score shows how well your skills match the position. Higher scores = better match." },
     { question: "When will I get interview results?", answer: "After completing your interview, HR reviews your answers and scores. The decision appears in your Dashboard under 'My Results'. This usually takes 1-3 business days." },
