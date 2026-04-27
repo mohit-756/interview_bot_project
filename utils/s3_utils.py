@@ -54,11 +54,16 @@ def _get_presigned_url(session_id: int, timestamp: str) -> dict[str, Any]:
 
 async def async_upload_proctor_image(session_id: int, image_bytes: bytes, timestamp: str) -> str:
     """Upload a proctoring frame to S3 asynchronously.
-    Returns the public URL of the uploaded image."""
-    meta = _get_presigned_url(session_id, timestamp)
-    upload_url = meta["upload_url"]
-    public_url = meta["public_url"]
-    async with httpx.AsyncClient() as client:
-        put_resp = await client.put(upload_url, content=image_bytes, timeout=30)
-        put_resp.raise_for_status()
-    return public_url
+    Returns the public URL of the uploaded image.
+    Falls back gracefully if S3 upload fails."""
+    try:
+        meta = _get_presigned_url(session_id, timestamp)
+        upload_url = meta["upload_url"]
+        public_url = meta["public_url"]
+        async with httpx.AsyncClient() as client:
+            put_resp = await client.put(upload_url, content=image_bytes, timeout=30)
+            put_resp.raise_for_status()
+        return public_url
+    except Exception as e:
+        logger.warning(f"Proctor image upload failed (non-fatal): {e}")
+        return f"proctor-fallback://session_{session_id}/{timestamp}"
