@@ -1554,6 +1554,54 @@ def start_interview(
     return _compose_start_response(session, next_question, answered_count)
 
 
+@router.post("/interview/answer")
+def submit_interview_answer(
+    payload: InterviewAnswerBody,
+    current_user: SessionUser = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Submit an answer for the current question."""
+    session = db.query(InterviewSession).filter(
+        InterviewSession.id == payload.session_id,
+        InterviewSession.candidate_id == current_user.user_id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    question = db.query(InterviewQuestion).filter(
+        InterviewQuestion.id == payload.question_id,
+        InterviewQuestion.session_id == session.id,
+    ).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    existing_answer = db.query(InterviewAnswer).filter(
+        InterviewAnswer.question_id == question.id,
+        InterviewAnswer.session_id == session.id,
+    ).first()
+
+    if existing_answer:
+        existing_answer.answer_text = payload.answer_text
+        existing_answer.time_taken_seconds = payload.time_taken_sec
+        existing_answer.skipped = payload.skipped
+        existing_answer.submitted_at = datetime.utcnow()
+    else:
+        answer = InterviewAnswer(
+            session_id=session.id,
+            question_id=question.id,
+            answer_text=payload.answer_text,
+            time_taken_seconds=payload.time_taken_sec,
+            skipped=payload.skipped,
+        )
+        db.add(answer)
+
+    if not payload.skipped and payload.answer_text:
+        session.remaining_time_seconds = max(0, session.remaining_time_seconds - payload.time_taken_sec)
+
+    db.commit()
+    return {"ok": True, "session_id": session.id}
+
+
 @router.get("/interview/{result_id}/recheck")
 def interview_recheck(
     result_id: int,
