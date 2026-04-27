@@ -1493,6 +1493,60 @@ def interview_access(
     }
 
 
+@router.post("/interview/start")
+def start_interview(
+    payload: InterviewStartBody,
+    current_user: SessionUser = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Start or resume an interview session."""
+    result_id = payload.result_id
+    consent_given = payload.consent_given
+    interview_token = payload.interview_token
+
+    candidate = db.query(Candidate).filter(Candidate.id == current_user.user_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    if interview_token:
+        result = _resolve_result_by_token(db, candidate.id, interview_token)
+    else:
+        result = _resolve_candidate_result(db, candidate.id, result_id)
+
+    _ensure_interview_ready(result)
+
+    active_session = _latest_interview_session(db, result)
+    if active_session and active_session.status == "in_progress":
+        session = active_session
+    else:
+        job = db.query(JobDescription).filter(JobDescription.id == result.job_id).first()
+        per_question_seconds = int(job.per_question_seconds or 60) if job else 60
+        max_questions = int(job.question_count or 8) if job else 8
+        total_time_seconds = per_question_seconds * max_questions
+
+        session = InterviewSession(
+            candidate_id=candidate.id,
+            result_id=result.id,
+            status="in_progress",
+            per_question_seconds=per_question_seconds,
+            total_time_seconds=total_time_seconds,
+            remaining_time_seconds=total_time_seconds,
+            max_questions=max_questions,
+            consent_given=consent_given,
+        )
+        db.add(session)
+        db.flush()
+
+    if consent_given and not session.consent_given:
+        session.consent_given = True
+        db.flush()
+
+    _ensure_session_questions(db, session=session, result=result)
+
+    next_question = _create_next_question(db, session, result)
+    answered_count = len([q for q in session.questions if q.answer_text and q.answer_text.strip()])
+
+    return _compose_start_response(session, next_question, answered_count)
 
 
 @router.get("/interview/{result_id}/recheck")
