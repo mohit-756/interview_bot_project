@@ -67,6 +67,11 @@ export default function HRProctoringPage() {
                 Proctoring — Session #{sessionId}
               </h1>
               <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
+          <div className="flex items-center space-x-4 mb-4">
+            <a href="https://d2awu07vokgf4.cloudfront.net/#/hr/interviews/165" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700">
+              View Proctoring Images
+            </a>
+          </div>
                 Candidate: {session.candidate_name || "—"} ·
                 Status: {session.status || "—"} ·
                 Warnings: {session.warning_count || 0} ·
