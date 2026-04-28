@@ -24,8 +24,6 @@ from pathlib import Path
 
 from typing import Any
 
-import httpx
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, BackgroundTasks
 from routes.auth import get_current_user
 from services.rate_limit import limiter
@@ -1294,20 +1292,19 @@ async def synthesize_question_speech(
         raise HTTPException(status_code=500, detail="TTS Lambda not configured")
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                config.LAMBDA_S3_URL,
-                params={"text": text, "voice": voice},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = requests.get(
+            config.LAMBDA_S3_URL,
+            params={"text": text, "voice": voice},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
-            if "error" in data:
-                raise Exception(data["error"])
+        if "error" in data:
+            raise Exception(data["error"])
 
-            logger.info("TTS synthesis success voice=%s text_len=%d", voice, len(text))
-            return {"ok": True, **data}
+        logger.info("TTS synthesis success voice=%s text_len=%d", voice, len(text))
+        return {"ok": True, **data}
 
     except Exception as exc:
         logger.error("TTS synthesis failed: %s", exc)

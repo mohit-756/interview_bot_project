@@ -68,7 +68,7 @@ def transcribe_audio_bytes(
             "language": language or "en",
         }
 
-    openai_key = os.getenv("OPENAI_API_KEY", "")
+    openai_key = os.getenv("OPENAI_API_KEY", "") or os.getenv("LLM_API_KEY", "")
     groq_api_key = os.getenv("GROQ_API_KEY", "") or os.getenv("LLM_API_KEY", "")
     gemini_api_key = os.getenv("GEMINI_API_KEY", "")
     

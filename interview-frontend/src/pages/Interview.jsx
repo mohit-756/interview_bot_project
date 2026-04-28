@@ -180,7 +180,7 @@ export default function Interview() {
   });
   const [maxQuestions, _setMaxQuestions] = useState(() => {
     const saved = sessionStorage.getItem(`max-questions:${resultId}`);
-    return saved ? parseInt(saved, 10) : 1;
+    return saved ? parseInt(saved, 10) : 8;
   });
 
   // Wrappers that persist to sessionStorage
