@@ -1959,7 +1959,7 @@ def interview_event_by_session(
 
 
 
-_proctor_deps = [limiter("30/minute")] if limiter is not None else []
+_proctor_deps = [dep for dep in [limiter("30/minute")] if dep is not None]
 
 @router.post("/proctor/frame", dependencies=_proctor_deps)
 def upload_proctor_frame(

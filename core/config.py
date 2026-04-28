@@ -6,6 +6,11 @@ from pathlib import Path
 load_dotenv()
 
 class Config:
+    # Environment and CORS
+    ENV = os.getenv("ENV", "development").strip().lower()
+    DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS)
+
     # Security
     # CRITICAL: No default SECRET_KEY - must be set in environment variables
     SECRET_KEY = os.getenv("SECRET_KEY")
@@ -40,11 +45,6 @@ class Config:
     OLLAMA_CHAT_URL = os.getenv("OLLAMA_CHAT_URL", "http://localhost:11434/api/chat").strip()
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b").strip()
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-
-    # Environment and CORS
-    ENV = os.getenv("ENV", "development").strip().lower()
-    DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
-    CORS_ORIGINS = os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS)
 
     # Database
     DATABASE_URL = os.getenv("DATABASE_URL")
