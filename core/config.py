@@ -9,8 +9,8 @@ class Config:
     # Security
     # CRITICAL: No default SECRET_KEY - must be set in environment variables
     SECRET_KEY = os.getenv("SECRET_KEY")
-    if not SECRET_KEY:
-        raise ValueError("SECRET_KEY must be set in environment variables. Run: openssl rand -hex 32")
+    if not SECRET_KEY and ENV == "production":
+        raise ValueError("SECRET_KEY must be set in environment variables for production. Run: openssl rand -hex 32")
     ALGORITHM = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
 

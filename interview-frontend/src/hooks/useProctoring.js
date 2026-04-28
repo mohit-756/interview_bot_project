@@ -92,17 +92,12 @@ export function useProctoring({ sessionId, resultId, interviewToken, enabled = t
       const eventTargetId = interviewToken || resultId || sessionId;
       if (!eventTargetId) return;
 
-      fetch(`/api/interview/${eventTargetId}/event`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event_type: "tab_switch",
-          detail: "Candidate switched away from the interview tab",
-          timestamp: new Date().toISOString(),
-          meta: { hidden: true },
-        }),
-      }).catch(() => { });
+      interviewApi.logEvent(eventTargetId, {
+        event_type: "tab_switch",
+        detail: "Candidate switched away from the interview tab",
+        timestamp: new Date().toISOString(),
+        meta: { hidden: true },
+      }).catch(() => {});
     }
 
     document.addEventListener("visibilitychange", onVisibilityChange);

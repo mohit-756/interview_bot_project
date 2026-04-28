@@ -76,7 +76,13 @@ async function request(config) {
     console.log(`[API] Response status:`, response.status);
     console.log(`[API] Response headers content-type:`, response.headers["content-type"]);
     console.log(`[API] Response data preview:`, typeof response.data === 'string' ? response.data.substring(0, 100) : JSON.stringify(response.data).substring(0, 200));
-    return response.data;
+    // Unwrap ApiResponseMiddleware wrapper: { success, data, error }
+    // Backend endpoints return { ok, ... } — middleware wraps them automatically.
+    const body = response.data;
+    if (body && typeof body === 'object' && 'success' in body && 'data' in body) {
+      return body.data;
+    }
+    return body;
   } catch (error) {
     console.error(`[API] Error status:`, error.response?.status);
     console.error(`[API] Error content-type:`, error.response?.headers?.["content-type"]);
@@ -346,9 +352,6 @@ export const interviewApi = {
   evaluate: (sessionId) => request({ method: "post", url: `/interview/${sessionId}/evaluate` }),
   sessionSummary: (sessionId) => request({ method: "get", url: `/interview/session/${sessionId}/summary` }),
   submitFeedback: (sessionId, payload) => request({ method: "post", url: `/interview/${sessionId}/feedback`, data: payload }),
-  startSession: (resultId) => request({ method: "get", url: "/interview/start", params: resultId ? { result_id: resultId } : undefined }),
-  getSessions: () => request({ method: "get", url: "/interview/sessions" }),
-  getEvents: (sessionId) => request({ method: "get", url: "/interview/events", params: { session_id: sessionId } }),
 };
 
 export const proctorApi = {

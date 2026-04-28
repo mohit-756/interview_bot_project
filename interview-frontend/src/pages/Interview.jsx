@@ -493,35 +493,30 @@ export default function Interview() {
   }, [navigate, resultId, stopSpeaking]);
 
   // ── submit answer ──────────────────────────────────────────────────────────
-  const submitAnswer = useCallback(async ({ skipCurrent = false, answerOverride } = {}) => {
-    if (!sessionId || !currentQuestion) return;
-    const resolvedAnswer = skipCurrent ? "" : String(answerOverride ?? answer);
-    const normalizedAnswer = resolvedAnswer.trim();
-    const durationSeconds = answerStartTimeRef.current
-      ? (Date.now() - answerStartTimeRef.current) / 1000 : 0;
+    const submitAnswer = useCallback(async ({ skipCurrent = false, answerOverride } = {}) => {
+        if (!sessionId || !currentQuestion) return;
+        const resolvedAnswer = skipCurrent ? "" : String(answerOverride ?? answer);
+        const normalizedAnswer = resolvedAnswer.trim();
+        const durationSeconds = answerStartTimeRef.current
+            ? (Date.now() - answerStartTimeRef.current) / 1000 : 0;
 
-    setIsSubmitting(true);
-    setError("");
-    try {
-      const timeTaken = 0;
-      const response = await interviewApi.submitAnswer({
-        session_id: sessionId,
-        question_id: currentQuestion.id,
-        answer_text: skipCurrent ? "" : resolvedAnswer,
-        skipped: skipCurrent || !normalizedAnswer,
-        time_taken_sec: timeTaken,
-      });
+        setIsSubmitting(true);
+        setError("");
+        try {
+            const response = await interviewApi.submitAnswer({
+                session_id: sessionId,
+                question_id: currentQuestion.id,
+                answer_text: skipCurrent ? "" : resolvedAnswer,
+                skipped: skipCurrent || !normalizedAnswer,
+                time_taken_sec: Math.round(durationSeconds),
+            });
 
       if (!skipCurrent && normalizedAnswer) analyseAnswer(normalizedAnswer, durationSeconds);
 
       setTranscripts((prev) => [...prev, { q: currentQuestion.text, a: skipCurrent ? "" : resolvedAnswer }]);
 
-      if (response.feedback && !skipCurrent && normalizedAnswer) {
-        stopSpeaking();
-        setAnswerFeedback({ ...response.feedback, _nextResponse: response });
-        return;
-      }
-
+      // NOTE: Backend does not return 'feedback' on submitAnswer.
+      // Answer feedback is available via /interview/session/{id}/summary after completion.
       _advanceAfterAnswer(response);
     } catch (e) {
       // FIX I1: If the question was already answered (double-submit or race condition),

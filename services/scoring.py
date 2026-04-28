@@ -98,7 +98,7 @@ def evaluate_answer_llm(question: str, answer: str, *, allotted_seconds: int = 0
     Falls back to local scoring if LLM is unavailable.
     """
     try:
-        from services.llm.client import get_client, llm_model
+        from services.llm.client import _get_client, _llm_model
         
         prompt = f"""You are a technical interview evaluator. Evaluate this answer and provide scores.
 
@@ -120,10 +120,10 @@ Also provide:
 Return JSON:
 {{"relevance": score, "completeness": score, "clarity": score, "technical_accuracy": score, "strength": "...", "weakness": "...", "suggestion": "..."}}"""
         
-        client = get_client()
+        client = _get_client()
         if client:
             response = client.create(
-                model=llm_model(),
+                model=_llm_model(),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=500,
