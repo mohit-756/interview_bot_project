@@ -317,9 +317,14 @@ export default function Interview() {
       setSessionId(response.session_id);
       sessionStorage.setItem(`session-id:${resultId}`, String(response.session_id));
       setCurrentQuestion(response.current_question);
-      if (response.question_number && response.question_number > 0) {
-        setQuestionNumber(response.question_number);
-      }
+      // FIX: Only set questionNumber from API on FIRST load, not on re-render
+      // This prevents the counter from resetting after _advanceAfterAnswer increments it
+      setQuestionNumber((prev) => {
+        const fromApi = response.question_number || 1;
+        const next = Math.max(prev, fromApi);
+        console.log("[Interview] loadSession questionNumber:", prev, "->", next, "(API:", fromApi, ")");
+        return next;
+      });
       if (response.max_questions && response.max_questions > 1) {
         setMaxQuestions(response.max_questions);
       }
@@ -471,9 +476,9 @@ export default function Interview() {
     }
     console.log("[Interview] Setting question to:", response.next_question?.id, "question_number:", response.question_number);
     setCurrentQuestion(response.next_question);
+    // FIX: Increment questionNumber by 1 (ignore backend's unreliable question_number)
     setQuestionNumber((prev) => {
-      const reported = Number(response.question_number || 0);
-      const next = reported > prev ? reported : prev + 1;
+      const next = prev + 1;
       console.log("[Interview] questionNumber updating:", prev, "->", next);
       return next;
     });
