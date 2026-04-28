@@ -22,6 +22,7 @@ interview-frontend/node_modules/
 interview-frontend/dist/
 interview-frontend/.vite/
 frontend/node_modules/
+node_modules/
 interview_bot_project/
 .nested_git_backups/
 tmp_pycache/
