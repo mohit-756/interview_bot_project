@@ -4,7 +4,7 @@ import traceback
 from .logging import logger
 from utils.s3_utils import async_upload_proctor_image
 from models import ProctorEvent
-from ..database import SessionLocal
+from database import SessionLocal
 
 
 def schedule_proctor_image_upload(
