@@ -24,6 +24,8 @@ from pathlib import Path
 
 from typing import Any
 
+import requests
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, BackgroundTasks
 from routes.auth import get_current_user
 from services.rate_limit import limiter
