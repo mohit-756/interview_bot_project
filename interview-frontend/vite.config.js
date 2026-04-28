@@ -7,12 +7,12 @@ export default defineConfig({
   build: {
     minify: 'esbuild',
     chunkSizeWarningLimit: 600,
+    // Cache-busting: add content hash to output filenames
     rollupOptions: {
       output: {
-        // Cache-busting: add content hash to filenames
-        entryFileNames: `assets/[name]-[hash].js`,
-        chunkFileNames: `assets/[name]-[hash].js`,
-        assetFileNames: `assets/[name]-[hash].[ext]`,
+        entryFileNames: `assets/[name].[hash].js`,
+        chunkFileNames: `assets/[name].[hash].js`,
+        assetFileNames: `assets/[name].[hash].[ext]`,
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
           ui: ['lucide-react', 'clsx', 'tailwind-merge'],
