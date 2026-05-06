@@ -9,6 +9,28 @@ from models import InterviewSession, Candidate, Result, InterviewQuestion, Proct
 
 logger = logging.getLogger(__name__)
 
+def sanitize_text(text: str) -> str:
+    """Replace Unicode characters not supported by FPDF core fonts with ASCII equivalents."""
+    if not isinstance(text, str):
+        text = str(text)
+    # Replace common Unicode characters with ASCII equivalents
+    replacements = {
+        '\u2014': '-',   # em dash
+        '\u2013': '-',   # en dash
+        '\u2018': "'",   # left single quote
+        '\u2019': "'",   # right single quote
+        '\u201c': '"',   # left double quote
+        '\u201d': '"',   # right double quote
+        '\u2026': '...', # ellipsis
+        '\u00ae': '(R)', # registered sign
+        '\u00a9': '(C)', # copyright sign
+        '\u2122': '(TM)', # trademark sign
+    }
+    for unicode_char, ascii_char in replacements.items():
+        text = text.replace(unicode_char, ascii_char)
+    # Remove any remaining non-Latin-1 characters
+    return text.encode('latin-1', errors='ignore').decode('latin-1')
+
 def _upload_to_s3_via_lambda(file_bytes: bytes, key: str, content_type: str = "application/pdf") -> str:
     """Upload to S3 using Lambda-generated presigned URL."""
     try:
@@ -76,9 +98,11 @@ def generate_interview_pdf(session: InterviewSession, db: Session, return_s3_url
     pdf.set_font("helvetica", "", 11)
     pdf.ln(2)
     pdf.cell(50, 8, f"Name:", border=0)
-    pdf.cell(0, 8, f"{candidate.name if candidate else 'N/A'}", border=0, ln=True)
+    name = sanitize_text(candidate.name if candidate else 'N/A')
+    pdf.cell(0, 8, f"{name}", border=0, ln=True)
     pdf.cell(50, 8, f"Email:", border=0)
-    pdf.cell(0, 8, f"{candidate.email if candidate else 'N/A'}", border=0, ln=True)
+    email = sanitize_text(candidate.email if candidate else 'N/A')
+    pdf.cell(0, 8, f"{email}", border=0, ln=True)
     pdf.cell(50, 8, f"Status:", border=0)
     pdf.cell(0, 8, f"{session.status.upper()}", border=0, ln=True)
     pdf.cell(50, 8, f"Final Weighted Score:", border=0)
@@ -94,7 +118,8 @@ def generate_interview_pdf(session: InterviewSession, db: Session, return_s3_url
     
     eval_summary = session.evaluation_summary_json or {}
     pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(0, 6, f"AI Recommendation: {result.recommendation or 'N/A'}")
+    recommendation = sanitize_text(result.recommendation or 'N/A')
+    pdf.multi_cell(0, 6, f"AI Recommendation: {recommendation}")
     pdf.ln(2)
     pdf.cell(50, 6, "Overall Interview Score:")
     pdf.cell(0, 6, f"{eval_summary.get('overall_interview_score', 'N/A')}", ln=True)
@@ -114,7 +139,8 @@ def generate_interview_pdf(session: InterviewSession, db: Session, return_s3_url
         pdf.set_font("helvetica", "B", 10)
         pdf.set_text_color(50, 50, 150)
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(0, 6, f"Q{i} [{q.question_type.upper()}]: {q.text}")
+        question_text = sanitize_text(q.text)
+        pdf.multi_cell(0, 6, f"Q{i} [{q.question_type.upper()}]: {question_text}")
         pdf.set_text_color(0, 0, 0)
         
         # Answer
@@ -125,6 +151,7 @@ def generate_interview_pdf(session: InterviewSession, db: Session, return_s3_url
         # Truncate very long answers to prevent rendering issues
         if len(ans_text) > 500:
             ans_text = ans_text[:500] + "... (truncated)"
+        ans_text = sanitize_text(ans_text)
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(0, 6, f"Candidate Answer: {ans_text}")
         
@@ -133,6 +160,7 @@ def generate_interview_pdf(session: InterviewSession, db: Session, return_s3_url
             pdf.set_font("helvetica", "", 9)
             pdf.set_text_color(80, 80, 80)
             feedback_text = (q.llm_feedback[:500] + "...") if len(q.llm_feedback) > 500 else q.llm_feedback
+            feedback_text = sanitize_text(feedback_text)
             pdf.set_x(pdf.l_margin)
             pdf.multi_cell(0, 5, f"AI Feedback: {feedback_text}")
             pdf.set_text_color(0, 0, 0)
