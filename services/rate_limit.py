@@ -31,4 +31,7 @@ def limiter(limit: str = DEFAULT_LIMIT) -> Optional[Any]:
     times = int(parts[0])
     window = parts[1].strip().lower() if len(parts) > 1 else "minute"
     seconds = 60 if window.startswith("min") else 1
-    return Depends(RateLimiter(times=times, seconds=seconds))
+    try:
+        return Depends(RateLimiter(times=times, seconds=seconds))
+    except TypeError:
+        return None
