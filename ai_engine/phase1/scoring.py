@@ -629,6 +629,30 @@ SKILL_ALIASES: dict[str, list[str]] = {
     "machine learning": ["machine learning", "ml"],
     "deep learning": ["deep learning"],
     "nlp": ["nlp", "natural language processing"],
+    "sap": ["sap", "sap erp"],
+    "sap sd": ["sap sd", "sap sales and distribution", "sap sales distribution", "sales and distribution"],
+    "s/4hana": ["s/4hana", "s4hana", "sap s/4hana", "sap s4hana"],
+    "ccm": ["ccm", "sap ccm", "sap commodity management"],
+    "sd pricing": ["sd pricing", "sap sd pricing", "pricing"],
+    "fi integration": ["fi integration", "sap fi integration", "fico integration", "sap fico", "sap fi", "f i integration", "fi co integration"],
+    "mm integration": ["mm integration", "sap mm integration", "sap mm", "sd mm integration", "mm"],
+    "tpm integration": ["tpm integration", "sap tpm", "tpm"],
+    "edi": ["edi", "sap edi"],
+    "fiori": ["fiori", "sap fiori", "fiori ui"],
+    "idocs": ["idocs", "idoc", "sap idocs"],
+    "abap": ["abap", "sap abap"],
+    "mm": ["mm", "sap mm", "materials management"],
+    "fi": ["fi", "sap fi", "fico", "sap fico", "financial accounting"],
+    "pp": ["pp", "sap pp", "production planning"],
+    "wm/ewm": ["wm/ewm", "wm", "ewm", "sap wm", "sap ewm", "warehouse management"],
+    "tm": ["tm", "sap tm", "transportation management"],
+    "gts": ["gts", "sap gts"],
+    "ps": ["ps", "sap ps", "eppm", "sap eppm", "project system"],
+    "credit management": ["credit management", "fscm", "sap fscm", "sap credit management"],
+    "rebates": ["rebates", "sap rebates", "settlement management"],
+    "master data": ["master data", "business partner", "sap master data"],
+    "stp": ["stp", "stp flow", "third party flow", "third party"],
+    "intercompany": ["intercompany", "inter company", "sap intercompany"],
 }
 
 RESUME_SECTION_MARKERS = {"skills", "experience", "project", "projects", "education"}
@@ -662,7 +686,38 @@ def _normalize_skill(skill: str) -> str:
 
 def _contains_skill(text: str, term: str) -> bool:
     pattern = rf"(?<!\w){re.escape(term.lower())}(?!\w)"
-    return re.search(pattern, text.lower()) is not None
+    return re.search(pattern, _normalize_skill(text)) is not None
+
+
+def _tokenize_broad(text: str) -> list[str]:
+    """Tokenize for proximity matching — splits on hyphens too so 'sd-fico' becomes ['sd', 'fico']."""
+    return re.findall(r"[a-zA-Z0-9+#.]+", (text or "").lower())
+
+
+def _contains_skill_proximity(text: str, term: str) -> bool:
+    """Check if all words of a multi-word skill appear within a sliding window (10 tokens)."""
+    term_tokens = _tokenize_broad(term)
+    if len(term_tokens) <= 1:
+        return False
+    all_tokens = _tokenize_broad(text)
+    term_set = set(term_tokens)
+    if not term_set.issubset(all_tokens):
+        return False
+    window = 10
+    for i in range(len(all_tokens)):
+        window_set = set(all_tokens[i:min(i + window, len(all_tokens))])
+        if term_set.issubset(window_set):
+            return True
+    return False
+
+
+def _skill_matches(resume_text: str, aliases: list[str]) -> bool:
+    """Progressive matching: exact word-boundary first, then proximity fallback."""
+    if any(_contains_skill(resume_text, alias) for alias in aliases):
+        return True
+    if any(_contains_skill_proximity(resume_text, alias) for alias in aliases):
+        return True
+    return False
 
 
 def _tokenize(text: str) -> list[str]:
@@ -703,7 +758,7 @@ def compute_resume_skill_match(resume_text: str, jd_skills: Iterable[str], skill
                 total_weight += skill_weight
 
         aliases = SKILL_ALIASES.get(required_skill, [required_skill])
-        if any(_contains_skill(resume_text, alias) for alias in aliases):
+        if _skill_matches(resume_text, aliases):
             matched_skills.append(required_skill)
             if skill_weight > 0:
                 matched_weight += skill_weight
@@ -1056,7 +1111,7 @@ def _answer_relevance(question: str, answer: str, jd_skills: Iterable[str] | Non
     if normalized_skills:
         for skill in normalized_skills:
             aliases = SKILL_ALIASES.get(skill, [skill])
-            if any(_contains_skill(answer_text, alias) for alias in aliases):
+            if _skill_matches(answer_text, aliases):
                 skill_hits += 1
         relevance += (skill_hits / len(normalized_skills)) * 15.0
 
